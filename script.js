@@ -193,198 +193,123 @@
       .trim();
   }
 
-  function detectInkRuns(canvas){
-    const maxW = 900;
-    const scale = Math.min(1, maxW / canvas.width);
-    const w = Math.max(1, Math.round(canvas.width * scale));
-    const h = Math.max(1, Math.round(canvas.height * scale));
-    const temp = document.createElement("canvas");
-    temp.width = w; temp.height = h;
-    const tctx = temp.getContext("2d", { alpha: false });
-    tctx.drawImage(canvas, 0, 0, w, h);
-    const data = tctx.getImageData(0, 0, w, h).data;
-
-    const rows = [];
-    const threshold = 210;
-    for(let y = 0; y < h; y++){
-      let count = 0, xMin = w, xMax = -1;
-      for(let x = 0; x < w; x += 1){
-        const i = (y * w + x) * 4;
-        const lum = 0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2];
-        if(lum < threshold){ count++; if(x < xMin) xMin = x; if(x > xMax) xMax = x; }
-      }
-      rows.push({ count, xMin, xMax });
-    }
-
-    const activeThreshold = Math.max(8, Math.round(w * 0.012));
-    const rawRuns = [];
-    let start = null;
-    for(let y = 0; y < h; y++){
-      const active = rows[y].count >= activeThreshold;
-      if(active && start === null) start = y;
-      if((!active || y === h - 1) && start !== null){
-        const end = active && y === h - 1 ? y : y - 1;
-        let x0 = w, x1 = -1, dark = 0;
-        for(let yy = start; yy <= end; yy++){
-          if(rows[yy].xMax >= 0){ x0 = Math.min(x0, rows[yy].xMin); x1 = Math.max(x1, rows[yy].xMax); }
-          dark += rows[yy].count;
-        }
-        if(x1 >= x0){
-          rawRuns.push({ x0, x1, y0: start, y1: end + 1, w: x1 - x0 + 1, h: end - start + 1, dark });
-        }
-        start = null;
+  function estimatePageBackground(data,w,h){
+    const bins=new Map();
+    const step=4;
+    for(let y=0;y<h;y+=step){
+      for(let x=0;x<w;x+=step){
+        const i=(y*w+x)*4,r=data[i],g=data[i+1],b=data[i+2];
+        const lum=.2126*r+.7152*g+.0722*b;
+        if(lum<180)continue;
+        const qr=Math.round(r/8)*8,qg=Math.round(g/8)*8,qb=Math.round(b/8)*8;
+        const key=`${qr},${qg},${qb}`;
+        bins.set(key,(bins.get(key)||0)+1);
       }
     }
-
-    const merged = [];
-    for(const run of rawRuns){
-      if(run.h < 4 || run.w < 14) continue;
-      const prev = merged[merged.length - 1];
-      if(prev){
-        const gap = run.y0 - prev.y1;
-        const overlap = Math.min(prev.x1, run.x1) - Math.max(prev.x0, run.x0);
-        const centerPrev = (prev.x0 + prev.x1) / 2;
-        const centerRun = (run.x0 + run.x1) / 2;
-        if(gap <= 8 && (overlap > Math.min(prev.w, run.w) * 0.18 || Math.abs(centerPrev - centerRun) < w * 0.18)){
-          prev.x0 = Math.min(prev.x0, run.x0); prev.x1 = Math.max(prev.x1, run.x1);
-          prev.y1 = run.y1; prev.w = prev.x1 - prev.x0 + 1; prev.h = prev.y1 - prev.y0; prev.dark += run.dark;
-          continue;
-        }
-      }
-      merged.push({ ...run });
-    }
-
-    return merged.map(run => ({
-      x0: Math.max(0, Math.round(run.x0 / scale)),
-      x1: Math.min(canvas.width, Math.round((run.x1 + 1) / scale)),
-      y0: Math.max(0, Math.round(run.y0 / scale)),
-      y1: Math.min(canvas.height, Math.round(run.y1 / scale)),
-      w: Math.max(1, Math.round(run.w / scale)),
-      h: Math.max(1, Math.round(run.h / scale)),
-      dark: run.dark,
-    }));
+    let best="248,240,216",count=-1;
+    for(const [key,n] of bins){if(n>count){best=key;count=n;}}
+    return best.split(",").map(Number);
   }
 
-  function detectMessagePairsFromRuns(runs, canvasWidth){
-    const pairs = [];
-    const used = new Set();
-    for(let i = 0; i < runs.length - 1; i++){
-      if(used.has(i) || used.has(i + 1)) continue;
-      const label = runs[i], bubble = runs[i + 1];
-      const gap = bubble.y0 - label.y1;
-      const labelLike = label.h <= 42 && label.w <= canvasWidth * 0.42;
-      const bubbleLike = bubble.h >= 20 && bubble.w >= Math.max(canvasWidth * 0.20, label.w * 1.1);
-      const centerLabel = (label.x0 + label.x1) / 2;
-      const centerBubble = (bubble.x0 + bubble.x1) / 2;
-      const aligned = Math.abs(centerLabel - centerBubble) <= canvasWidth * 0.28;
-      const close = gap >= 0 && gap <= 26;
-      const score = (labelLike ? 1 : 0) + (bubbleLike ? 1 : 0) + (aligned ? 1 : 0) + (close ? 1 : 0);
-      if(labelLike && bubbleLike && aligned && close){
-        pairs.push({ label, bubble, top: label.y0, bottom: bubble.y1, score });
-        used.add(i); used.add(i + 1); i += 1;
+  function detectBubbleRegions(canvas){
+    const maxW=900,scale=Math.min(1,maxW/canvas.width);
+    const w=Math.max(1,Math.round(canvas.width*scale)),h=Math.max(1,Math.round(canvas.height*scale));
+    const tmp=document.createElement("canvas");tmp.width=w;tmp.height=h;
+    const ctx=tmp.getContext("2d",{alpha:false});ctx.drawImage(canvas,0,0,w,h);
+    const data=ctx.getImageData(0,0,w,h).data,bg=estimatePageBackground(data,w,h);
+    const parent=[],rows=[];
+    const find=(a)=>{while(parent[a]!==a){parent[a]=parent[parent[a]];a=parent[a];}return a;};
+    const unite=(a,b)=>{a=find(a);b=find(b);if(a!==b)parent[b]=a;};
+    let prev=[];
+    for(let y=0;y<h;y++){
+      const curr=[];let x=0;
+      const isBubblePixel=(xx)=>{
+        const i=(y*w+xx)*4,r=data[i],g=data[i+1],b=data[i+2];
+        const lum=.2126*r+.7152*g+.0722*b,dr=r-bg[0],dg=g-bg[1],db=b-bg[2];
+        const dist=Math.sqrt(dr*dr+dg*dg+db*db);
+        return lum>150&&dist>15&&dist<105;
+      };
+      while(x<w){
+        while(x<w&&!isBubblePixel(x))x++;
+        if(x>=w)break;
+        const x0=x;while(x<w&&isBubblePixel(x))x++;const x1=x-1;
+        if(x1-x0+1<3)continue;
+        const id=parent.length;parent.push(id);const run={x0,x1,id};curr.push(run);
+        for(const pr of prev){if(pr.x1>=x0-1&&pr.x0<=x1+1)unite(id,pr.id);}
       }
+      rows.push(curr);prev=curr;
     }
-    return pairs;
+    const merged=new Map();
+    for(let y=0;y<rows.length;y++)for(const run of rows[y]){
+      const root=find(run.id),width=run.x1-run.x0+1;let c=merged.get(root);
+      if(!c){c={x0:run.x0,x1:run.x1,y0:y,y1:y,area:0};merged.set(root,c);}
+      c.x0=Math.min(c.x0,run.x0);c.x1=Math.max(c.x1,run.x1);c.y1=y;c.area+=width;
+    }
+    const regions=[];
+    for(const c of merged.values()){
+      const cw=c.x1-c.x0+1,ch=c.y1-c.y0+1,fill=c.area/(cw*ch);
+      if(c.area<220||cw<35||ch<12||cw>w*.92||ch>h*.18||fill<.28)continue;
+      regions.push({
+        x0:Math.max(0,Math.round(c.x0/scale)),x1:Math.min(canvas.width,Math.round((c.x1+1)/scale)),
+        y0:Math.max(0,Math.round(c.y0/scale)),y1:Math.min(canvas.height,Math.round((c.y1+1)/scale)),
+        w:Math.max(1,Math.round(cw/scale)),h:Math.max(1,Math.round(ch/scale)),fill
+      });
+    }
+    regions.sort((a,b)=>a.y0-b.y0||a.x0-b.x0);
+    return regions;
   }
 
-  function groupPairsIntoChatRegions(pairs){
-    if(!pairs.length) return [];
-    const groups = [];
-    let current = { pairs: [pairs[0]], top: pairs[0].top, bottom: pairs[0].bottom };
-    for(let i = 1; i < pairs.length; i++){
-      const pair = pairs[i];
-      const gap = pair.top - current.bottom;
-      if(gap <= 90){
-        current.pairs.push(pair);
-        current.bottom = pair.bottom;
-      } else {
-        groups.push(current);
-        current = { pairs: [pair], top: pair.top, bottom: pair.bottom };
-      }
-    }
-    groups.push(current);
-    return groups;
+  async function recognizeCanvasText(worker,canvas){
+    const result=await worker.recognize(canvas);
+    return normalizeOcrText(result?.data?.text||"");
   }
 
-  async function recognizeCanvasText(worker, canvas){
-    const result = await worker.recognize(canvas);
-    return normalizeOcrText(result?.data?.text || "");
+  function speakerStripForBubble(bubble,canvas){
+    const stripH=Math.max(42,Math.min(68,Math.round(bubble.h*1.25)));
+    return {x0:Math.max(0,bubble.x0-10),x1:Math.min(canvas.width,bubble.x1+10),y0:Math.max(0,bubble.y0-stripH),y1:Math.max(1,bubble.y0-3)};
+  }
+
+  function cleanSpeaker(text){
+    const lines=(text||"").replace(/\r/g,"").split("\n").map(v=>cleanOcrInlineText(v,"label")).filter(Boolean);
+    const candidates=lines.filter(looksLikeSpeakerLabel);
+    return candidates.length?candidates[candidates.length-1]:"";
+  }
+
+  function cleanBubbleText(text){
+    return normalizeMessageText(text).replace(/^\(\s*(?=[A-Za-z0-9"'])/,"").replace(/\s*\)$/g,"").replace(/\s{2,}/g," ").trim();
   }
 
   async function runMessagePageOcr(index,button){
-    if(!state.pages[index]) return;
-    const old = button.textContent;
-    const originalText = state.pages[index].text || "";
-    button.disabled = true;
-    button.textContent = "Working…";
+    if(!state.pages[index])return;
+    const old=button.textContent,originalText=state.pages[index].text||"";
+    button.disabled=true;button.textContent="Working…";
     try{
-      setStatus(`Re-processing page ${index + 1} as a message page…`);
-      const worker = await ensureWorker();
-      const img = await loadImageFromFile(state.pages[index].file);
-      const cropped = makeCroppedCanvas(img);
-      const runs = detectInkRuns(cropped);
-      const pairs = detectMessagePairsFromRuns(runs, cropped.width);
-      if(!pairs.length) throw new Error("No message-bubble pairs were detected on this page.");
-
-      const chatRegions = groupPairsIntoChatRegions(pairs);
-      const out = [];
-      let cursorY = 0;
-      let confidentMessages = 0;
-
-      for(const region of chatRegions){
-        if(region.top - cursorY > 24){
-          const proseCanvas = cropCanvasRegion(cropped, { x0: 0, x1: cropped.width, y0: cursorY, y1: region.top - 10 }, 10, 6, true);
-          const proseText = await recognizeCanvasText(worker, proseCanvas);
-          if(proseText) out.push(proseText);
+      setStatus(`Detecting shaded message bubbles on page ${index+1}…`);
+      const worker=await ensureWorker(),img=await loadImageFromFile(state.pages[index].file),cropped=makeCroppedCanvas(img),bubbles=detectBubbleRegions(cropped);
+      if(!bubbles.length)throw new Error("No shaded message bubbles were detected on this page.");
+      const out=[];let cursorY=0,good=0;
+      for(const bubble of bubbles){
+        const labelRegion=speakerStripForBubble(bubble,cropped),proseEnd=Math.max(cursorY,labelRegion.y0-5);
+        if(proseEnd-cursorY>34){
+          const proseCanvas=cropCanvasRegion(cropped,{x0:0,x1:cropped.width,y0:cursorY,y1:proseEnd},0,4,true);
+          const prose=await recognizeCanvasText(worker,proseCanvas);if(prose)out.push(prose);
         }
-
-        const regionMessages = [];
-        for(const pair of region.pairs){
-          const labelCanvas = cropCanvasRegion(cropped, pair.label, 10, 6, false);
-          const bubbleCanvas = cropCanvasRegion(cropped, pair.bubble, 14, 10, false);
-          const labelText = cleanOcrInlineText(await recognizeCanvasText(worker, labelCanvas), "label");
-          const bubbleText = normalizeMessageText(await recognizeCanvasText(worker, bubbleCanvas));
-          if(labelText && looksLikeSpeakerLabel(labelText) && bubbleText){
-            regionMessages.push(`${labelText}: ${bubbleText}`);
-            confidentMessages += 1;
-          }
-        }
-
-        if(regionMessages.length){
-          out.push(regionMessages.join("\n\n"));
-        } else {
-          const fallbackCanvas = cropCanvasRegion(cropped, { x0: 0, x1: cropped.width, y0: Math.max(0, region.top - 8), y1: Math.min(cropped.height, region.bottom + 8) }, 0, 0, true);
-          const fallbackText = await recognizeCanvasText(worker, fallbackCanvas);
-          if(fallbackText) out.push(fallbackText);
-        }
-
-        cursorY = region.bottom + 10;
+        const labelCanvas=cropCanvasRegion(cropped,labelRegion,4,2,false),bubbleCanvas=cropCanvasRegion(cropped,bubble,14,10,false);
+        const speaker=cleanSpeaker(await recognizeCanvasText(worker,labelCanvas)),message=cleanBubbleText(await recognizeCanvasText(worker,bubbleCanvas));
+        if(message){out.push(speaker?`${speaker}: ${message}`:message);if(speaker)good++;}
+        cursorY=Math.min(cropped.height,bubble.y1+8);
       }
-
-      if(cropped.height - cursorY > 24){
-        const proseCanvas = cropCanvasRegion(cropped, { x0: 0, x1: cropped.width, y0: cursorY, y1: cropped.height }, 10, 6, true);
-        const proseText = await recognizeCanvasText(worker, proseCanvas);
-        if(proseText) out.push(proseText);
+      if(cropped.height-cursorY>34){
+        const tailCanvas=cropCanvasRegion(cropped,{x0:0,x1:cropped.width,y0:cursorY,y1:cropped.height},0,4,true);
+        const tail=await recognizeCanvasText(worker,tailCanvas);if(tail)out.push(tail);
       }
-
-      const finalText = out.join("\n\n").replace(/\n{3,}/g, "\n\n").trim();
-      if(!finalText || confidentMessages < 2){
-        throw new Error("The page did not produce enough confident message matches.");
-      }
-      state.pages[index].text = finalText;
-      state.pages[index].detectedChapterStart = chapterHeuristic(finalText);
-      if(!state.pages[index].chapterTouched) state.pages[index].chapterStart = state.pages[index].detectedChapterStart;
-      renderReview();
-      setStatus(`Page ${index + 1} reprocessed with safer chat-section replacement.`);
+      const finalText=out.join("\n\n").replace(/\n{3,}/g,"\n\n").trim();
+      if(!finalText||good<Math.min(2,bubbles.length))throw new Error("Bubble detection worked, but speaker pairing was not reliable enough.");
+      state.pages[index].text=finalText;state.pages[index].detectedChapterStart=chapterHeuristic(finalText);if(!state.pages[index].chapterTouched)state.pages[index].chapterStart=state.pages[index].detectedChapterStart;
+      renderReview();setStatus(`Page ${index+1}: detected ${bubbles.length} shaded message bubble${bubbles.length===1?"":"s"}.`);
     }catch(err){
-      console.error(err);
-      state.pages[index].text = originalText;
-      alert(`Could not run message-page OCR: ${err.message || err}`);
-      setStatus(`Message-page OCR failed on page ${index + 1}. Original OCR was preserved.`);
-    }finally{
-      button.disabled = false;
-      button.textContent = old;
-    }
+      console.error(err);state.pages[index].text=originalText;alert(`Could not run message-page OCR: ${err.message||err}`);setStatus(`Message-page OCR failed on page ${index+1}. Original OCR was preserved.`);
+    }finally{button.disabled=false;button.textContent=old;}
   }
 
   function downloadBlob(blob,filename){const url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download=filename;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1500);}
