@@ -150,127 +150,213 @@
     }catch(err){console.error(err);setStatus(`OCR error: ${err.message||err}`);}finally{els.processBtn.disabled=!state.files.length;els.stopBtn.disabled=true;}
   }
 
-  function getLineBox(obj){
-    const b=obj?.bbox||obj||{};
-    const x0=Number(b.x0??b.left??0), y0=Number(b.y0??b.top??0), x1=Number(b.x1??b.right??x0), y1=Number(b.y1??b.bottom??y0);
-    return {x0,y0,x1,y1,w:Math.max(0,x1-x0),h:Math.max(0,y1-y0)};
+  function cropCanvasRegion(canvas, region, padX = 0, padY = 0, fullWidth = false){
+    const x = fullWidth ? 0 : clamp(Math.floor(region.x0 - padX), 0, canvas.width - 1);
+    const y = clamp(Math.floor(region.y0 - padY), 0, canvas.height - 1);
+    const right = fullWidth ? canvas.width : clamp(Math.ceil(region.x1 + padX), x + 1, canvas.width);
+    const bottom = clamp(Math.ceil(region.y1 + padY), y + 1, canvas.height);
+    const out = document.createElement("canvas");
+    out.width = Math.max(1, right - x);
+    out.height = Math.max(1, bottom - y);
+    const ctx = out.getContext("2d", { alpha: false });
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0,0,out.width,out.height);
+    ctx.drawImage(canvas, x, y, out.width, out.height, 0, 0, out.width, out.height);
+    return out;
   }
 
-  function cleanOcrInlineText(text,mode="text"){
-    let out=(text||"").replace(/\r/g,"").replace(/[ \t]+/g," ").trim();
-    out=out.replace(/[|¦]/g,"I").replace(/[“”]/g,'"').replace(/[‘’]/g,"'");
-    out=out.replace(/\s+([,.;:!?])/g,"$1").replace(/([({\["'])\s+/g,"$1").replace(/\s+([)}\]"'])/g,"$1");
-    out=out.replace(/\bI\s+will\b/gi,"I will").replace(/\bI\s+know\b/gi,"I know").replace(/\bI\s+hate\b/gi,"I hate");
-    if(mode==="label") out=out.replace(/[^A-Za-z0-9 '&.-]/g,"").replace(/\s+/g," ").trim().toUpperCase();
+  function cleanOcrInlineText(text, mode = "text"){
+    let out = (text || "").replace(/\r/g, "").replace(/[ \t]+/g, " ").trim();
+    out = out.replace(/[|¦]/g, "I").replace(/[“”]/g, '"').replace(/[‘’]/g, "'");
+    out = out.replace(/\s+([,.;:!?])/g, "$1").replace(/([({\["'])\s+/g, "$1").replace(/\s+([)}\]"'])/g, "$1");
+    out = out.replace(/\bI\s+will\b/gi, "I will").replace(/\bI\s+know\b/gi, "I know").replace(/\bI\s+hate\b/gi, "I hate");
+    if(mode === "label") out = out.replace(/[^A-Za-z0-9 '&.-]/g, "").replace(/\s+/g, " ").trim().toUpperCase();
     return out;
   }
 
   function looksLikeSpeakerLabel(text){
-    const raw=cleanOcrInlineText(text,"label");
-    if(!raw||raw.length<2||raw.length>24) return false;
+    const raw = cleanOcrInlineText(text, "label");
+    if(!raw || raw.length < 2 || raw.length > 22) return false;
     if(/\d{2,}/.test(raw)) return false;
-    const tokens=raw.split(/\s+/).filter(Boolean);
-    if(tokens.length>3) return false;
-    const letters=raw.replace(/[^A-Z]/g,"");
-    if(letters.length<2||letters.length>18) return false;
-    return /^[A-Z0-9 '&.-]+$/.test(raw);
+    const words = raw.split(/\s+/).filter(Boolean);
+    if(words.length > 3) return false;
+    if(!/^[A-Z0-9 '&.-]+$/.test(raw)) return false;
+    const letters = raw.replace(/[^A-Z]/g, "");
+    return letters.length >= 2 && letters.length <= 16;
   }
 
-  function lineCenterY(line){ return line.y0 + (line.h/2); }
+  function normalizeMessageText(text){
+    return normalizeOcrText(text)
+      .replace(/\n{2,}/g, "\n\n")
+      .replace(/\n/g, " ")
+      .replace(/\s{2,}/g, " ")
+      .trim();
+  }
 
-  function extractRecognizedLines(result){
-    const out=[];
-    const rawLines=Array.isArray(result?.data?.lines) ? result.data.lines : [];
-    if(rawLines.length){
-      rawLines.forEach((entry,idx)=>{
-        const text=cleanOcrInlineText(entry?.text||"");
-        if(!text) return;
-        const box=getLineBox(entry);
-        out.push({...box,text,idx});
-      });
-    } else {
-      const pieces=(result?.data?.text||"").replace(/\r/g,"").split("\n").map(s=>cleanOcrInlineText(s)).filter(Boolean);
-      pieces.forEach((t,idx)=>out.push({x0:0,y0:idx*32,x1:t.length*10,y1:idx*32+24,w:t.length*10,h:24,text:t,idx}));
+  function detectInkRuns(canvas){
+    const maxW = 900;
+    const scale = Math.min(1, maxW / canvas.width);
+    const w = Math.max(1, Math.round(canvas.width * scale));
+    const h = Math.max(1, Math.round(canvas.height * scale));
+    const temp = document.createElement("canvas");
+    temp.width = w; temp.height = h;
+    const tctx = temp.getContext("2d", { alpha: false });
+    tctx.drawImage(canvas, 0, 0, w, h);
+    const data = tctx.getImageData(0, 0, w, h).data;
+
+    const rows = [];
+    const threshold = 210;
+    for(let y = 0; y < h; y++){
+      let count = 0, xMin = w, xMax = -1;
+      for(let x = 0; x < w; x += 1){
+        const i = (y * w + x) * 4;
+        const lum = 0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2];
+        if(lum < threshold){ count++; if(x < xMin) xMin = x; if(x > xMax) xMax = x; }
+      }
+      rows.push({ count, xMin, xMax });
     }
-    out.sort((a,b)=>{
-      const dy=lineCenterY(a)-lineCenterY(b);
-      if(Math.abs(dy)>Math.max(8,Math.min(a.h,b.h)*0.6)) return dy;
-      return a.x0-b.x0;
-    });
-    return out;
-  }
 
-  function buildParagraphFromLines(lines){
-    if(!lines.length) return "";
-    const parts=[];
-    for(let i=0;i<lines.length;i++){
-      const line=lines[i], prev=i?lines[i-1]:null;
+    const activeThreshold = Math.max(8, Math.round(w * 0.012));
+    const rawRuns = [];
+    let start = null;
+    for(let y = 0; y < h; y++){
+      const active = rows[y].count >= activeThreshold;
+      if(active && start === null) start = y;
+      if((!active || y === h - 1) && start !== null){
+        const end = active && y === h - 1 ? y : y - 1;
+        let x0 = w, x1 = -1, dark = 0;
+        for(let yy = start; yy <= end; yy++){
+          if(rows[yy].xMax >= 0){ x0 = Math.min(x0, rows[yy].xMin); x1 = Math.max(x1, rows[yy].xMax); }
+          dark += rows[yy].count;
+        }
+        if(x1 >= x0){
+          rawRuns.push({ x0, x1, y0: start, y1: end + 1, w: x1 - x0 + 1, h: end - start + 1, dark });
+        }
+        start = null;
+      }
+    }
+
+    const merged = [];
+    for(const run of rawRuns){
+      if(run.h < 4 || run.w < 14) continue;
+      const prev = merged[merged.length - 1];
       if(prev){
-        const gap=line.y0-prev.y1;
-        const paraBreak=gap>Math.max(28, prev.h*1.7);
-        if(paraBreak) parts.push("\n\n");
-        else parts.push(" ");
-      }
-      parts.push(line.text);
-    }
-    return parts.join("").replace(/\n{3,}/g,"\n\n").trim();
-  }
-
-  function collectMessageLines(lines,startIndex){
-    const messageLines=[];
-    let i=startIndex;
-    let prev=null;
-    while(i<lines.length && !looksLikeSpeakerLabel(lines[i].text)){
-      const line=lines[i];
-      if(!prev){
-        if(line.y0-lines[startIndex-1].y1 > Math.max(90, lines[startIndex-1].h*3)) break;
-        messageLines.push(line); prev=line; i++; continue;
-      }
-      const gap=line.y0-prev.y1;
-      if(gap>Math.max(34, prev.h*1.7)) break;
-      messageLines.push(line); prev=line; i++;
-    }
-    return {messageLines,nextIndex:i};
-  }
-
-  function formatMessagePageFromLines(lines){
-    const blocks=[];
-    let prose=[];
-    const flushProse=()=>{
-      const text=buildParagraphFromLines(prose);
-      if(text) blocks.push(text);
-      prose=[];
-    };
-
-    for(let i=0;i<lines.length;){
-      const line=lines[i];
-      if(looksLikeSpeakerLabel(line.text) && i+1<lines.length){
-        const label=cleanOcrInlineText(line.text,"label");
-        const firstGap=lines[i+1].y0-line.y1;
-        if(firstGap<=Math.max(90, line.h*3)){
-          const {messageLines,nextIndex}=collectMessageLines(lines,i+1);
-          if(messageLines.length){
-            flushProse();
-            const msg=buildParagraphFromLines(messageLines).replace(/\n+/g," ").replace(/\s{2,}/g," ").trim();
-            blocks.push(`${label}: ${msg}`);
-            i=nextIndex;
-            continue;
-          }
+        const gap = run.y0 - prev.y1;
+        const overlap = Math.min(prev.x1, run.x1) - Math.max(prev.x0, run.x0);
+        const centerPrev = (prev.x0 + prev.x1) / 2;
+        const centerRun = (run.x0 + run.x1) / 2;
+        if(gap <= 8 && (overlap > Math.min(prev.w, run.w) * 0.18 || Math.abs(centerPrev - centerRun) < w * 0.18)){
+          prev.x0 = Math.min(prev.x0, run.x0); prev.x1 = Math.max(prev.x1, run.x1);
+          prev.y1 = run.y1; prev.w = prev.x1 - prev.x0 + 1; prev.h = prev.y1 - prev.y0; prev.dark += run.dark;
+          continue;
         }
       }
-      prose.push(line);
-      i++;
+      merged.push({ ...run });
     }
-    flushProse();
-    return blocks.join("\n\n").replace(/\n{3,}/g,"\n\n").trim();
+
+    return merged.map(run => ({
+      x0: Math.max(0, Math.round(run.x0 / scale)),
+      x1: Math.min(canvas.width, Math.round((run.x1 + 1) / scale)),
+      y0: Math.max(0, Math.round(run.y0 / scale)),
+      y1: Math.min(canvas.height, Math.round(run.y1 / scale)),
+      w: Math.max(1, Math.round(run.w / scale)),
+      h: Math.max(1, Math.round(run.h / scale)),
+      dark: run.dark,
+    }));
+  }
+
+  function detectMessagePairsFromRuns(runs, canvasWidth){
+    const pairs = [];
+    const used = new Set();
+    for(let i = 0; i < runs.length - 1; i++){
+      if(used.has(i) || used.has(i + 1)) continue;
+      const label = runs[i], bubble = runs[i + 1];
+      const gap = bubble.y0 - label.y1;
+      const labelLike = label.h <= 42 && label.w <= canvasWidth * 0.42;
+      const bubbleLike = bubble.h >= 20 && bubble.w >= Math.max(canvasWidth * 0.20, label.w * 1.1);
+      const centerLabel = (label.x0 + label.x1) / 2;
+      const centerBubble = (bubble.x0 + bubble.x1) / 2;
+      const aligned = Math.abs(centerLabel - centerBubble) <= canvasWidth * 0.28;
+      const close = gap >= 0 && gap <= 26;
+      if(labelLike && bubbleLike && aligned && close){
+        pairs.push({ label, bubble, top: label.y0, bottom: bubble.y1 });
+        used.add(i); used.add(i + 1); i += 1;
+      }
+    }
+    return pairs;
+  }
+
+  async function recognizeCanvasText(worker, canvas){
+    const result = await worker.recognize(canvas);
+    return normalizeOcrText(result?.data?.text || "");
   }
 
   async function runMessagePageOcr(index,button){
-    if(!state.pages[index])return;const old=button.textContent;button.disabled=true;button.textContent="Working…";
+    if(!state.pages[index]) return;
+    const old = button.textContent;
+    button.disabled = true;
+    button.textContent = "Working…";
     try{
-      setStatus(`Re-processing page ${index+1} as a message page…`);const worker=await ensureWorker(),img=await loadImageFromFile(state.pages[index].file),cropped=makeCroppedCanvas(img),result=await worker.recognize(cropped),lines=extractRecognizedLines(result),finalText=formatMessagePageFromLines(lines);
-      if(!finalText)throw new Error("No text was recovered.");state.pages[index].text=finalText;state.pages[index].detectedChapterStart=chapterHeuristic(finalText);if(!state.pages[index].chapterTouched)state.pages[index].chapterStart=state.pages[index].detectedChapterStart;renderReview();setStatus(`Page ${index+1} reprocessed with speaker/message pairing.`);
-    }catch(err){console.error(err);alert(`Could not run message-page OCR: ${err.message||err}`);setStatus(`Message-page OCR failed on page ${index+1}.`);}finally{button.disabled=false;button.textContent=old;}
+      setStatus(`Re-processing page ${index + 1} as a message page…`);
+      const worker = await ensureWorker();
+      const img = await loadImageFromFile(state.pages[index].file);
+      const cropped = makeCroppedCanvas(img);
+      const runs = detectInkRuns(cropped);
+      const pairs = detectMessagePairsFromRuns(runs, cropped.width);
+      if(!pairs.length) throw new Error("No message-bubble pairs were detected on this page.");
+
+      const blocks = [];
+      let cursorY = 0;
+      for(const pair of pairs){
+        if(pair.top - cursorY > 24){
+          blocks.push({ type: "prose", region: { x0: 0, x1: cropped.width, y0: cursorY, y1: pair.top - 10 } });
+        }
+        blocks.push({ type: "message", label: pair.label, bubble: pair.bubble });
+        cursorY = pair.bottom + 10;
+      }
+      if(cropped.height - cursorY > 24){
+        blocks.push({ type: "prose", region: { x0: 0, x1: cropped.width, y0: cursorY, y1: cropped.height } });
+      }
+
+      const out = [];
+      for(const block of blocks){
+        if(block.type === "prose"){
+          const proseCanvas = cropCanvasRegion(cropped, block.region, 10, 6, true);
+          const proseText = await recognizeCanvasText(worker, proseCanvas);
+          if(proseText) out.push(proseText);
+          continue;
+        }
+
+        const labelCanvas = cropCanvasRegion(cropped, block.label, 10, 6, false);
+        const bubbleCanvas = cropCanvasRegion(cropped, block.bubble, 14, 10, false);
+        const labelText = cleanOcrInlineText(await recognizeCanvasText(worker, labelCanvas), "label");
+        const bubbleText = normalizeMessageText(await recognizeCanvasText(worker, bubbleCanvas));
+
+        if(labelText && looksLikeSpeakerLabel(labelText) && bubbleText){
+          out.push(`${labelText}: ${bubbleText}`);
+        } else {
+          const fallbackRegion = { x0: Math.min(block.label.x0, block.bubble.x0), x1: Math.max(block.label.x1, block.bubble.x1), y0: block.label.y0, y1: block.bubble.y1 };
+          const fallbackCanvas = cropCanvasRegion(cropped, fallbackRegion, 14, 10, false);
+          const fallbackText = await recognizeCanvasText(worker, fallbackCanvas);
+          if(fallbackText) out.push(fallbackText);
+        }
+      }
+
+      const finalText = out.join("\n\n").replace(/\n{3,}/g, "\n\n").trim();
+      if(!finalText) throw new Error("No text was recovered.");
+      state.pages[index].text = finalText;
+      state.pages[index].detectedChapterStart = chapterHeuristic(finalText);
+      if(!state.pages[index].chapterTouched) state.pages[index].chapterStart = state.pages[index].detectedChapterStart;
+      renderReview();
+      setStatus(`Page ${index + 1} reprocessed with visual bubble detection.`);
+    }catch(err){
+      console.error(err);
+      alert(`Could not run message-page OCR: ${err.message || err}`);
+      setStatus(`Message-page OCR failed on page ${index + 1}.`);
+    }finally{
+      button.disabled = false;
+      button.textContent = old;
+    }
   }
 
   function downloadBlob(blob,filename){const url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download=filename;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1500);}
@@ -287,7 +373,7 @@
   }
   async function downloadEpub(){els.downloadEpub.disabled=true;const old=els.downloadEpub.textContent;els.downloadEpub.textContent="Building EPUB…";try{await buildEpub();}catch(err){alert(`Could not build EPUB: ${err.message||err}`);}finally{els.downloadEpub.disabled=false;els.downloadEpub.textContent=old;}}
 
-  document.querySelectorAll("[data-preset]").forEach(btn=>btn.addEventListener("click",()=>{document.querySelectorAll("[data-preset]").forEach(b=>b.classList.remove("active"));btn.classList.add("active");if(btn.dataset.preset==="cloud"){els.cropTop.value=0;els.cropBottom.value=75;els.cropSides.value=0;}else if(btn.dataset.preset==="kindle"){els.cropTop.value=150;els.cropBottom.value=0;els.cropSides.value=0;}else{els.cropTop.value=0;els.cropBottom.value=0;els.cropSides.value=0;}updatePreview();}));
+  document.querySelectorAll("[data-preset]").forEach(btn=>btn.addEventListener("click",()=>{document.querySelectorAll("[data-preset]").forEach(b=>b.classList.remove("active"));btn.classList.add("active");if(btn.dataset.preset==="cloud"){els.cropTop.value=0;els.cropBottom.value=75;els.cropSides.value=0;}else if(btn.dataset.preset==="kindle"){els.cropTop.value=130;els.cropBottom.value=0;els.cropSides.value=0;}else{els.cropTop.value=0;els.cropBottom.value=0;els.cropSides.value=0;}updatePreview();}));
   [els.cropTop,els.cropBottom,els.cropSides].forEach(i=>i.addEventListener("input",updatePreview));
   els.coverInput.addEventListener("change",()=>{const f=els.coverInput.files?.[0]||null;state.coverFile=f;if(state.coverUrl)URL.revokeObjectURL(state.coverUrl);if(f){state.coverUrl=URL.createObjectURL(f);els.coverPreview.src=state.coverUrl;els.coverPreviewWrap.classList.remove("hidden");}else els.coverPreviewWrap.classList.add("hidden");});
   els.imageInput.addEventListener("change",async()=>{state.files=Array.from(els.imageInput.files||[]).sort(naturalSort);state.pages=[];els.fileCount.textContent=`${state.files.length} page${state.files.length===1?"":"s"} loaded`;els.processBtn.disabled=!state.files.length;els.reviewSection.classList.add("hidden");els.exportSection.classList.add("hidden");els.reviewList.innerHTML="";renderThumbs();await updatePreview();setStatus(state.files.length?"Ready to process.":"Add screenshots to begin.");});

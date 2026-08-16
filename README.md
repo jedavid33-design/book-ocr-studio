@@ -8,7 +8,7 @@ A static, mobile-friendly GitHub Pages tool for turning your own book screenshot
 - Sort pages naturally by filename.
 - Apply a bulk crop preset:
   - **CloudLibrary footer:** removes 75 px from the bottom.
-  - **Kindle header:** removes 150 px from the top.
+  - **Kindle header:** removes 130 px from the top.
   - Or enter your own crop values.
 - OCR pages sequentially in the browser using **Tesseract.js**.
 - Flag likely chapter-opening pages for review.
