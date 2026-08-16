@@ -266,8 +266,40 @@
     return hasChapterWord || (startsWithNumber && shortAllCaps) || (startsWithNumber && firstLines.length >= 2);
   }
 
+  function syncCurrentEditor() {
+    if (state.currentPageIndex < 0 || !state.pages[state.currentPageIndex]) return;
+    const editor = els.reviewList.querySelector("textarea");
+    if (!editor) return;
+    state.pages[state.currentPageIndex].text = editor.value;
+    state.pages[state.currentPageIndex].chapterCandidate = chapterHeuristic(editor.value);
+    saveCheckpoint();
+  }
+
+  function normalizedPageText(text) {
+    return (text || "")
+      .replace(/\r/g, "")
+      .split("\n")
+      .map(line => line.replace(/[ \t]+$/g, ""))
+      .join("\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+  }
+
   function combinedText() {
-    return state.pages.map(p => (p.text || "").trim()).filter(Boolean).join("\n\n");
+    syncCurrentEditor();
+    return state.pages
+      .map(p => normalizedPageText(p.text))
+      .filter(Boolean)
+      .join("\n\n");
+  }
+
+  function exportParagraphs(text) {
+    const normalized = normalizedPageText(text);
+    if (!normalized) return [];
+    return normalized
+      .split(/\n{2,}/)
+      .map(block => block.split("\n").map(line => line.trim()).filter(Boolean).join(" ").trim())
+      .filter(Boolean);
   }
 
   function pageImageUrl(file) {
@@ -791,7 +823,11 @@
   }
 
   function downloadTxt() {
-    const text = combinedText();
+    syncCurrentEditor();
+    const paragraphs = state.pages
+      .flatMap(page => exportParagraphs(page.text))
+      .filter(Boolean);
+    const text = paragraphs.join("\n\n");
     const title = cleanFilename(els.bookTitle.value || "book");
     downloadBlob(new Blob([text], { type: "text/plain;charset=utf-8" }), `${title}.txt`);
   }
@@ -817,11 +853,15 @@
   </rootfiles>
 </container>`);
 
-    const paragraphs = text
-      .split(/\n{2,}/)
-      .map(p => p.trim())
+    syncCurrentEditor();
+    const pageSections = state.pages
+      .map((page, pageIndex) => {
+        const paragraphs = exportParagraphs(page.text)
+          .map((paragraph, paragraphIndex) => `<p id="p-${pageIndex + 1}-${paragraphIndex + 1}">${escapeXml(paragraph)}</p>`)
+          .join("\n");
+        return paragraphs ? `<section class="ocr-page" id="page-${pageIndex + 1}">${paragraphs}</section>` : "";
+      })
       .filter(Boolean)
-      .map(p => `<p>${escapeXml(p).replace(/\n/g, "<br/>")}</p>`)
       .join("\n");
 
     zip.file("EPUB/book.xhtml", `<?xml version="1.0" encoding="UTF-8"?>
@@ -835,7 +875,7 @@
 <body>
   <section epub:type="bodymatter" xmlns:epub="http://www.idpf.org/2007/ops">
     <h1>${escapeXml(title)}</h1>
-    ${paragraphs}
+    ${pageSections}
   </section>
 </body>
 </html>`);
@@ -852,7 +892,7 @@
 </body>
 </html>`);
 
-    zip.file("EPUB/style.css", `body{font-family:serif;line-height:1.5;margin:5%;}p{margin:0 0 1em;}h1{text-align:center;margin:2em 0;}`);
+    zip.file("EPUB/style.css", `body{font-family:serif;line-height:1.5;margin:5%;}p{display:block;margin:0 0 1em;white-space:normal;}section.ocr-page{display:block;margin:0;padding:0;}h1{text-align:center;margin:2em 0;}`);
 
     let coverManifest = "";
     let coverMeta = "";

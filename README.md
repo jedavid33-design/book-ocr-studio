@@ -1,20 +1,18 @@
-# Book OCR Studio v10
+# Book OCR Studio v11
 
-This version uses a **one-page-at-a-time workflow**.
+One-page-at-a-time OCR workflow with safer TXT/EPUB export.
 
-## What changed
-- OCR runs **one page at a time** instead of the whole batch at once.
-- After you edit the current page, tap **Next page** to move forward.
-- Your edits are saved automatically while you type.
-- Progress and your current page are saved in local storage, so you can resume later with the same screenshot batch.
-- **Message-page OCR** still works on the current page.
-- Export still supports **TXT** and **EPUB**.
+## v11 export fixes
+- Syncs the currently visible textarea into saved state immediately before export.
+- Normalizes TXT paragraph spacing before download.
+- Writes each OCR paragraph as its own explicit EPUB `<p>` element.
+- Gives EPUB paragraphs unique IDs and keeps page sections separate, which helps readers/importers preserve short dialogue lines.
 
-## Basic flow
-1. Load your screenshots.
-2. Adjust the crop preset if needed.
-3. Tap **Process first page**.
-4. Edit the OCR text.
-5. Tap **Next page** to save and OCR the next screenshot.
-6. Use **Previous page** to go back if needed.
-7. Export when you're done.
+## Workflow
+1. Load screenshots.
+2. Choose the crop preset.
+3. Process the first page.
+4. Edit as needed.
+5. Use **Message-page OCR** if needed.
+6. Tap **Save + next page** to continue.
+7. Export TXT or EPUB at any time.
