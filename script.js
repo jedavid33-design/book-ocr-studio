@@ -634,10 +634,22 @@
 
     if (!label) return "";
     const words = label.split(" ").filter(Boolean);
-    if (!words.length) return "";
-    label = words.slice(0, 3).join(" ");
-    if (label.length > 24) label = label.slice(0, 24).trim();
-    return label;
+    if (!words.length || words.length > 2) return "";
+    if (label.length > 18) return "";
+
+    // OCR sometimes grabs the first few words of the message itself as the
+    // speaker label. Reject phrase-like results while still allowing names.
+    const phraseWords = new Set([
+      "WHAT","WHY","WHEN","WHERE","WHO","HOW","ARE","YOU","YOUR","AND","BUT",
+      "THE","THIS","THAT","HAVE","HAS","HAD","TO","OF","FOR","WITH","ABOUT","NOT",
+      "CAN","COULD","WOULD","SHOULD","WILL","JUST","SHE","HE","THEY","WE","I"
+    ]);
+    if (words.some(w => phraseWords.has(w))) {
+      if (!(words.length === 1 && ["I","ME"].includes(words[0]))) return "";
+    }
+    if (words.length === 1 && words[0].length < 3 && words[0] !== "ME") return "";
+
+    return words.join(" ");
   }
 
   function colorDistanceSq(r, g, b, target) {
@@ -817,6 +829,24 @@
     return canvas;
   }
 
+  function highContrastCanvas(sourceCanvas) {
+    const canvas = document.createElement("canvas");
+    canvas.width = sourceCanvas.width;
+    canvas.height = sourceCanvas.height;
+    const ctx = canvas.getContext("2d", { alpha: false, willReadFrequently: true });
+    ctx.drawImage(sourceCanvas, 0, 0);
+    const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const data = image.data;
+    for (let i = 0; i < data.length; i += 4) {
+      const gray = Math.round(data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114);
+      const v = gray < 185 ? 0 : 255;
+      data[i] = data[i + 1] = data[i + 2] = v;
+      data[i + 3] = 255;
+    }
+    ctx.putImageData(image, 0, 0);
+    return canvas;
+  }
+
   function messageTextQuality(text) {
     const t = (text || "").trim();
     if (!t) return -100;
@@ -829,23 +859,29 @@
   }
 
   async function recognizeBestMessageCrop(cropped, modes = [6, 7]) {
-    const scaled = upscaleCanvas(cropped, cropped.width < 700 ? 2.4 : 1.7);
+    const scaled = upscaleCanvas(cropped, cropped.width < 700 ? 2.6 : 1.8);
+    const contrast = highContrastCanvas(scaled);
     let best = "";
     let bestScore = -Infinity;
-    for (const mode of modes) {
-      const raw = await ocrCanvas(scaled, {
-        tessedit_pageseg_mode: String(mode),
-        preserve_interword_spaces: "1",
-      });
-      const cleaned = cleanMessageText(raw);
-      const score = messageTextQuality(cleaned);
-      if (score > bestScore) {
-        best = cleaned;
-        bestScore = score;
+
+    for (const source of [scaled, contrast]) {
+      for (const mode of modes) {
+        const raw = await ocrCanvas(source, {
+          tessedit_pageseg_mode: String(mode),
+          preserve_interword_spaces: "1",
+        });
+        const cleaned = cleanMessageText(raw);
+        const score = messageTextQuality(cleaned);
+        if (score > bestScore) {
+          best = cleaned;
+          bestScore = score;
+        }
       }
     }
     scaled.width = 1;
     scaled.height = 1;
+    contrast.width = 1;
+    contrast.height = 1;
     return { text: best, score: bestScore };
   }
 
@@ -912,7 +948,7 @@
         h: Math.min(canvas.height - y, bubble.h + padY * 2),
       };
       const wide = cropCanvasRegion(canvas, wideRegion);
-      const retry = await recognizeBestMessageCrop(wide, [6, 11]);
+      const retry = await recognizeBestMessageCrop(wide, [4, 6, 11, 12]);
       wide.width = 1;
       wide.height = 1;
       if (retry.score > best.score) best = retry;
