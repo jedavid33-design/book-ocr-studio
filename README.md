@@ -1,12 +1,18 @@
-# Book OCR Studio v14
+# Book OCR Studio v16
 
-## Cross-version memory update
+## v16 changes
+- Keeps the permanent saved-progress key from v15, so version updates should continue using the same saved project.
+- Improves **Message-page OCR** for later-book layouts by:
+  - upscaling tiny message crops before OCR,
+  - trying more than one OCR segmentation mode,
+  - retrying suspicious/fragmented bubbles with a wider crop,
+  - checking a taller speaker-label area.
+- Adds a much more compact small-screen layout:
+  - smaller cards and header,
+  - compact chapter controls,
+  - screenshot preview is small in page review,
+  - taller editing area,
+  - Previous / Message OCR / Next controls stay together in a compact sticky bar,
+  - fixes the oversized navigation buttons on narrow screens.
 
-v14 keeps OCR progress under a permanent browser-storage key instead of tying it to a version number.
-
-- It can restore the saved progress created by v13/v12 when the same screenshot batch is loaded.
-- Old checkpoints are automatically migrated to the permanent key.
-- Future versions should continue using `bookOcrStudio.progress.current`, so edits, page position, crop settings, chapter-start flags, and chapter titles survive version updates.
-- Clear pages still intentionally clears saved progress.
-
-The one-page-at-a-time OCR workflow, message-page OCR, and chapter-structured EPUB export are otherwise unchanged from v13.
+The one-page-at-a-time workflow, chapter EPUB export, and saved progress behavior are unchanged.

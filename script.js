@@ -126,11 +126,38 @@
     } catch (_) {}
   }
 
-  function checkpointMatches(saved) {
+  function signatureFileName(entry) {
+    const value = String(entry || "");
+    const match = value.match(/^(.*):\d+:\d+$/);
+    return match ? match[1] : value;
+  }
+
+  function normalizedStem(name) {
+    return String(name || "")
+      .toLowerCase()
+      .replace(/\.[a-z0-9]+$/i, "")
+      .replace(/[^a-z0-9]+/g, "");
+  }
+
+  function checkpointMatchScore(saved) {
     const signature = checkpointSignature();
-    return Array.isArray(saved?.signature)
-      && saved.signature.length === signature.length
-      && saved.signature.every((v, i) => v === signature[i]);
+    if (!Array.isArray(saved?.signature) || saved.signature.length !== signature.length) return 0;
+
+    // Best case: the browser returned the files with identical metadata.
+    if (saved.signature.every((v, i) => v === signature[i])) return 3;
+
+    // iOS/Safari can hand the exact same Photos selection back with different
+    // size/lastModified metadata after a reload or deployment. Match names next.
+    const savedNames = saved.signature.map(signatureFileName);
+    const currentNames = state.files.map(f => f.name);
+    if (savedNames.every((name, i) => name === currentNames[i])) return 2;
+
+    // Last safe fallback: same number of files, same ordered filename stems.
+    // This tolerates .jpg/.jpeg/.png representation changes without attaching
+    // an old book project to an unrelated screenshot batch.
+    if (savedNames.every((name, i) => normalizedStem(name) === normalizedStem(currentNames[i]))) return 1;
+
+    return 0;
   }
 
   function applyCheckpoint(saved) {
@@ -139,13 +166,22 @@
     if (Number.isFinite(saved.cropSides)) els.cropSides.value = saved.cropSides;
 
     const byName = new Map(state.files.map(f => [f.name, f]));
-    state.pages = (saved.pages || []).map(p => ({
-      file: byName.get(p.fileName),
-      text: p.text || "",
-      chapterCandidate: !!p.chapterCandidate,
-      chapterStart: p.chapterStart != null ? !!p.chapterStart : !!p.chapterCandidate,
-      chapterTitle: p.chapterTitle || "",
-    })).filter(p => p.file);
+    const byStem = new Map(state.files.map(f => [normalizedStem(f.name), f]));
+    const savedPages = saved.pages || [];
+
+    state.pages = savedPages.map((page, index) => {
+      const file = byName.get(page.fileName)
+        || byStem.get(normalizedStem(page.fileName))
+        || state.files[index];
+      if (!file) return null;
+      return {
+        file,
+        text: page.text || "",
+        chapterCandidate: !!page.chapterCandidate,
+        chapterStart: page.chapterStart != null ? !!page.chapterStart : !!page.chapterCandidate,
+        chapterTitle: page.chapterTitle || "",
+      };
+    }).filter(Boolean);
 
     const savedIndex = Number(saved.currentPageIndex);
     state.currentPageIndex = state.pages.length
@@ -156,25 +192,33 @@
   function restoreCheckpointIfMatching() {
     try {
       const keys = [CHECKPOINT_KEY, ...LEGACY_CHECKPOINT_KEYS];
+      const candidates = [];
+
       for (const key of keys) {
         const raw = localStorage.getItem(key);
         if (!raw) continue;
 
         let saved;
         try { saved = JSON.parse(raw); } catch (_) { continue; }
-        if (!checkpointMatches(saved)) continue;
-
-        applyCheckpoint(saved);
-
-        // Migrate old-version progress into the permanent key. Future builds
-        // should keep using CHECKPOINT_KEY so version updates do not strand edits.
-        if (key !== CHECKPOINT_KEY) {
-          try { localStorage.setItem(CHECKPOINT_KEY, JSON.stringify(saved)); } catch (_) {}
-          console.info(`Migrated saved OCR progress from ${key} to ${CHECKPOINT_KEY}`);
-        }
-        return state.pages.length;
+        const score = checkpointMatchScore(saved);
+        if (!score) continue;
+        candidates.push({ key, saved, score, pageCount: Array.isArray(saved.pages) ? saved.pages.length : 0 });
       }
-      return 0;
+
+      if (!candidates.length) return 0;
+
+      // Prefer the checkpoint containing the most completed work. This matters
+      // if a newer build accidentally saved one fresh page before an older,
+      // much larger project was recovered.
+      candidates.sort((a, b) => (b.pageCount - a.pageCount) || (b.score - a.score));
+      const best = candidates[0];
+      applyCheckpoint(best.saved);
+
+      // Re-save in the permanent format with the currently selected files so
+      // future version updates no longer depend on old iOS file metadata.
+      saveCheckpoint();
+      console.info(`Recovered ${state.pages.length} pages from ${best.key} (match score ${best.score}).`);
+      return state.pages.length;
     } catch (err) {
       console.warn("Could not restore OCR checkpoint", err);
       return 0;
@@ -761,36 +805,120 @@
     return cleanBodyText(text);
   }
 
+  function upscaleCanvas(sourceCanvas, factor = 2) {
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(sourceCanvas.width * factor));
+    canvas.height = Math.max(1, Math.round(sourceCanvas.height * factor));
+    const ctx = canvas.getContext("2d", { alpha: false });
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(sourceCanvas, 0, 0, canvas.width, canvas.height);
+    return canvas;
+  }
+
+  function messageTextQuality(text) {
+    const t = (text || "").trim();
+    if (!t) return -100;
+    const letters = (t.match(/[A-Za-z]/g) || []).length;
+    const words = t.match(/[A-Za-z][A-Za-z'’-]*/g) || [];
+    const normalWords = words.filter(w => w.length >= 2).length;
+    const oneLetterWords = words.filter(w => w.length === 1 && !/^[aAI]$/.test(w)).length;
+    const junk = (t.match(/[^A-Za-z0-9\s.,!?;:'"()&—–-]/g) || []).length;
+    return letters + normalWords * 8 - oneLetterWords * 10 - junk * 5;
+  }
+
+  async function recognizeBestMessageCrop(cropped, modes = [6, 7]) {
+    const scaled = upscaleCanvas(cropped, cropped.width < 700 ? 2.4 : 1.7);
+    let best = "";
+    let bestScore = -Infinity;
+    for (const mode of modes) {
+      const raw = await ocrCanvas(scaled, {
+        tessedit_pageseg_mode: String(mode),
+        preserve_interword_spaces: "1",
+      });
+      const cleaned = cleanMessageText(raw);
+      const score = messageTextQuality(cleaned);
+      if (score > bestScore) {
+        best = cleaned;
+        bestScore = score;
+      }
+    }
+    scaled.width = 1;
+    scaled.height = 1;
+    return { text: best, score: bestScore };
+  }
+
   async function ocrBubbleLabel(canvas, bubble) {
-    const region = {
-      x: Math.max(0, bubble.x - 6),
-      y: Math.max(0, bubble.y - 42),
-      w: Math.min(canvas.width - Math.max(0, bubble.x - 6), Math.max(120, bubble.w + 12)),
-      h: Math.min(40, bubble.y),
-    };
-    if (region.h < 10) return "";
-    const cropped = cropCanvasRegion(canvas, region);
-    const text = await ocrCanvas(cropped, {
-      tessedit_pageseg_mode: "7",
-      tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz&'- ",
-      preserve_interword_spaces: "1",
-    });
-    return cleanLabel(text);
+    // Some Kindle layouts put the tiny speaker label a little farther above the bubble.
+    // Try two heights and keep the result that looks most like a short name.
+    const tries = [46, 68];
+    let best = "";
+    let bestScore = -Infinity;
+
+    for (const stripHeight of tries) {
+      const y = Math.max(0, bubble.y - stripHeight);
+      const x = Math.max(0, bubble.x - 18);
+      const region = {
+        x,
+        y,
+        w: Math.min(canvas.width - x, Math.max(150, bubble.w + 36)),
+        h: Math.min(stripHeight - 4, bubble.y),
+      };
+      if (region.h < 10) continue;
+      const cropped = cropCanvasRegion(canvas, region);
+      const scaled = upscaleCanvas(cropped, 3);
+      const raw = await ocrCanvas(scaled, {
+        tessedit_pageseg_mode: "7",
+        tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz&'- ",
+        preserve_interword_spaces: "1",
+      });
+      const label = cleanLabel(raw);
+      const words = label ? label.split(/\s+/) : [];
+      const score = label ? (30 - Math.abs(label.length - 7) - Math.max(0, words.length - 3) * 8) : -100;
+      if (score > bestScore) {
+        best = label;
+        bestScore = score;
+      }
+      scaled.width = 1;
+      scaled.height = 1;
+    }
+    return best;
   }
 
   async function ocrBubbleText(canvas, bubble) {
-    const region = {
-      x: Math.max(0, bubble.x - 10),
-      y: Math.max(0, bubble.y - 6),
-      w: Math.min(canvas.width - Math.max(0, bubble.x - 10), bubble.w + 20),
-      h: Math.min(canvas.height - Math.max(0, bubble.y - 6), bubble.h + 12),
+    const normalRegion = {
+      x: Math.max(0, bubble.x - 12),
+      y: Math.max(0, bubble.y - 8),
+      w: Math.min(canvas.width - Math.max(0, bubble.x - 12), bubble.w + 24),
+      h: Math.min(canvas.height - Math.max(0, bubble.y - 8), bubble.h + 16),
     };
-    const cropped = cropCanvasRegion(canvas, region);
-    const text = await ocrCanvas(cropped, {
-      tessedit_pageseg_mode: "6",
-      preserve_interword_spaces: "1",
-    });
-    return cleanMessageText(text);
+    const normal = cropCanvasRegion(canvas, normalRegion);
+    let best = await recognizeBestMessageCrop(normal, [6, 7]);
+    normal.width = 1;
+    normal.height = 1;
+
+    // If the first pass looks fragmented, retry with more breathing room. This helps
+    // later-book message layouts where bubble fills, padding, and font sizes change.
+    if (best.score < 55 || /(?:\b[A-Z]\b\s*){3,}/.test(best.text)) {
+      const padX = Math.max(22, Math.round(bubble.w * 0.08));
+      const padY = Math.max(14, Math.round(bubble.h * 0.14));
+      const x = Math.max(0, bubble.x - padX);
+      const y = Math.max(0, bubble.y - padY);
+      const wideRegion = {
+        x,
+        y,
+        w: Math.min(canvas.width - x, bubble.w + padX * 2),
+        h: Math.min(canvas.height - y, bubble.h + padY * 2),
+      };
+      const wide = cropCanvasRegion(canvas, wideRegion);
+      const retry = await recognizeBestMessageCrop(wide, [6, 11]);
+      wide.width = 1;
+      wide.height = 1;
+      if (retry.score > best.score) best = retry;
+    }
+
+    return best.text;
   }
 
   async function runMessagePageOcr(index) {
