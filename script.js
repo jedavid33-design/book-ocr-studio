@@ -1,6 +1,9 @@
 (() => {
   "use strict";
 
+  const BUILD_VERSION = "v13";
+  console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
+
   const $ = (id) => document.getElementById(id);
 
   const state = {
@@ -14,7 +17,7 @@
     currentPageIndex: -1,
   };
 
-  const CHECKPOINT_KEY = "bookOcrStudio.progress.v10";
+  const CHECKPOINT_KEY = "bookOcrStudio.progress.v12";
   const WORKER_RECYCLE_EVERY = 12;
 
   const els = {
@@ -100,6 +103,8 @@
           fileName: p.file.name,
           text: p.text || "",
           chapterCandidate: !!p.chapterCandidate,
+          chapterStart: !!p.chapterStart,
+          chapterTitle: p.chapterTitle || "",
         })),
       };
       localStorage.setItem(CHECKPOINT_KEY, JSON.stringify(payload));
@@ -130,6 +135,8 @@
         file: byName.get(p.fileName),
         text: p.text || "",
         chapterCandidate: !!p.chapterCandidate,
+        chapterStart: p.chapterStart != null ? !!p.chapterStart : !!p.chapterCandidate,
+        chapterTitle: p.chapterTitle || "",
       })).filter(p => p.file);
       state.currentPageIndex = state.pages.length ? clamp(Number(saved.currentPageIndex) || state.pages.length - 1, 0, state.pages.length - 1) : -1;
       return state.pages.length;
@@ -285,6 +292,50 @@
       .trim();
   }
 
+  function detectChapterTitle(text, fallbackNumber = 1) {
+    const lines = normalizedPageText(text).split("\n").map(s => s.trim()).filter(Boolean).slice(0, 6);
+    if (!lines.length) return `Chapter ${fallbackNumber}`;
+    if (/^(prologue|epilogue|interlude)\b/i.test(lines[0])) return lines[0];
+    if (/^chapter\b/i.test(lines[0])) return lines[0];
+    if (/^\d{1,3}$/.test(lines[0])) {
+      if (lines[1] && lines[1].length <= 40) return `Chapter ${lines[0]} — ${lines[1]}`;
+      return `Chapter ${lines[0]}`;
+    }
+    return lines[0].length <= 45 ? lines[0] : `Chapter ${fallbackNumber}`;
+  }
+
+  function chapterSections() {
+    const starts = state.pages.reduce((arr, page, index) => {
+      if (page.chapterStart) arr.push(index);
+      return arr;
+    }, []);
+    if (!starts.length) return [{ title: (els.bookTitle.value || "Book").trim() || "Book", start: 0, end: state.pages.length }];
+    const sections = [];
+    if (starts[0] > 0) sections.push({ title: "Opening", start: 0, end: starts[0] });
+    starts.forEach((start, i) => {
+      const end = i + 1 < starts.length ? starts[i + 1] : state.pages.length;
+      const page = state.pages[start];
+      const title = (page.chapterTitle || "").trim() || detectChapterTitle(page.text, i + 1);
+      sections.push({ title, start, end });
+    });
+    return sections.filter(section => section.end > section.start);
+  }
+
+  function stripExportedChapterHeading(text, title) {
+    const lines = normalizedPageText(text).split("\n");
+    let i = 0;
+    while (i < lines.length && !lines[i].trim()) i++;
+    const first = lines[i]?.trim() || "";
+    const second = lines[i + 1]?.trim() || "";
+    const norm = v => (v || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    const nt = norm(title), nf = norm(first), ns = norm(second);
+    if ((/^\d{1,3}$/.test(first) || /^chapter\b/i.test(first) || /^(prologue|epilogue|interlude)$/i.test(first)) && nf && nt.includes(nf)) {
+      lines.splice(i, 1);
+      if (second && ns && nt.includes(ns)) lines.splice(i, 1);
+    }
+    return lines.join("\n").trim();
+  }
+
   function combinedText() {
     syncCurrentEditor();
     return state.pages
@@ -386,6 +437,42 @@
     }
     title.append(left);
 
+    const chapterControls = document.createElement("div");
+    chapterControls.className = "chapter-controls";
+
+    const chapterCheckLabel = document.createElement("label");
+    chapterCheckLabel.className = "chapter-check";
+    const chapterCheck = document.createElement("input");
+    chapterCheck.type = "checkbox";
+    chapterCheck.checked = !!page.chapterStart;
+    const chapterCheckText = document.createElement("span");
+    chapterCheckText.textContent = "Chapter start";
+    chapterCheckLabel.append(chapterCheck, chapterCheckText);
+
+    const chapterTitleLabel = document.createElement("label");
+    chapterTitleLabel.className = "chapter-title-input";
+    const chapterTitleText = document.createElement("span");
+    chapterTitleText.textContent = "Chapter title";
+    const chapterTitleInput = document.createElement("input");
+    chapterTitleInput.type = "text";
+    chapterTitleInput.value = page.chapterTitle || "";
+    chapterTitleInput.placeholder = detectChapterTitle(page.text, index + 1);
+    chapterTitleInput.disabled = !chapterCheck.checked;
+    chapterTitleLabel.append(chapterTitleText, chapterTitleInput);
+
+    chapterCheck.addEventListener("change", () => {
+      page.chapterStart = chapterCheck.checked;
+      if (chapterCheck.checked && !page.chapterTitle) page.chapterTitle = detectChapterTitle(page.text, index + 1);
+      chapterTitleInput.disabled = !chapterCheck.checked;
+      chapterTitleInput.value = page.chapterTitle || "";
+      saveCheckpoint();
+    });
+    chapterTitleInput.addEventListener("input", () => {
+      page.chapterTitle = chapterTitleInput.value;
+      saveCheckpoint();
+    });
+    chapterControls.append(chapterCheckLabel, chapterTitleLabel);
+
     const body = document.createElement("div");
     body.className = "review-body";
 
@@ -405,7 +492,7 @@
     });
 
     body.append(img, text);
-    item.append(title, body);
+    item.append(title, chapterControls, body);
     els.reviewList.appendChild(item);
 
     updateNavigationControls();
@@ -750,7 +837,8 @@
       const canvas = makeCroppedCanvas(img);
       const result = await worker.recognize(canvas);
       const text = cleanBodyText(result?.data?.text || "");
-      const pageData = { file, text, chapterCandidate: chapterHeuristic(text) };
+      const isChapter = chapterHeuristic(text);
+      const pageData = { file, text, chapterCandidate: isChapter, chapterStart: isChapter, chapterTitle: detectChapterTitle(text, index + 1) };
 
       if (index < state.pages.length) state.pages[index] = pageData;
       else state.pages.push(pageData);
@@ -834,18 +922,18 @@
 
   async function buildEpub() {
     if (!window.JSZip) throw new Error("JSZip did not load.");
-    const text = combinedText();
-    if (!text) throw new Error("There is no OCR text to export.");
+    syncCurrentEditor();
+    if (!state.pages.some(p => normalizedPageText(p.text))) throw new Error("There is no OCR text to export.");
 
     const title = (els.bookTitle.value || "Untitled Book").trim();
     const author = (els.bookAuthor.value || "Unknown Author").trim();
     const safeTitle = cleanFilename(title);
     const identifier = `urn:uuid:${crypto.randomUUID ? crypto.randomUUID() : Date.now()}`;
     const modified = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+    const sections = chapterSections();
 
     const zip = new JSZip();
     zip.file("mimetype", "application/epub+zip", { compression: "STORE" });
-
     zip.file("META-INF/container.xml", `<?xml version="1.0" encoding="UTF-8"?>
 <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
   <rootfiles>
@@ -853,32 +941,48 @@
   </rootfiles>
 </container>`);
 
-    syncCurrentEditor();
-    const pageSections = state.pages
-      .map((page, pageIndex) => {
-        const paragraphs = exportParagraphs(page.text)
-          .map((paragraph, paragraphIndex) => `<p id="p-${pageIndex + 1}-${paragraphIndex + 1}">${escapeXml(paragraph)}</p>`)
-          .join("\n");
-        return paragraphs ? `<section class="ocr-page" id="page-${pageIndex + 1}">${paragraphs}</section>` : "";
-      })
-      .filter(Boolean)
-      .join("\n");
+    const manifest = [
+      '    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>',
+      '    <item id="style" href="style.css" media-type="text/css"/>'
+    ];
+    const spine = [];
+    const navItems = [];
 
-    zip.file("EPUB/book.xhtml", `<?xml version="1.0" encoding="UTF-8"?>
+    sections.forEach((section, sectionIndex) => {
+      const fileName = `chapter-${String(sectionIndex + 1).padStart(3, "0")}.xhtml`;
+      const itemId = `chapter-${sectionIndex + 1}`;
+      const bodyParagraphs = [];
+
+      for (let pageIndex = section.start; pageIndex < section.end; pageIndex++) {
+        let pageText = state.pages[pageIndex]?.text || "";
+        if (pageIndex === section.start && state.pages[pageIndex]?.chapterStart) {
+          pageText = stripExportedChapterHeading(pageText, section.title);
+        }
+        exportParagraphs(pageText).forEach((paragraph, paragraphIndex) => {
+          bodyParagraphs.push(`<p id="p-${pageIndex + 1}-${paragraphIndex + 1}">${escapeXml(paragraph)}</p>`);
+        });
+      }
+
+      zip.file(`EPUB/${fileName}`, `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en">
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="en">
 <head>
   <meta charset="utf-8"/>
-  <title>${escapeXml(title)}</title>
+  <title>${escapeXml(section.title)}</title>
   <link rel="stylesheet" type="text/css" href="style.css"/>
 </head>
 <body>
-  <section epub:type="bodymatter" xmlns:epub="http://www.idpf.org/2007/ops">
-    <h1>${escapeXml(title)}</h1>
-    ${pageSections}
+  <section epub:type="chapter">
+    <h1>${escapeXml(section.title)}</h1>
+    ${bodyParagraphs.join("\n    ")}
   </section>
 </body>
 </html>`);
+
+      manifest.push(`    <item id="${itemId}" href="${fileName}" media-type="application/xhtml+xml"/>`);
+      spine.push(`    <itemref idref="${itemId}"/>`);
+      navItems.push(`<li><a href="${fileName}">${escapeXml(section.title)}</a></li>`);
+    });
 
     zip.file("EPUB/nav.xhtml", `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
@@ -887,12 +991,12 @@
 <body>
 <nav epub:type="toc" id="toc">
   <h1>Contents</h1>
-  <ol><li><a href="book.xhtml">${escapeXml(title)}</a></li></ol>
+  <ol>${navItems.join("\n")}</ol>
 </nav>
 </body>
 </html>`);
 
-    zip.file("EPUB/style.css", `body{font-family:serif;line-height:1.5;margin:5%;}p{display:block;margin:0 0 1em;white-space:normal;}section.ocr-page{display:block;margin:0;padding:0;}h1{text-align:center;margin:2em 0;}`);
+    zip.file("EPUB/style.css", `body{font-family:serif;line-height:1.5;margin:5%;}p{display:block;margin:0 0 1em;white-space:normal;}h1{font-size:1.5em;margin:0 0 1.25em;}`);
 
     let coverManifest = "";
     let coverMeta = "";
@@ -904,14 +1008,12 @@
       const ext = type.includes("png") ? "png" : type.includes("webp") ? "webp" : "jpg";
       const coverName = `cover.${ext}`;
       zip.file(`EPUB/${coverName}`, await state.coverFile.arrayBuffer());
-
       zip.file("EPUB/cover.xhtml", `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml">
 <head><meta charset="utf-8"/><title>Cover</title><style>html,body{margin:0;padding:0;text-align:center}img{max-width:100%;max-height:100vh}</style></head>
 <body><img src="${coverName}" alt="Cover"/></body>
 </html>`);
-
       coverManifest = `
     <item id="cover-image" href="${coverName}" media-type="${type}" properties="cover-image"/>
     <item id="cover-page" href="cover.xhtml" media-type="application/xhtml+xml"/>`;
@@ -930,12 +1032,10 @@
     <meta property="dcterms:modified">${modified}</meta>${coverMeta}
   </metadata>
   <manifest>
-    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
-    <item id="book" href="book.xhtml" media-type="application/xhtml+xml"/>
-    <item id="style" href="style.css" media-type="text/css"/>${coverManifest}
+${manifest.join("\n")}${coverManifest}
   </manifest>
   <spine>
-${coverSpine}    <itemref idref="book"/>
+${coverSpine}${spine.join("\n")}
   </spine>${coverGuide}
 </package>`);
 
@@ -946,7 +1046,7 @@ ${coverSpine}    <itemref idref="book"/>
       compressionOptions: { level: 6 }
     });
 
-    downloadBlob(blob, `${safeTitle}.epub`);
+    downloadBlob(blob, `${safeTitle}-v13.epub`);
   }
 
   async function downloadEpub() {

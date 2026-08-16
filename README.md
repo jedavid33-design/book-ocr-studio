@@ -1,18 +1,10 @@
-# Book OCR Studio v11
+# Book OCR Studio v13
 
-One-page-at-a-time OCR workflow with safer TXT/EPUB export.
+This build fixes a browser-cache problem that could leave an older `script.js` running even after newer GitHub Pages files were uploaded.
 
-## v11 export fixes
-- Syncs the currently visible textarea into saved state immediately before export.
-- Normalizes TXT paragraph spacing before download.
-- Writes each OCR paragraph as its own explicit EPUB `<p>` element.
-- Gives EPUB paragraphs unique IDs and keeps page sections separate, which helps readers/importers preserve short dialogue lines.
-
-## Workflow
-1. Load screenshots.
-2. Choose the crop preset.
-3. Process the first page.
-4. Edit as needed.
-5. Use **Message-page OCR** if needed.
-6. Tap **Save + next page** to continue.
-7. Export TXT or EPUB at any time.
+## Important changes
+- `script.js?v=13` and `styles.css?v=13` force Safari/GitHub Pages to fetch the new build.
+- The page visibly says **LOCAL BOOK TOOL · v13** at the top so you can confirm the new code loaded.
+- EPUB files temporarily export with `-v13` in the filename so the test file cannot be confused with an older export.
+- The v12 chapter-structured EPUB exporter is unchanged: each marked chapter becomes its own XHTML file and TOC entry.
+- The existing v12 checkpoint key is preserved so saved OCR text is not intentionally discarded.

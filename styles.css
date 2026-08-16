@@ -289,3 +289,26 @@ dialog::backdrop { background: rgba(30,25,20,.48); backdrop-filter: blur(5px); }
   .nav-row { flex-direction: column; }
   .nav-row .button { width: 100%; }
 }
+
+.chapter-controls {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  align-items: end;
+  padding: 12px;
+  border-top: 1px solid var(--line);
+  background: rgba(255,255,255,.7);
+}
+.chapter-check {
+  display: flex;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 7px;
+  padding-bottom: 10px;
+}
+.chapter-check span { color: var(--ink); font-weight: 700; }
+.chapter-title-input { min-width: 0; }
+@media (max-width: 640px) {
+  .chapter-controls { grid-template-columns: 1fr; }
+  .chapter-check { padding-bottom: 0; }
+}
