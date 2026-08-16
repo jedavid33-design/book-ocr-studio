@@ -278,12 +278,32 @@
       const centerBubble = (bubble.x0 + bubble.x1) / 2;
       const aligned = Math.abs(centerLabel - centerBubble) <= canvasWidth * 0.28;
       const close = gap >= 0 && gap <= 26;
+      const score = (labelLike ? 1 : 0) + (bubbleLike ? 1 : 0) + (aligned ? 1 : 0) + (close ? 1 : 0);
       if(labelLike && bubbleLike && aligned && close){
-        pairs.push({ label, bubble, top: label.y0, bottom: bubble.y1 });
+        pairs.push({ label, bubble, top: label.y0, bottom: bubble.y1, score });
         used.add(i); used.add(i + 1); i += 1;
       }
     }
     return pairs;
+  }
+
+  function groupPairsIntoChatRegions(pairs){
+    if(!pairs.length) return [];
+    const groups = [];
+    let current = { pairs: [pairs[0]], top: pairs[0].top, bottom: pairs[0].bottom };
+    for(let i = 1; i < pairs.length; i++){
+      const pair = pairs[i];
+      const gap = pair.top - current.bottom;
+      if(gap <= 90){
+        current.pairs.push(pair);
+        current.bottom = pair.bottom;
+      } else {
+        groups.push(current);
+        current = { pairs: [pair], top: pair.top, bottom: pair.bottom };
+      }
+    }
+    groups.push(current);
+    return groups;
   }
 
   async function recognizeCanvasText(worker, canvas){
@@ -294,6 +314,7 @@
   async function runMessagePageOcr(index,button){
     if(!state.pages[index]) return;
     const old = button.textContent;
+    const originalText = state.pages[index].text || "";
     button.disabled = true;
     button.textContent = "Working…";
     try{
@@ -305,54 +326,61 @@
       const pairs = detectMessagePairsFromRuns(runs, cropped.width);
       if(!pairs.length) throw new Error("No message-bubble pairs were detected on this page.");
 
-      const blocks = [];
-      let cursorY = 0;
-      for(const pair of pairs){
-        if(pair.top - cursorY > 24){
-          blocks.push({ type: "prose", region: { x0: 0, x1: cropped.width, y0: cursorY, y1: pair.top - 10 } });
-        }
-        blocks.push({ type: "message", label: pair.label, bubble: pair.bubble });
-        cursorY = pair.bottom + 10;
-      }
-      if(cropped.height - cursorY > 24){
-        blocks.push({ type: "prose", region: { x0: 0, x1: cropped.width, y0: cursorY, y1: cropped.height } });
-      }
-
+      const chatRegions = groupPairsIntoChatRegions(pairs);
       const out = [];
-      for(const block of blocks){
-        if(block.type === "prose"){
-          const proseCanvas = cropCanvasRegion(cropped, block.region, 10, 6, true);
+      let cursorY = 0;
+      let confidentMessages = 0;
+
+      for(const region of chatRegions){
+        if(region.top - cursorY > 24){
+          const proseCanvas = cropCanvasRegion(cropped, { x0: 0, x1: cropped.width, y0: cursorY, y1: region.top - 10 }, 10, 6, true);
           const proseText = await recognizeCanvasText(worker, proseCanvas);
           if(proseText) out.push(proseText);
-          continue;
         }
 
-        const labelCanvas = cropCanvasRegion(cropped, block.label, 10, 6, false);
-        const bubbleCanvas = cropCanvasRegion(cropped, block.bubble, 14, 10, false);
-        const labelText = cleanOcrInlineText(await recognizeCanvasText(worker, labelCanvas), "label");
-        const bubbleText = normalizeMessageText(await recognizeCanvasText(worker, bubbleCanvas));
+        const regionMessages = [];
+        for(const pair of region.pairs){
+          const labelCanvas = cropCanvasRegion(cropped, pair.label, 10, 6, false);
+          const bubbleCanvas = cropCanvasRegion(cropped, pair.bubble, 14, 10, false);
+          const labelText = cleanOcrInlineText(await recognizeCanvasText(worker, labelCanvas), "label");
+          const bubbleText = normalizeMessageText(await recognizeCanvasText(worker, bubbleCanvas));
+          if(labelText && looksLikeSpeakerLabel(labelText) && bubbleText){
+            regionMessages.push(`${labelText}: ${bubbleText}`);
+            confidentMessages += 1;
+          }
+        }
 
-        if(labelText && looksLikeSpeakerLabel(labelText) && bubbleText){
-          out.push(`${labelText}: ${bubbleText}`);
+        if(regionMessages.length){
+          out.push(regionMessages.join("\n\n"));
         } else {
-          const fallbackRegion = { x0: Math.min(block.label.x0, block.bubble.x0), x1: Math.max(block.label.x1, block.bubble.x1), y0: block.label.y0, y1: block.bubble.y1 };
-          const fallbackCanvas = cropCanvasRegion(cropped, fallbackRegion, 14, 10, false);
+          const fallbackCanvas = cropCanvasRegion(cropped, { x0: 0, x1: cropped.width, y0: Math.max(0, region.top - 8), y1: Math.min(cropped.height, region.bottom + 8) }, 0, 0, true);
           const fallbackText = await recognizeCanvasText(worker, fallbackCanvas);
           if(fallbackText) out.push(fallbackText);
         }
+
+        cursorY = region.bottom + 10;
+      }
+
+      if(cropped.height - cursorY > 24){
+        const proseCanvas = cropCanvasRegion(cropped, { x0: 0, x1: cropped.width, y0: cursorY, y1: cropped.height }, 10, 6, true);
+        const proseText = await recognizeCanvasText(worker, proseCanvas);
+        if(proseText) out.push(proseText);
       }
 
       const finalText = out.join("\n\n").replace(/\n{3,}/g, "\n\n").trim();
-      if(!finalText) throw new Error("No text was recovered.");
+      if(!finalText || confidentMessages < 2){
+        throw new Error("The page did not produce enough confident message matches.");
+      }
       state.pages[index].text = finalText;
       state.pages[index].detectedChapterStart = chapterHeuristic(finalText);
       if(!state.pages[index].chapterTouched) state.pages[index].chapterStart = state.pages[index].detectedChapterStart;
       renderReview();
-      setStatus(`Page ${index + 1} reprocessed with visual bubble detection.`);
+      setStatus(`Page ${index + 1} reprocessed with safer chat-section replacement.`);
     }catch(err){
       console.error(err);
+      state.pages[index].text = originalText;
       alert(`Could not run message-page OCR: ${err.message || err}`);
-      setStatus(`Message-page OCR failed on page ${index + 1}.`);
+      setStatus(`Message-page OCR failed on page ${index + 1}. Original OCR was preserved.`);
     }finally{
       button.disabled = false;
       button.textContent = old;
