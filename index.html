@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#f6efe4" />
+  <title>Book OCR Studio</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">LOCAL BOOK TOOL</p>
+      <h1>Book OCR Studio</h1>
+      <p class="subhead">Bulk crop screenshots, OCR them in order, fix chapter openings, and export TXT or EPUB.</p>
+    </div>
+  </header>
+
+  <main class="app-shell">
+    <section class="card">
+      <h2>1. Book info</h2>
+      <div class="grid two">
+        <label>
+          <span>Title</span>
+          <input id="bookTitle" type="text" placeholder="Rewind It Back" />
+        </label>
+        <label>
+          <span>Author</span>
+          <input id="bookAuthor" type="text" placeholder="Author name" />
+        </label>
+      </div>
+      <label class="file-field">
+        <span>Book cover (optional, used for EPUB)</span>
+        <input id="coverInput" type="file" accept="image/*" />
+      </label>
+      <div id="coverPreviewWrap" class="cover-preview hidden">
+        <img id="coverPreview" alt="Selected cover preview" />
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>2. Add screenshots</h2>
+      <label class="dropzone" id="dropzone">
+        <input id="imageInput" type="file" accept="image/*" multiple />
+        <strong>Choose book screenshots</strong>
+        <span>Select the whole batch. Files are sorted naturally by filename.</span>
+      </label>
+      <div class="summary-row">
+        <span id="fileCount">0 pages loaded</span>
+        <button id="clearImages" class="button ghost" type="button">Clear pages</button>
+      </div>
+      <div id="thumbStrip" class="thumb-strip" aria-live="polite"></div>
+    </section>
+
+    <section class="card">
+      <h2>3. Crop preset</h2>
+      <div class="preset-row">
+        <button class="chip active" data-preset="none" type="button">None</button>
+        <button class="chip" data-preset="cloud" type="button">CloudLibrary footer</button>
+        <button class="chip" data-preset="kindle" type="button">Kindle header</button>
+      </div>
+
+      <div class="grid three">
+        <label>
+          <span>Crop top (px)</span>
+          <input id="cropTop" type="number" min="0" value="0" inputmode="numeric" />
+        </label>
+        <label>
+          <span>Crop bottom (px)</span>
+          <input id="cropBottom" type="number" min="0" value="0" inputmode="numeric" />
+        </label>
+        <label>
+          <span>Crop left/right (px)</span>
+          <input id="cropSides" type="number" min="0" value="0" inputmode="numeric" />
+        </label>
+      </div>
+
+      <p class="hint">Presets are based on your 1488 × 2266 screenshots: CloudLibrary removes 75 px from the bottom; Kindle removes 150 px from the top. You can adjust either value.</p>
+
+      <div class="preview-panel">
+        <div class="preview-head">
+          <strong>Crop preview</strong>
+          <span id="previewDims"></span>
+        </div>
+        <canvas id="previewCanvas"></canvas>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>4. OCR</h2>
+      <p class="hint">OCR runs in your browser with Tesseract.js. The first run downloads the OCR engine/language data; your screenshots themselves are processed locally in the page.</p>
+
+      <div class="actions">
+        <button id="processBtn" class="button primary" type="button" disabled>Process all pages</button>
+        <button id="stopBtn" class="button ghost" type="button" disabled>Stop after current page</button>
+      </div>
+
+      <div class="progress-wrap hidden" id="progressWrap">
+        <div class="progress-meta">
+          <span id="progressLabel">Starting…</span>
+          <span id="progressPercent">0%</span>
+        </div>
+        <progress id="progressBar" max="100" value="0"></progress>
+      </div>
+
+      <div id="statusBox" class="status-box" role="status">Add screenshots to begin.</div>
+    </section>
+
+    <section class="card hidden" id="reviewSection">
+      <div class="section-head">
+        <div>
+          <h2>5. Review text</h2>
+          <p class="hint">Likely chapter-opening pages are flagged so you can quickly check for drop-cap OCR problems.</p>
+        </div>
+        <div class="review-tools">
+          <input id="reviewSearch" type="search" placeholder="Search extracted text…" />
+          <label class="check">
+            <input id="chapterOnly" type="checkbox" />
+            <span>Chapter candidates only</span>
+          </label>
+        </div>
+      </div>
+      <div id="reviewList" class="review-list"></div>
+    </section>
+
+    <section class="card hidden" id="exportSection">
+      <h2>6. Export</h2>
+      <div class="actions">
+        <button id="downloadTxt" class="button primary" type="button">Download TXT</button>
+        <button id="downloadEpub" class="button secondary" type="button">Download EPUB</button>
+      </div>
+      <p class="hint">EPUB export uses your title, author, cover image, and the edited OCR text above.</p>
+    </section>
+  </main>
+
+  <dialog id="rescueDialog">
+    <form method="dialog" class="dialog-card">
+      <div class="dialog-head">
+        <div>
+          <p class="eyebrow">DROP-CAP RESCUE</p>
+          <h2>Recover chapter opening</h2>
+        </div>
+        <button class="icon-button" value="cancel" aria-label="Close">×</button>
+      </div>
+
+      <p class="hint">This runs OCR on just the opening area while trimming the left edge where the large drop cap sits. Adjust the region if needed.</p>
+
+      <div class="grid three">
+        <label>
+          <span>Left trim (%)</span>
+          <input id="rescueLeft" type="number" min="0" max="40" value="11" />
+        </label>
+        <label>
+          <span>Top (%)</span>
+          <input id="rescueTop" type="number" min="0" max="80" value="20" />
+        </label>
+        <label>
+          <span>Bottom (%)</span>
+          <input id="rescueBottom" type="number" min="20" max="100" value="58" />
+        </label>
+      </div>
+
+      <label>
+        <span>Drop-cap letter (optional)</span>
+        <input id="rescueLetter" type="text" maxlength="2" placeholder="T" />
+      </label>
+
+      <div class="rescue-preview">
+        <canvas id="rescueCanvas"></canvas>
+      </div>
+
+      <div class="actions">
+        <button id="runRescue" class="button primary" type="button">OCR this region</button>
+      </div>
+
+      <label>
+        <span>Recovered opening text</span>
+        <textarea id="rescueText" rows="6" placeholder="Recovered paragraph will appear here…"></textarea>
+      </label>
+
+      <div class="actions end">
+        <button id="replaceOpening" class="button secondary" type="button">Insert at top of page text</button>
+        <button class="button ghost" value="cancel">Close</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>
