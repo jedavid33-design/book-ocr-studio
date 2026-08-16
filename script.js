@@ -150,22 +150,126 @@
     }catch(err){console.error(err);setStatus(`OCR error: ${err.message||err}`);}finally{els.processBtn.disabled=!state.files.length;els.stopBtn.disabled=true;}
   }
 
-  function findHorizontalRegions(canvas){
-    const maxW=900,scale=Math.min(1,maxW/canvas.width),w=Math.round(canvas.width*scale),h=Math.round(canvas.height*scale),tmp=document.createElement("canvas");tmp.width=w;tmp.height=h;const ctx=tmp.getContext("2d",{alpha:false});ctx.drawImage(canvas,0,0,w,h);const data=ctx.getImageData(0,0,w,h).data;
-    const scores=new Array(h).fill(0);for(let y=0;y<h;y++){let count=0;for(let x=0;x<w;x+=2){const i=(y*w+x)*4,lum=.2126*data[i]+.7152*data[i+1]+.0722*data[i+2];if(lum<205)count++;}scores[y]=count;}
-    const active=scores.map(v=>v>Math.max(5,w*.008));const runs=[];let start=null;for(let y=0;y<h;y++){if(active[y]&&start===null)start=y;if((!active[y]||y===h-1)&&start!==null){const end=active[y]&&y===h-1?y:y-1;if(end-start>=2)runs.push([start,end]);start=null;}}
-    const merged=[];for(const run of runs){if(!merged.length){merged.push(run);continue;}const prev=merged[merged.length-1],gap=run[0]-prev[1]-1;if(gap<=20&&run[1]-prev[0]<=180)prev[1]=run[1];else merged.push(run);}
-    return merged.map(([a,b])=>({y:Math.max(0,Math.round((a-10)/scale)),h:Math.min(canvas.height,Math.round((b-a+21)/scale))})).filter(r=>r.h>20);
+  function getLineBox(obj){
+    const b=obj?.bbox||obj||{};
+    const x0=Number(b.x0??b.left??0), y0=Number(b.y0??b.top??0), x1=Number(b.x1??b.right??x0), y1=Number(b.y1??b.bottom??y0);
+    return {x0,y0,x1,y1,w:Math.max(0,x1-x0),h:Math.max(0,y1-y0)};
   }
 
-  function normalizeMessageChunk(text){return (text||"").replace(/\r/g,"").split("\n").map(l=>l.replace(/[ \t]+/g," ").trim()).filter(l=>l&& !/^[=<>©®•·_|~]+$/.test(l)&& !/^[.,:;'-]{1,3}$/.test(l)).join("\n").trim();}
+  function cleanOcrInlineText(text,mode="text"){
+    let out=(text||"").replace(/\r/g,"").replace(/[ \t]+/g," ").trim();
+    out=out.replace(/[|¦]/g,"I").replace(/[“”]/g,'"').replace(/[‘’]/g,"'");
+    out=out.replace(/\s+([,.;:!?])/g,"$1").replace(/([({\["'])\s+/g,"$1").replace(/\s+([)}\]"'])/g,"$1");
+    out=out.replace(/\bI\s+will\b/gi,"I will").replace(/\bI\s+know\b/gi,"I know").replace(/\bI\s+hate\b/gi,"I hate");
+    if(mode==="label") out=out.replace(/[^A-Za-z0-9 '&.-]/g,"").replace(/\s+/g," ").trim().toUpperCase();
+    return out;
+  }
+
+  function looksLikeSpeakerLabel(text){
+    const raw=cleanOcrInlineText(text,"label");
+    if(!raw||raw.length<2||raw.length>24) return false;
+    if(/\d{2,}/.test(raw)) return false;
+    const tokens=raw.split(/\s+/).filter(Boolean);
+    if(tokens.length>3) return false;
+    const letters=raw.replace(/[^A-Z]/g,"");
+    if(letters.length<2||letters.length>18) return false;
+    return /^[A-Z0-9 '&.-]+$/.test(raw);
+  }
+
+  function lineCenterY(line){ return line.y0 + (line.h/2); }
+
+  function extractRecognizedLines(result){
+    const out=[];
+    const rawLines=Array.isArray(result?.data?.lines) ? result.data.lines : [];
+    if(rawLines.length){
+      rawLines.forEach((entry,idx)=>{
+        const text=cleanOcrInlineText(entry?.text||"");
+        if(!text) return;
+        const box=getLineBox(entry);
+        out.push({...box,text,idx});
+      });
+    } else {
+      const pieces=(result?.data?.text||"").replace(/\r/g,"").split("\n").map(s=>cleanOcrInlineText(s)).filter(Boolean);
+      pieces.forEach((t,idx)=>out.push({x0:0,y0:idx*32,x1:t.length*10,y1:idx*32+24,w:t.length*10,h:24,text:t,idx}));
+    }
+    out.sort((a,b)=>{
+      const dy=lineCenterY(a)-lineCenterY(b);
+      if(Math.abs(dy)>Math.max(8,Math.min(a.h,b.h)*0.6)) return dy;
+      return a.x0-b.x0;
+    });
+    return out;
+  }
+
+  function buildParagraphFromLines(lines){
+    if(!lines.length) return "";
+    const parts=[];
+    for(let i=0;i<lines.length;i++){
+      const line=lines[i], prev=i?lines[i-1]:null;
+      if(prev){
+        const gap=line.y0-prev.y1;
+        const paraBreak=gap>Math.max(28, prev.h*1.7);
+        if(paraBreak) parts.push("\n\n");
+        else parts.push(" ");
+      }
+      parts.push(line.text);
+    }
+    return parts.join("").replace(/\n{3,}/g,"\n\n").trim();
+  }
+
+  function collectMessageLines(lines,startIndex){
+    const messageLines=[];
+    let i=startIndex;
+    let prev=null;
+    while(i<lines.length && !looksLikeSpeakerLabel(lines[i].text)){
+      const line=lines[i];
+      if(!prev){
+        if(line.y0-lines[startIndex-1].y1 > Math.max(90, lines[startIndex-1].h*3)) break;
+        messageLines.push(line); prev=line; i++; continue;
+      }
+      const gap=line.y0-prev.y1;
+      if(gap>Math.max(34, prev.h*1.7)) break;
+      messageLines.push(line); prev=line; i++;
+    }
+    return {messageLines,nextIndex:i};
+  }
+
+  function formatMessagePageFromLines(lines){
+    const blocks=[];
+    let prose=[];
+    const flushProse=()=>{
+      const text=buildParagraphFromLines(prose);
+      if(text) blocks.push(text);
+      prose=[];
+    };
+
+    for(let i=0;i<lines.length;){
+      const line=lines[i];
+      if(looksLikeSpeakerLabel(line.text) && i+1<lines.length){
+        const label=cleanOcrInlineText(line.text,"label");
+        const firstGap=lines[i+1].y0-line.y1;
+        if(firstGap<=Math.max(90, line.h*3)){
+          const {messageLines,nextIndex}=collectMessageLines(lines,i+1);
+          if(messageLines.length){
+            flushProse();
+            const msg=buildParagraphFromLines(messageLines).replace(/\n+/g," ").replace(/\s{2,}/g," ").trim();
+            blocks.push(`${label}: ${msg}`);
+            i=nextIndex;
+            continue;
+          }
+        }
+      }
+      prose.push(line);
+      i++;
+    }
+    flushProse();
+    return blocks.join("\n\n").replace(/\n{3,}/g,"\n\n").trim();
+  }
 
   async function runMessagePageOcr(index,button){
     if(!state.pages[index])return;const old=button.textContent;button.disabled=true;button.textContent="Working…";
     try{
-      setStatus(`Re-processing page ${index+1} as a message page…`);const worker=await ensureWorker(),img=await loadImageFromFile(state.pages[index].file),cropped=makeCroppedCanvas(img),regions=findHorizontalRegions(cropped),chunks=[];
-      for(let r=0;r<regions.length;r++){const reg=regions[r],band=document.createElement("canvas");band.width=cropped.width;band.height=reg.h;const ctx=band.getContext("2d",{alpha:false});ctx.fillStyle="#fff";ctx.fillRect(0,0,band.width,band.height);ctx.drawImage(cropped,0,reg.y,cropped.width,reg.h,0,0,band.width,band.height);const result=await worker.recognize(band);const t=normalizeMessageChunk(result?.data?.text||"");if(t)chunks.push(t);}
-      const finalText=chunks.join("\n\n").replace(/\n{3,}/g,"\n\n").trim();if(!finalText)throw new Error("No text was recovered.");state.pages[index].text=finalText;state.pages[index].detectedChapterStart=chapterHeuristic(finalText);if(!state.pages[index].chapterTouched)state.pages[index].chapterStart=state.pages[index].detectedChapterStart;renderReview();setStatus(`Page ${index+1} reprocessed in top-to-bottom message regions.`);
+      setStatus(`Re-processing page ${index+1} as a message page…`);const worker=await ensureWorker(),img=await loadImageFromFile(state.pages[index].file),cropped=makeCroppedCanvas(img),result=await worker.recognize(cropped),lines=extractRecognizedLines(result),finalText=formatMessagePageFromLines(lines);
+      if(!finalText)throw new Error("No text was recovered.");state.pages[index].text=finalText;state.pages[index].detectedChapterStart=chapterHeuristic(finalText);if(!state.pages[index].chapterTouched)state.pages[index].chapterStart=state.pages[index].detectedChapterStart;renderReview();setStatus(`Page ${index+1} reprocessed with speaker/message pairing.`);
     }catch(err){console.error(err);alert(`Could not run message-page OCR: ${err.message||err}`);setStatus(`Message-page OCR failed on page ${index+1}.`);}finally{button.disabled=false;button.textContent=old;}
   }
 
