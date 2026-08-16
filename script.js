@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "v13";
+  const BUILD_VERSION = "v14";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -17,7 +17,13 @@
     currentPageIndex: -1,
   };
 
-  const CHECKPOINT_KEY = "bookOcrStudio.progress.v12";
+  const CHECKPOINT_KEY = "bookOcrStudio.progress.current";
+  const LEGACY_CHECKPOINT_KEYS = [
+    "bookOcrStudio.progress.v12",
+    "bookOcrStudio.progress.v11",
+    "bookOcrStudio.progress.v10",
+    "bookOcrStudio.progress.v9",
+  ];
   const WORKER_RECYCLE_EVERY = 12;
 
   const els = {
@@ -114,32 +120,61 @@
   }
 
   function clearCheckpoint() {
-    try { localStorage.removeItem(CHECKPOINT_KEY); } catch (_) {}
+    try {
+      localStorage.removeItem(CHECKPOINT_KEY);
+      LEGACY_CHECKPOINT_KEYS.forEach(key => localStorage.removeItem(key));
+    } catch (_) {}
+  }
+
+  function checkpointMatches(saved) {
+    const signature = checkpointSignature();
+    return Array.isArray(saved?.signature)
+      && saved.signature.length === signature.length
+      && saved.signature.every((v, i) => v === signature[i]);
+  }
+
+  function applyCheckpoint(saved) {
+    if (Number.isFinite(saved.cropTop)) els.cropTop.value = saved.cropTop;
+    if (Number.isFinite(saved.cropBottom)) els.cropBottom.value = saved.cropBottom;
+    if (Number.isFinite(saved.cropSides)) els.cropSides.value = saved.cropSides;
+
+    const byName = new Map(state.files.map(f => [f.name, f]));
+    state.pages = (saved.pages || []).map(p => ({
+      file: byName.get(p.fileName),
+      text: p.text || "",
+      chapterCandidate: !!p.chapterCandidate,
+      chapterStart: p.chapterStart != null ? !!p.chapterStart : !!p.chapterCandidate,
+      chapterTitle: p.chapterTitle || "",
+    })).filter(p => p.file);
+
+    const savedIndex = Number(saved.currentPageIndex);
+    state.currentPageIndex = state.pages.length
+      ? clamp(Number.isFinite(savedIndex) ? savedIndex : state.pages.length - 1, 0, state.pages.length - 1)
+      : -1;
   }
 
   function restoreCheckpointIfMatching() {
     try {
-      const raw = localStorage.getItem(CHECKPOINT_KEY);
-      if (!raw) return 0;
-      const saved = JSON.parse(raw);
-      const signature = checkpointSignature();
-      if (!Array.isArray(saved.signature) || saved.signature.length !== signature.length) return 0;
-      if (!saved.signature.every((v, i) => v === signature[i])) return 0;
+      const keys = [CHECKPOINT_KEY, ...LEGACY_CHECKPOINT_KEYS];
+      for (const key of keys) {
+        const raw = localStorage.getItem(key);
+        if (!raw) continue;
 
-      if (Number.isFinite(saved.cropTop)) els.cropTop.value = saved.cropTop;
-      if (Number.isFinite(saved.cropBottom)) els.cropBottom.value = saved.cropBottom;
-      if (Number.isFinite(saved.cropSides)) els.cropSides.value = saved.cropSides;
+        let saved;
+        try { saved = JSON.parse(raw); } catch (_) { continue; }
+        if (!checkpointMatches(saved)) continue;
 
-      const byName = new Map(state.files.map(f => [f.name, f]));
-      state.pages = (saved.pages || []).map(p => ({
-        file: byName.get(p.fileName),
-        text: p.text || "",
-        chapterCandidate: !!p.chapterCandidate,
-        chapterStart: p.chapterStart != null ? !!p.chapterStart : !!p.chapterCandidate,
-        chapterTitle: p.chapterTitle || "",
-      })).filter(p => p.file);
-      state.currentPageIndex = state.pages.length ? clamp(Number(saved.currentPageIndex) || state.pages.length - 1, 0, state.pages.length - 1) : -1;
-      return state.pages.length;
+        applyCheckpoint(saved);
+
+        // Migrate old-version progress into the permanent key. Future builds
+        // should keep using CHECKPOINT_KEY so version updates do not strand edits.
+        if (key !== CHECKPOINT_KEY) {
+          try { localStorage.setItem(CHECKPOINT_KEY, JSON.stringify(saved)); } catch (_) {}
+          console.info(`Migrated saved OCR progress from ${key} to ${CHECKPOINT_KEY}`);
+        }
+        return state.pages.length;
+      }
+      return 0;
     } catch (err) {
       console.warn("Could not restore OCR checkpoint", err);
       return 0;
@@ -1046,7 +1081,7 @@ ${coverSpine}${spine.join("\n")}
       compressionOptions: { level: 6 }
     });
 
-    downloadBlob(blob, `${safeTitle}-v13.epub`);
+    downloadBlob(blob, `${safeTitle}-v14.epub`);
   }
 
   async function downloadEpub() {
