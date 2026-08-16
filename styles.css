@@ -229,6 +229,13 @@ progress { width: 100%; height: 12px; }
   padding: 12px;
 }
 .review-body img { width: 100%; border-radius: 9px; border: 1px solid var(--line); }
+.review-right { display:grid; gap:10px; }
+.page-meta { display:grid; grid-template-columns:auto minmax(0,1fr); gap:12px; align-items:end; }
+.mini-check { display:flex; align-items:center; gap:8px; }
+.mini-check input { width:18px; height:18px; }
+.mini-check span { color:var(--ink); font-size:.88rem; }
+.chapter-title-field { display:grid; gap:6px; }
+.chapter-title-field span { font-size:.78rem; color:var(--muted); font-weight:700; }
 .review-body textarea { min-height: 190px; }
 
 .hidden { display: none !important; }
@@ -255,6 +262,7 @@ dialog::backdrop { background: rgba(30,25,20,.48); backdrop-filter: blur(5px); }
   .review-tools { align-items: stretch; flex-direction: column; }
   .review-tools input[type="search"] { min-width: 0; }
   .inline-actions { width: 100%; justify-content: flex-start; }
+  .page-meta { grid-template-columns:1fr; }
   .review-body { grid-template-columns: 86px 1fr; }
   .review-body textarea { min-height: 240px; }
 }

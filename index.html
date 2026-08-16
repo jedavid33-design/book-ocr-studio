@@ -110,7 +110,7 @@
       <div class="section-head">
         <div>
           <h2>5. Review text</h2>
-          <p class="hint">Pages appear here as they finish OCR. Likely chapter openings are flagged, and you can also reprocess text-message layouts one page at a time.</p>
+          <p class="hint">Pages appear here as they finish OCR. Mark chapter starts as you go, and use Message-page OCR on text-message layouts that need a different reading order.</p>
         </div>
         <div class="review-tools">
           <input id="reviewSearch" type="search" placeholder="Search extracted text…" />
@@ -132,58 +132,6 @@
       <p class="hint">EPUB export uses your title, author, cover image, and the edited OCR text above.</p>
     </section>
   </main>
-
-  <dialog id="rescueDialog">
-    <form method="dialog" class="dialog-card">
-      <div class="dialog-head">
-        <div>
-          <p class="eyebrow">DROP-CAP RESCUE</p>
-          <h2>Recover chapter opening</h2>
-        </div>
-        <button class="icon-button" value="cancel" aria-label="Close">×</button>
-      </div>
-
-      <p class="hint">This runs OCR on just the opening area while trimming the left edge where the large drop cap sits. Adjust the region if needed.</p>
-
-      <div class="grid three">
-        <label>
-          <span>Left trim (%)</span>
-          <input id="rescueLeft" type="number" min="0" max="40" value="11" />
-        </label>
-        <label>
-          <span>Top (%)</span>
-          <input id="rescueTop" type="number" min="0" max="80" value="20" />
-        </label>
-        <label>
-          <span>Bottom (%)</span>
-          <input id="rescueBottom" type="number" min="20" max="100" value="58" />
-        </label>
-      </div>
-
-      <label>
-        <span>Drop-cap letter (optional)</span>
-        <input id="rescueLetter" type="text" maxlength="2" placeholder="T" />
-      </label>
-
-      <div class="rescue-preview">
-        <canvas id="rescueCanvas"></canvas>
-      </div>
-
-      <div class="actions">
-        <button id="runRescue" class="button primary" type="button">OCR this region</button>
-      </div>
-
-      <label>
-        <span>Recovered opening text</span>
-        <textarea id="rescueText" rows="6" placeholder="Recovered paragraph will appear here…"></textarea>
-      </label>
-
-      <div class="actions end">
-        <button id="replaceOpening" class="button secondary" type="button">Insert at top of page text</button>
-        <button class="button ghost" value="cancel">Close</button>
-      </div>
-    </form>
-  </dialog>
 
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>

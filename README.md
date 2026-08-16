@@ -12,9 +12,10 @@ A static, mobile-friendly GitHub Pages tool for turning your own book screenshot
   - Or enter your own crop values.
 - OCR pages sequentially in the browser using **Tesseract.js**.
 - Flag likely chapter-opening pages for review.
+- Reprocess text-message pages in smaller top-to-bottom regions to preserve reading order better.
+- Populate the review list live as each page finishes OCR.
 - Let you **toggle chapter starts on or off manually**.
 - Let you **edit chapter titles** before export.
-- Use **Drop-cap rescue** to OCR a chapter-opening region while trimming the large decorative letter from the left edge.
 - Edit OCR text page-by-page.
 - Export:
   - `.txt`
