@@ -88,7 +88,7 @@
 
     <section class="card">
       <h2>4. OCR</h2>
-      <p class="hint">OCR runs in your browser with Tesseract.js. The first run downloads the OCR engine/language data; your screenshots themselves are processed locally in the page.</p>
+      <p class="hint">OCR runs in your browser with Tesseract.js. Progress is saved after every completed page. If Safari reloads, select the same screenshot batch again and the tool will continue from the last saved page.</p>
 
       <div class="actions">
         <button id="processBtn" class="button primary" type="button" disabled>Process all pages</button>
@@ -110,7 +110,7 @@
       <div class="section-head">
         <div>
           <h2>5. Review text</h2>
-          <p class="hint">Pages appear here as they finish OCR. Mark chapter starts as you go, and use Message-page OCR on text-message layouts that need a different reading order.</p>
+          <p class="hint">Pages appear here as they finish OCR. To keep iPad memory usage low, the newest 12 pages are shown by default; use Search to pull up older pages. Message-page OCR is still available for chat layouts.</p>
         </div>
         <div class="review-tools">
           <input id="reviewSearch" type="search" placeholder="Search extracted text…" />

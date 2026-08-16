@@ -10,7 +10,12 @@
     coverUrl: "",
     worker: null,
     stopRequested: false,
+    processing: false,
   };
+
+  const CHECKPOINT_KEY = "bookOcrStudio.progress.v9";
+  const WORKER_RECYCLE_EVERY = 12;
+  const REVIEW_VISIBLE_LIMIT = 12;
 
   const els = {
     bookTitle: $("bookTitle"),
@@ -74,6 +79,68 @@
       .replace(/[\\/:*?"<>|]+/g, "")
       .replace(/\s+/g, " ")
       .trim() || "book";
+  }
+
+  function checkpointSignature() {
+    return state.files.map(f => `${f.name}:${f.size}:${f.lastModified || 0}`);
+  }
+
+  function saveCheckpoint() {
+    if (!state.files.length) return;
+    try {
+      const payload = {
+        signature: checkpointSignature(),
+        cropTop: Number(els.cropTop.value) || 0,
+        cropBottom: Number(els.cropBottom.value) || 0,
+        cropSides: Number(els.cropSides.value) || 0,
+        pages: state.pages.map(p => ({
+          fileName: p.file.name,
+          text: p.text || "",
+          chapterCandidate: !!p.chapterCandidate,
+        })),
+      };
+      localStorage.setItem(CHECKPOINT_KEY, JSON.stringify(payload));
+    } catch (err) {
+      console.warn("Could not save OCR checkpoint", err);
+    }
+  }
+
+  function clearCheckpoint() {
+    try { localStorage.removeItem(CHECKPOINT_KEY); } catch (_) {}
+  }
+
+  function restoreCheckpointIfMatching() {
+    try {
+      const raw = localStorage.getItem(CHECKPOINT_KEY);
+      if (!raw) return 0;
+      const saved = JSON.parse(raw);
+      const signature = checkpointSignature();
+      if (!Array.isArray(saved.signature) || saved.signature.length !== signature.length) return 0;
+      if (!saved.signature.every((v, i) => v === signature[i])) return 0;
+
+      if (Number.isFinite(saved.cropTop)) els.cropTop.value = saved.cropTop;
+      if (Number.isFinite(saved.cropBottom)) els.cropBottom.value = saved.cropBottom;
+      if (Number.isFinite(saved.cropSides)) els.cropSides.value = saved.cropSides;
+
+      const byName = new Map(state.files.map(f => [f.name, f]));
+      state.pages = (saved.pages || []).map(p => ({
+        file: byName.get(p.fileName),
+        text: p.text || "",
+        chapterCandidate: !!p.chapterCandidate,
+      })).filter(p => p.file);
+      return state.pages.length;
+    } catch (err) {
+      console.warn("Could not restore OCR checkpoint", err);
+      return 0;
+    }
+  }
+
+  async function resetWorker(logger) {
+    if (state.worker) {
+      try { await state.worker.terminate(); } catch (_) {}
+      state.worker = null;
+    }
+    return ensureWorker(logger);
   }
 
   function loadImageFromFile(file) {
@@ -208,9 +275,19 @@
     const onlyChapters = els.chapterOnly.checked;
     els.reviewList.innerHTML = "";
 
-    state.pages.forEach((page, index) => {
-      if (onlyChapters && !page.chapterCandidate) return;
-      if (q && !page.text.toLowerCase().includes(q) && !page.file.name.toLowerCase().includes(q)) return;
+    let entries = state.pages.map((page, index) => ({ page, index }));
+    if (onlyChapters) entries = entries.filter(({ page }) => page.chapterCandidate);
+    if (q) {
+      entries = entries.filter(({ page, index }) =>
+        page.text.toLowerCase().includes(q) ||
+        page.file.name.toLowerCase().includes(q) ||
+        `page ${index + 1}`.includes(q)
+      );
+    } else if (entries.length > REVIEW_VISIBLE_LIMIT) {
+      entries = entries.slice(-REVIEW_VISIBLE_LIMIT);
+    }
+
+    entries.forEach(({ page, index }) => {
 
       const item = document.createElement("article");
       item.className = "review-item";
@@ -278,6 +355,7 @@
       text.addEventListener("input", () => {
         state.pages[index].text = text.value;
         state.pages[index].chapterCandidate = chapterHeuristic(text.value);
+        saveCheckpoint();
       });
 
       body.append(img, text);
@@ -586,25 +664,29 @@
 
     state.pages[index].text = finalText;
     state.pages[index].chapterCandidate = chapterHeuristic(finalText);
+    saveCheckpoint();
   }
 
   async function processPages() {
     if (!state.files.length) return;
 
     state.stopRequested = false;
+    state.processing = true;
     els.processBtn.disabled = true;
     els.stopBtn.disabled = false;
     els.progressWrap.classList.remove("hidden");
-    els.progressBar.value = 0;
-    els.progressPercent.textContent = "0%";
-    state.pages = [];
     els.reviewSection.classList.remove("hidden");
     els.exportSection.classList.remove("hidden");
+
+    const startIndex = state.pages.length;
+    const startPct = Math.round((startIndex / state.files.length) * 100);
+    els.progressBar.value = startPct;
+    els.progressPercent.textContent = `${startPct}%`;
     renderReview();
 
     try {
-      let activePage = 0;
-      const worker = await ensureWorker((m) => {
+      let activePage = startIndex;
+      const logger = (m) => {
         if (m.status === "recognizing text") {
           const perPage = (activePage + (m.progress || 0)) / state.files.length;
           const pct = Math.round(perPage * 100);
@@ -614,16 +696,21 @@
         if (m.status) {
           els.progressLabel.textContent = `Page ${Math.min(activePage + 1, state.files.length)}: ${m.status}`;
         }
-      });
+      };
 
-      await worker.setParameters({
-        tessedit_pageseg_mode: "6",
-        preserve_interword_spaces: "1",
-      });
+      let worker = await ensureWorker(logger);
+      await worker.setParameters({ tessedit_pageseg_mode: "6", preserve_interword_spaces: "1" });
 
-      for (let i = 0; i < state.files.length; i++) {
+      for (let i = startIndex; i < state.files.length; i++) {
         activePage = i;
         if (state.stopRequested) break;
+
+        if (i > startIndex && (i - startIndex) % WORKER_RECYCLE_EVERY === 0) {
+          setStatus(`Freeing OCR memory after page ${i}…`);
+          worker = await resetWorker(logger);
+          await worker.setParameters({ tessedit_pageseg_mode: "6", preserve_interword_spaces: "1" });
+          await new Promise(resolve => setTimeout(resolve, 75));
+        }
 
         const file = state.files[i];
         setStatus(`Processing page ${i + 1} of ${state.files.length}: ${file.name}`);
@@ -632,35 +719,36 @@
         const result = await worker.recognize(canvas);
         const text = cleanBodyText(result?.data?.text || "");
 
-        state.pages.push({
-          file,
-          text,
-          chapterCandidate: chapterHeuristic(text),
-        });
-
+        state.pages.push({ file, text, chapterCandidate: chapterHeuristic(text) });
+        saveCheckpoint();
         renderReview();
+
+        canvas.width = 1;
+        canvas.height = 1;
 
         const pct = Math.round(((i + 1) / state.files.length) * 100);
         els.progressBar.value = pct;
         els.progressPercent.textContent = `${pct}%`;
-        setStatus(`Finished page ${i + 1} of ${state.files.length}. You can edit processed pages while OCR continues.`);
+        setStatus(`Finished page ${i + 1} of ${state.files.length}. Progress saved automatically.`);
+        await new Promise(resolve => setTimeout(resolve, 20));
       }
 
       if (!state.pages.length) {
         setStatus("No pages were processed.");
-        return;
-      }
-
-      if (state.stopRequested) {
-        setStatus(`Stopped after ${state.pages.length} pages. You can review/export what finished.`);
+      } else if (state.stopRequested) {
+        setStatus(`Stopped after ${state.pages.length} pages. Progress is saved; tap Process all pages to continue.`);
+      } else if (state.pages.length >= state.files.length) {
+        setStatus(`Done. ${state.pages.length} pages processed. Progress is saved until you clear the batch.`);
       } else {
-        setStatus(`Done. ${state.pages.length} pages processed. Review text, use Message-page OCR where needed, then export.`);
+        setStatus(`Paused after ${state.pages.length} pages. Progress is saved.`);
       }
     } catch (err) {
       console.error(err);
-      setStatus(`OCR error: ${err.message || err}`);
+      saveCheckpoint();
+      setStatus(`OCR stopped after ${state.pages.length} pages. Progress was saved. Reload, select the same screenshots, and continue.`);
     } finally {
-      els.processBtn.disabled = !state.files.length;
+      state.processing = false;
+      els.processBtn.disabled = !state.files.length || state.pages.length >= state.files.length;
       els.stopBtn.disabled = true;
     }
   }
@@ -849,19 +937,26 @@ ${coverSpine}    <itemref idref="book"/>
   els.imageInput.addEventListener("change", async () => {
     state.files = Array.from(els.imageInput.files || []).sort(naturalSort);
     state.pages = [];
+    const restored = state.files.length ? restoreCheckpointIfMatching() : 0;
     els.fileCount.textContent = `${state.files.length} page${state.files.length === 1 ? "" : "s"} loaded`;
-    els.processBtn.disabled = !state.files.length;
-    els.reviewSection.classList.add("hidden");
-    els.exportSection.classList.add("hidden");
+    els.processBtn.disabled = !state.files.length || restored >= state.files.length;
+    els.reviewSection.classList.toggle("hidden", restored === 0);
+    els.exportSection.classList.toggle("hidden", restored === 0);
     renderThumbs();
+    renderReview();
     await updatePreview();
-    setStatus(state.files.length ? "Ready to process." : "Add screenshots to begin.");
+    if (restored) {
+      setStatus(`Recovered ${restored} processed pages. Tap Process all pages to continue from page ${restored + 1}.`);
+    } else {
+      setStatus(state.files.length ? "Ready to process." : "Add screenshots to begin.");
+    }
   });
 
   els.clearImages.addEventListener("click", () => {
     els.imageInput.value = "";
     state.files = [];
     state.pages = [];
+    clearCheckpoint();
     els.fileCount.textContent = "0 pages loaded";
     els.processBtn.disabled = true;
     els.reviewSection.classList.add("hidden");
