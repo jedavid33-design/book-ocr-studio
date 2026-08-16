@@ -2,6 +2,9 @@
   "use strict";
 
   const $ = (id) => document.getElementById(id);
+  const STORAGE_KEY = "bookOcrStudio.session.v3";
+  const WORKER_RESTART_EVERY = 20;
+  const REVIEW_BATCH = 24;
 
   const state = {
     files: [],
@@ -11,6 +14,10 @@
     worker: null,
     stopRequested: false,
     rescuePageIndex: null,
+    totalFiles: 0,
+    expectedFileNames: [],
+    reviewLimit: REVIEW_BATCH,
+    restoredAt: null,
   };
 
   const els = {
@@ -66,7 +73,7 @@
   }
 
   function escapeXml(str = "") {
-    return str
+    return String(str)
       .replaceAll("&", "&amp;")
       .replaceAll("<", "&lt;")
       .replaceAll(">", "&gt;")
@@ -82,7 +89,111 @@
   }
 
   function normalizeWhitespace(str = "") {
-    return str.replace(/\r/g, "").replace(/\u00a0/g, " ").replace(/[ \t]+/g, " ").trim();
+    return String(str)
+      .replace(/\r/g, "")
+      .replace(/\u00a0/g, " ")
+      .replace(/[ \t]+/g, " ")
+      .trim();
+  }
+
+  function fileNamesFromFiles(files = state.files) {
+    return files.map((f) => f.name);
+  }
+
+  function sameFileNames(a = [], b = []) {
+    return a.length === b.length && a.every((name, i) => name === b[i]);
+  }
+
+  function serializablePage(page) {
+    return {
+      fileName: page.file?.name || page.fileName || "",
+      text: page.text || "",
+      detectedChapterStart: !!page.detectedChapterStart,
+      chapterStart: !!page.chapterStart,
+      chapterTouched: !!page.chapterTouched,
+      chapterTitle: page.chapterTitle || "",
+    };
+  }
+
+  function saveRecovery(silent = true) {
+    const totalFiles = state.totalFiles || state.files.length || state.expectedFileNames.length || state.pages.length;
+    const expectedFileNames = state.files.length ? fileNamesFromFiles() : state.expectedFileNames;
+
+    const payload = {
+      version: 3,
+      savedAt: new Date().toISOString(),
+      title: els.bookTitle.value || "",
+      author: els.bookAuthor.value || "",
+      cropTop: Number(els.cropTop.value) || 0,
+      cropBottom: Number(els.cropBottom.value) || 0,
+      cropSides: Number(els.cropSides.value) || 0,
+      totalFiles,
+      expectedFileNames,
+      pages: state.pages.map(serializablePage),
+    };
+
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+      state.restoredAt = payload.savedAt;
+      return true;
+    } catch (err) {
+      console.warn("Could not save OCR recovery data", err);
+      if (!silent) setStatus("OCR is working, but Safari would not save the recovery checkpoint. Keep this tab open.");
+      return false;
+    }
+  }
+
+  function clearRecovery() {
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+    } catch (err) {
+      console.warn(err);
+    }
+  }
+
+  function loadRecovery() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return false;
+      const saved = JSON.parse(raw);
+      if (!saved || !Array.isArray(saved.pages) || !saved.pages.length) return false;
+
+      els.bookTitle.value = saved.title || "";
+      els.bookAuthor.value = saved.author || "";
+      els.cropTop.value = Number(saved.cropTop) || 0;
+      els.cropBottom.value = Number(saved.cropBottom) || 0;
+      els.cropSides.value = Number(saved.cropSides) || 0;
+
+      state.totalFiles = Number(saved.totalFiles) || saved.expectedFileNames?.length || saved.pages.length;
+      state.expectedFileNames = Array.isArray(saved.expectedFileNames) ? saved.expectedFileNames : saved.pages.map((p) => p.fileName);
+      state.pages = saved.pages.map((p) => ({
+        file: null,
+        fileName: p.fileName || "",
+        text: p.text || "",
+        detectedChapterStart: !!p.detectedChapterStart,
+        chapterStart: !!p.chapterStart,
+        chapterTouched: !!p.chapterTouched,
+        chapterTitle: p.chapterTitle || "",
+      }));
+      state.restoredAt = saved.savedAt || null;
+      state.reviewLimit = REVIEW_BATCH;
+
+      els.fileCount.textContent = `${state.pages.length} of ${state.totalFiles} pages recovered`;
+      els.reviewSection.classList.remove("hidden");
+      els.exportSection.classList.remove("hidden");
+      renderReview();
+
+      const complete = state.pages.length >= state.totalFiles;
+      if (complete) {
+        setStatus(`Recovered OCR for all ${state.pages.length} pages after the reload. You can export now. Reselect the screenshots only if you want page previews or Drop-cap rescue.`);
+      } else {
+        setStatus(`Recovered ${state.pages.length} of ${state.totalFiles} OCR pages. Reselect the same screenshot batch, then tap Resume OCR.`);
+      }
+      return true;
+    } catch (err) {
+      console.warn("Could not restore OCR recovery data", err);
+      return false;
+    }
   }
 
   function loadImageFromFile(file) {
@@ -155,10 +266,11 @@
 
   function renderThumbs() {
     els.thumbStrip.innerHTML = "";
-    state.files.slice(0, 40).forEach((file, index) => {
+    state.files.slice(0, 30).forEach((file, index) => {
       const wrap = document.createElement("div");
       wrap.className = "thumb";
       const img = document.createElement("img");
+      img.loading = "lazy";
       const url = URL.createObjectURL(file);
       img.onload = () => URL.revokeObjectURL(url);
       img.src = url;
@@ -168,12 +280,12 @@
       wrap.append(img, number);
       els.thumbStrip.appendChild(wrap);
     });
-    if (state.files.length > 40) {
+    if (state.files.length > 30) {
       const more = document.createElement("div");
       more.className = "thumb";
       more.style.display = "grid";
       more.style.placeItems = "center";
-      more.textContent = `+${state.files.length - 40}`;
+      more.textContent = `+${state.files.length - 30}`;
       els.thumbStrip.appendChild(more);
     }
   }
@@ -233,48 +345,30 @@
         numberLine = line;
         continue;
       }
-
       if (!labelLine && /^(chapter|prologue|epilogue|interlude)\b/i.test(line)) {
         labelLine = line;
         break;
       }
-
       if (!labelLine && looksLikeShortHeading(line) && !/^\d{1,3}$/.test(line)) {
         labelLine = line;
         if (numberLine) break;
       }
     }
 
-    if (labelLine && /^(chapter|prologue|epilogue|interlude)\b/i.test(labelLine)) {
-      return labelLine;
-    }
-
-    if (numberLine && labelLine) {
-      return `${numberLine} — ${labelLine}`;
-    }
-
-    if (labelLine) {
-      return labelLine;
-    }
-
-    if (numberLine) {
-      return `Chapter ${numberLine}`;
-    }
-
+    if (labelLine && /^(chapter|prologue|epilogue|interlude)\b/i.test(labelLine)) return labelLine;
+    if (numberLine && labelLine) return `${numberLine} — ${labelLine}`;
+    if (labelLine) return labelLine;
+    if (numberLine) return `Chapter ${numberLine}`;
     return `Chapter ${ordinal}`;
   }
 
   function getPageChapterTitle(page, ordinal) {
     const manual = normalizeWhitespace(page.chapterTitle || "");
-    if (manual) return manual;
-    return detectChapterTitle(page.text || "", ordinal);
+    return manual || detectChapterTitle(page.text || "", ordinal);
   }
 
   function combinedText() {
-    return state.pages
-      .map((p) => (p.text || "").trim())
-      .filter(Boolean)
-      .join("\n\n");
+    return state.pages.map((p) => (p.text || "").trim()).filter(Boolean).join("\n\n");
   }
 
   function pageImageUrl(file) {
@@ -320,10 +414,9 @@
       const startIndex = starts[i];
       const endIndex = i + 1 < starts.length ? starts[i + 1] : pages.length;
       chapterOrdinal += 1;
-      const sectionPages = pages.slice(startIndex, endIndex);
       sections.push({
         title: getPageChapterTitle(pages[startIndex], chapterOrdinal),
-        pages: sectionPages,
+        pages: pages.slice(startIndex, endIndex),
         pageStartIndex: startIndex,
         chapterOrdinal,
         isFrontMatter: false,
@@ -338,11 +431,17 @@
     const onlyChapters = els.chapterOnly.checked;
     els.reviewList.innerHTML = "";
 
+    const matches = [];
     state.pages.forEach((page, index) => {
       const pageText = page.text || "";
       if (onlyChapters && !page.chapterStart) return;
-      if (q && !pageText.toLowerCase().includes(q) && !page.file.name.toLowerCase().includes(q)) return;
+      if (q && !pageText.toLowerCase().includes(q) && !(page.file?.name || page.fileName || "").toLowerCase().includes(q)) return;
+      matches.push({ page, index });
+    });
 
+    const visible = matches.slice(0, state.reviewLimit);
+
+    visible.forEach(({ page, index }) => {
       const item = document.createElement("article");
       item.className = "review-item";
 
@@ -351,15 +450,13 @@
 
       const left = document.createElement("div");
       left.className = "left";
-
       const strong = document.createElement("strong");
       strong.textContent = `Page ${index + 1}`;
-
       const name = document.createElement("span");
       name.className = "page-name";
-      name.textContent = page.file.name;
-
+      name.textContent = page.file?.name || page.fileName || `Page ${index + 1}`;
       left.append(strong, name);
+
       if (page.chapterStart) {
         const badge = document.createElement("span");
         badge.className = "badge";
@@ -371,22 +468,26 @@
       rescue.className = "button ghost";
       rescue.type = "button";
       rescue.textContent = "Drop-cap rescue";
+      rescue.disabled = !page.file;
+      rescue.title = page.file ? "" : "Reselect the original screenshots to use Drop-cap rescue.";
       rescue.addEventListener("click", () => openRescue(index));
-
       title.append(left, rescue);
 
       const body = document.createElement("div");
-      body.className = "review-body";
+      body.className = `review-body${page.file ? "" : " no-image"}`;
 
-      const img = document.createElement("img");
-      const url = pageImageUrl(page.file);
-      img.onload = () => URL.revokeObjectURL(url);
-      img.src = url;
-      img.alt = `Original screenshot ${index + 1}`;
+      if (page.file) {
+        const img = document.createElement("img");
+        img.loading = "lazy";
+        const url = pageImageUrl(page.file);
+        img.onload = () => URL.revokeObjectURL(url);
+        img.src = url;
+        img.alt = `Original screenshot ${index + 1}`;
+        body.appendChild(img);
+      }
 
       const right = document.createElement("div");
       right.className = "review-right";
-
       const meta = document.createElement("div");
       meta.className = "page-meta";
 
@@ -413,37 +514,57 @@
       chapterBox.addEventListener("change", () => {
         page.chapterStart = chapterBox.checked;
         page.chapterTouched = true;
-        if (!page.chapterStart) {
-          chapterTitleInput.disabled = true;
-        } else {
-          chapterTitleInput.disabled = false;
-        }
+        chapterTitleInput.disabled = !page.chapterStart;
+        saveRecovery();
+        state.reviewLimit = REVIEW_BATCH;
         renderReview();
       });
 
       chapterTitleInput.addEventListener("input", () => {
         page.chapterTitle = chapterTitleInput.value;
+        saveRecovery();
       });
 
       meta.append(chapterWrap, chapterTitleField);
 
       const text = document.createElement("textarea");
-      text.value = pageText;
+      text.value = page.text || "";
       text.setAttribute("aria-label", `OCR text for page ${index + 1}`);
       text.addEventListener("input", () => {
         page.text = text.value;
         page.detectedChapterStart = chapterHeuristic(text.value);
-        if (!page.chapterTouched) {
-          page.chapterStart = page.detectedChapterStart;
-        }
+        if (!page.chapterTouched) page.chapterStart = page.detectedChapterStart;
         chapterTitleInput.placeholder = getPageChapterTitle(page, chapterIndices().indexOf(index) + 1 || 1);
+        saveRecovery();
       });
 
       right.append(meta, text);
-      body.append(img, right);
+      body.appendChild(right);
       item.append(title, body);
       els.reviewList.appendChild(item);
     });
+
+    if (matches.length > visible.length) {
+      const more = document.createElement("button");
+      more.type = "button";
+      more.className = "button secondary review-more";
+      more.textContent = `Show ${Math.min(REVIEW_BATCH, matches.length - visible.length)} more (${matches.length - visible.length} remaining)`;
+      more.addEventListener("click", () => {
+        state.reviewLimit += REVIEW_BATCH;
+        renderReview();
+      });
+      els.reviewList.appendChild(more);
+    }
+  }
+
+  async function terminateWorker() {
+    if (!state.worker) return;
+    try {
+      await state.worker.terminate();
+    } catch (err) {
+      console.warn("Worker terminate failed", err);
+    }
+    state.worker = null;
   }
 
   async function ensureWorker(logger) {
@@ -453,32 +574,77 @@
     return state.worker;
   }
 
+  function attachFilesToRecoveredPages(files) {
+    const byName = new Map(files.map((file) => [file.name, file]));
+    state.pages.forEach((page) => {
+      const name = page.fileName || page.file?.name;
+      page.file = byName.get(name) || null;
+      if (page.file && !page.fileName) page.fileName = page.file.name;
+    });
+  }
+
+  function updateProcessButton() {
+    if (!state.files.length) {
+      els.processBtn.disabled = true;
+      els.processBtn.textContent = "Process all pages";
+      return;
+    }
+
+    const completed = state.pages.length;
+    const total = state.files.length;
+    els.processBtn.disabled = completed >= total;
+    els.processBtn.textContent = completed > 0 && completed < total ? `Resume OCR at page ${completed + 1}` : "Process all pages";
+  }
+
   async function processPages() {
     if (!state.files.length) return;
 
+    const names = fileNamesFromFiles();
+    const canResume = state.pages.length > 0 && sameFileNames(names, state.expectedFileNames) && state.pages.length < state.files.length;
+
+    if (!canResume && state.pages.length > 0) {
+      const okay = confirm("This will start OCR from page 1 and replace the recovered OCR session for this book. Continue?");
+      if (!okay) return;
+      state.pages = [];
+      clearRecovery();
+    }
+
+    state.totalFiles = state.files.length;
+    state.expectedFileNames = names;
     state.stopRequested = false;
     els.processBtn.disabled = true;
     els.stopBtn.disabled = false;
     els.progressWrap.classList.remove("hidden");
-    state.pages = [];
+    state.reviewLimit = REVIEW_BATCH;
+
+    let activePage = state.pages.length;
+    const logger = (m) => {
+      if (m.status === "recognizing text") {
+        const perPage = (activePage + (m.progress || 0)) / state.files.length;
+        const pct = Math.round(perPage * 100);
+        els.progressBar.value = pct;
+        els.progressPercent.textContent = `${pct}%`;
+      }
+      if (m.status) {
+        els.progressLabel.textContent = `Page ${Math.min(activePage + 1, state.files.length)}: ${m.status}`;
+      }
+    };
 
     try {
-      let activePage = 0;
-      const worker = await ensureWorker((m) => {
-        if (m.status === "recognizing text") {
-          const perPage = (activePage + (m.progress || 0)) / state.files.length;
-          const pct = Math.round(perPage * 100);
-          els.progressBar.value = pct;
-          els.progressPercent.textContent = `${pct}%`;
-        }
-        if (m.status) {
-          els.progressLabel.textContent = `Page ${Math.min(activePage + 1, state.files.length)}: ${m.status}`;
-        }
-      });
+      let worker = await ensureWorker(logger);
+      const startIndex = state.pages.length;
 
-      for (let i = 0; i < state.files.length; i++) {
+      for (let i = startIndex; i < state.files.length; i++) {
         activePage = i;
         if (state.stopRequested) break;
+
+        if (i > startIndex && i % WORKER_RESTART_EVERY === 0) {
+          setStatus(`Saving checkpoint and refreshing OCR engine before page ${i + 1}…`);
+          saveRecovery(false);
+          await terminateWorker();
+          worker = await ensureWorker(logger);
+          await new Promise((resolve) => setTimeout(resolve, 80));
+        }
 
         const file = state.files[i];
         setStatus(`Processing page ${i + 1} of ${state.files.length}: ${file.name}`);
@@ -490,6 +656,7 @@
 
         state.pages.push({
           file,
+          fileName: file.name,
           text,
           detectedChapterStart,
           chapterStart: detectedChapterStart,
@@ -497,9 +664,15 @@
           chapterTitle: "",
         });
 
+        // Save after every single page so a Safari reload loses, at worst, the page currently being OCR'd.
+        saveRecovery(false);
+
         const pct = Math.round(((i + 1) / state.files.length) * 100);
         els.progressBar.value = pct;
         els.progressPercent.textContent = `${pct}%`;
+
+        // Give mobile Safari a brief chance to collect released canvas/image memory.
+        if ((i + 1) % 5 === 0) await new Promise((resolve) => setTimeout(resolve, 40));
       }
 
       if (!state.pages.length) {
@@ -507,22 +680,24 @@
         return;
       }
 
+      saveRecovery(false);
       els.reviewSection.classList.remove("hidden");
       els.exportSection.classList.remove("hidden");
       renderReview();
 
       const starts = chapterIndices().length;
       if (state.stopRequested) {
-        setStatus(`Stopped after ${state.pages.length} pages. ${starts} chapter start${starts === 1 ? "" : "s"} marked so far.`);
+        setStatus(`Stopped safely after ${state.pages.length} of ${state.totalFiles} pages. Your OCR checkpoint is saved.`);
       } else {
-        setStatus(`Done. ${state.pages.length} pages processed. ${starts} chapter start${starts === 1 ? "" : "s"} detected. Review them, then export.`);
+        setStatus(`Done. ${state.pages.length} pages processed and checkpointed. ${starts} chapter start${starts === 1 ? "" : "s"} detected.`);
       }
     } catch (err) {
       console.error(err);
-      setStatus(`OCR error: ${err.message || err}`);
+      saveRecovery(false);
+      setStatus(`OCR stopped: ${err.message || err}. Completed pages were checkpointed. Reload, reselect the same screenshots, and resume.`);
     } finally {
-      els.processBtn.disabled = !state.files.length;
       els.stopBtn.disabled = true;
+      updateProcessButton();
     }
   }
 
@@ -536,16 +711,14 @@
 
   async function drawRescuePreview() {
     const index = state.rescuePageIndex;
-    if (index == null || !state.pages[index]) return;
+    if (index == null || !state.pages[index]?.file) return;
 
     const file = state.pages[index].file;
     const img = await loadImageFromFile(file);
     const cropped = makeCroppedCanvas(img);
-
     const left = clamp(Number(els.rescueLeft.value) || 0, 0, 40) / 100;
     const top = clamp(Number(els.rescueTop.value) || 0, 0, 80) / 100;
     const bottom = clamp(Number(els.rescueBottom.value) || 58, 20, 100) / 100;
-
     const sx = Math.round(cropped.width * left);
     const sy = Math.round(cropped.height * top);
     const sw = Math.max(1, cropped.width - sx);
@@ -556,9 +729,7 @@
     const scale = Math.min(1, maxW / sw);
     out.width = Math.round(sw * scale);
     out.height = Math.round(sh * scale);
-    const ctx = out.getContext("2d", { alpha: false });
-    ctx.drawImage(cropped, sx, sy, sw, sh, 0, 0, out.width, out.height);
-
+    out.getContext("2d", { alpha: false }).drawImage(cropped, sx, sy, sw, sh, 0, 0, out.width, out.height);
     out.dataset.sourceX = sx;
     out.dataset.sourceY = sy;
     out.dataset.sourceW = sw;
@@ -567,7 +738,7 @@
 
   async function runRescue() {
     const index = state.rescuePageIndex;
-    if (index == null) return;
+    if (index == null || !state.pages[index]?.file) return;
 
     els.runRescue.disabled = true;
     els.runRescue.textContent = "Working…";
@@ -577,25 +748,18 @@
       const file = state.pages[index].file;
       const img = await loadImageFromFile(file);
       const cropped = makeCroppedCanvas(img);
-
       const sx = Number(els.rescueCanvas.dataset.sourceX);
       const sy = Number(els.rescueCanvas.dataset.sourceY);
       const sw = Number(els.rescueCanvas.dataset.sourceW);
       const sh = Number(els.rescueCanvas.dataset.sourceH);
-
       const region = document.createElement("canvas");
       region.width = sw;
       region.height = sh;
       region.getContext("2d", { alpha: false }).drawImage(cropped, sx, sy, sw, sh, 0, 0, sw, sh);
-
       const result = await worker.recognize(region);
       let text = normalizeWhitespace(result?.data?.text || "");
-
       const letter = els.rescueLetter.value.trim();
-      if (letter && text && !text.toLowerCase().startsWith(letter.toLowerCase())) {
-        text = letter + text;
-      }
-
+      if (letter && text && !text.toLowerCase().startsWith(letter.toLowerCase())) text = letter + text;
       els.rescueText.value = text;
     } catch (err) {
       els.rescueText.value = `OCR error: ${err.message || err}`;
@@ -614,9 +778,8 @@
     const original = state.pages[index].text.trimStart();
     state.pages[index].text = `${recovered}\n\n${original}`;
     state.pages[index].detectedChapterStart = true;
-    if (!state.pages[index].chapterTouched) {
-      state.pages[index].chapterStart = true;
-    }
+    if (!state.pages[index].chapterTouched) state.pages[index].chapterStart = true;
+    saveRecovery();
     renderReview();
     els.rescueDialog.close();
   }
@@ -663,11 +826,9 @@
     const safeTitle = cleanFilename(title);
     const identifier = `urn:uuid:${crypto.randomUUID ? crypto.randomUUID() : Date.now()}`;
     const modified = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
-
     const zip = new JSZip();
 
     zip.file("mimetype", "application/epub+zip", { compression: "STORE" });
-
     zip.file("META-INF/container.xml", `<?xml version="1.0" encoding="UTF-8"?>\n<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">\n  <rootfiles>\n    <rootfile full-path="EPUB/package.opf" media-type="application/oebps-package+xml"/>\n  </rootfiles>\n</container>`);
 
     const manifestItems = [
@@ -692,9 +853,7 @@
       const ext = type.includes("png") ? "png" : type.includes("webp") ? "webp" : "jpg";
       const coverName = `cover.${ext}`;
       zip.file(`EPUB/${coverName}`, await state.coverFile.arrayBuffer());
-
       zip.file("EPUB/cover.xhtml", `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE html>\n<html xmlns="http://www.w3.org/1999/xhtml">\n<head><meta charset="utf-8"/><title>Cover</title><style>html,body{margin:0;padding:0;text-align:center;background:#fff}img{max-width:100%;max-height:100vh}</style></head>\n<body><img src="${coverName}" alt="Cover"/></body>\n</html>`);
-
       coverManifest = `\n    <item id="cover-image" href="${coverName}" media-type="${type}" properties="cover-image"/>\n    <item id="cover-page" href="cover.xhtml" media-type="application/xhtml+xml"/>`;
       coverSpine = '    <itemref idref="cover-page" linear="yes"/>\n';
       coverMeta = '\n    <meta name="cover" content="cover-image"/>';
@@ -761,12 +920,18 @@
         els.cropBottom.value = 0;
         els.cropSides.value = 0;
       }
+      saveRecovery();
       updatePreview();
     });
   });
 
-  [els.cropTop, els.cropBottom, els.cropSides].forEach((input) => input.addEventListener("input", updatePreview));
+  [els.cropTop, els.cropBottom, els.cropSides].forEach((input) => input.addEventListener("input", () => {
+    saveRecovery();
+    updatePreview();
+  }));
   [els.rescueLeft, els.rescueTop, els.rescueBottom].forEach((input) => input.addEventListener("input", drawRescuePreview));
+
+  [els.bookTitle, els.bookAuthor].forEach((input) => input.addEventListener("input", () => saveRecovery()));
 
   els.coverInput.addEventListener("change", () => {
     const file = els.coverInput.files?.[0] || null;
@@ -782,42 +947,83 @@
   });
 
   els.imageInput.addEventListener("change", async () => {
-    state.files = Array.from(els.imageInput.files || []).sort(naturalSort);
-    state.pages = [];
-    els.fileCount.textContent = `${state.files.length} page${state.files.length === 1 ? "" : "s"} loaded`;
-    els.processBtn.disabled = !state.files.length;
-    els.reviewSection.classList.add("hidden");
-    els.exportSection.classList.add("hidden");
+    const newFiles = Array.from(els.imageInput.files || []).sort(naturalSort);
+    const newNames = fileNamesFromFiles(newFiles);
+    state.files = newFiles;
+    state.totalFiles = newFiles.length;
+
+    const matchesRecovery = state.pages.length > 0 && sameFileNames(newNames, state.expectedFileNames);
+    if (matchesRecovery) {
+      attachFilesToRecoveredPages(newFiles);
+      els.fileCount.textContent = `${state.pages.length} of ${newFiles.length} pages recovered`;
+      setStatus(state.pages.length >= newFiles.length
+        ? `The recovered OCR matches this screenshot batch. All ${newFiles.length} pages are already done.`
+        : `Recovery matched. ${state.pages.length} pages are safe; OCR can resume at page ${state.pages.length + 1}.`);
+    } else {
+      if (state.pages.length) {
+        state.pages = [];
+        clearRecovery();
+      }
+      state.expectedFileNames = newNames;
+      els.fileCount.textContent = `${newFiles.length} page${newFiles.length === 1 ? "" : "s"} loaded`;
+      els.reviewSection.classList.add("hidden");
+      els.exportSection.classList.add("hidden");
+      setStatus(newFiles.length ? "Ready to process." : "Add screenshots to begin.");
+      saveRecovery();
+    }
+
+    state.reviewLimit = REVIEW_BATCH;
     renderThumbs();
     await updatePreview();
-    setStatus(state.files.length ? "Ready to process." : "Add screenshots to begin.");
+    updateProcessButton();
+    if (state.pages.length) renderReview();
   });
 
-  els.clearImages.addEventListener("click", () => {
+  els.clearImages.addEventListener("click", async () => {
+    const hasSession = state.pages.length || state.files.length;
+    if (hasSession && !confirm("Clear this book and its saved OCR recovery checkpoint?")) return;
     els.imageInput.value = "";
     state.files = [];
     state.pages = [];
+    state.totalFiles = 0;
+    state.expectedFileNames = [];
+    state.reviewLimit = REVIEW_BATCH;
+    clearRecovery();
+    await terminateWorker();
     els.fileCount.textContent = "0 pages loaded";
-    els.processBtn.disabled = true;
     els.reviewSection.classList.add("hidden");
     els.exportSection.classList.add("hidden");
     renderThumbs();
     updatePreview();
+    updateProcessButton();
     setStatus("Add screenshots to begin.");
   });
 
   els.processBtn.addEventListener("click", processPages);
   els.stopBtn.addEventListener("click", () => {
     state.stopRequested = true;
-    setStatus("Stop requested. Finishing the current page…");
+    setStatus("Stop requested. Finishing the current page and saving its checkpoint…");
   });
 
-  els.reviewSearch.addEventListener("input", renderReview);
-  els.chapterOnly.addEventListener("change", renderReview);
+  els.reviewSearch.addEventListener("input", () => {
+    state.reviewLimit = REVIEW_BATCH;
+    renderReview();
+  });
+  els.chapterOnly.addEventListener("change", () => {
+    state.reviewLimit = REVIEW_BATCH;
+    renderReview();
+  });
   els.runRescue.addEventListener("click", runRescue);
   els.replaceOpening.addEventListener("click", insertRecoveredOpening);
   els.downloadTxt.addEventListener("click", downloadTxt);
   els.downloadEpub.addEventListener("click", downloadEpub);
 
+  window.addEventListener("pagehide", () => saveRecovery());
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") saveRecovery();
+  });
+
+  loadRecovery();
   updatePreview();
+  updateProcessButton();
 })();

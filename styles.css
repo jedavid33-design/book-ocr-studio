@@ -288,3 +288,6 @@ dialog::backdrop { background: rgba(30,25,20,.48); backdrop-filter: blur(5px); }
   .review-body textarea { min-height: 240px; }
   .page-meta { grid-template-columns: 1fr; }
 }
+
+.review-body.no-image { grid-template-columns: 1fr; }
+.review-more { justify-self: center; margin: 4px auto 8px; }

@@ -76,3 +76,15 @@ For a very large book, keep the tab open and the device awake while processing.
 
 - Tesseract.js v5 via jsDelivr
 - JSZip 3.10.1 via jsDelivr
+
+## Safari crash / reload protection
+
+Large books can exceed mobile Safari's memory budget. This version checkpoints OCR text to browser storage after **every completed page**.
+
+- If Safari reloads after OCR finishes, the completed OCR is restored automatically and can still be exported.
+- If Safari reloads partway through a book, reselect the **same screenshot batch** and the app resumes at the next unfinished page.
+- The OCR worker is restarted every 20 pages to release memory.
+- The review screen only renders a small batch of pages at a time instead of creating hundreds of image previews at once.
+- Manual text edits, chapter-start toggles, and chapter titles are also checkpointed.
+
+The cover image itself is not saved in the checkpoint, so after a reload you may need to choose the cover again before exporting EPUB.
