@@ -12,11 +12,19 @@ A static, mobile-friendly GitHub Pages tool for turning your own book screenshot
   - Or enter your own crop values.
 - OCR pages sequentially in the browser using **Tesseract.js**.
 - Flag likely chapter-opening pages for review.
+- Let you **toggle chapter starts on or off manually**.
+- Let you **edit chapter titles** before export.
 - Use **Drop-cap rescue** to OCR a chapter-opening region while trimming the large decorative letter from the left edge.
 - Edit OCR text page-by-page.
 - Export:
   - `.txt`
-  - `.epub` with title, author, and an optional cover image.
+  - `.epub` with:
+    - title
+    - author
+    - optional cover image
+    - real chapter breaks
+    - separate EPUB files per chapter/section
+    - clickable table of contents
 
 ## Privacy
 
@@ -45,9 +53,18 @@ Tesseract.js loads its browser worker/core/language resources from a CDN, so an 
 3. Choose the appropriate crop preset.
 4. Check the crop preview.
 5. Tap **Process all pages**.
-6. Review pages flagged **Check chapter start**.
+6. Review pages marked as chapter starts.
 7. Use **Drop-cap rescue** on any chapter opening whose first lines were skipped.
-8. Export TXT or EPUB.
+8. Turn **Chapter start** on/off where needed.
+9. Optionally edit **Chapter title** for cleaner EPUB navigation.
+10. Export TXT or EPUB.
+
+## Chapter-aware EPUB behavior
+
+- If chapter starts are marked, the EPUB exporter splits the book into sections using those markers.
+- Each section becomes its own XHTML file inside the EPUB.
+- The EPUB TOC is built from the chapter titles.
+- If no chapter starts are marked, the exporter falls back to a single-section EPUB.
 
 ## Notes for large books
 

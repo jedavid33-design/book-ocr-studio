@@ -75,10 +75,14 @@
   }
 
   function cleanFilename(name) {
-    return (name || "book")
+    return ((name || "book")
       .replace(/[\\/:*?"<>|]+/g, "")
       .replace(/\s+/g, " ")
-      .trim() || "book";
+      .trim()) || "book";
+  }
+
+  function normalizeWhitespace(str = "") {
+    return str.replace(/\r/g, "").replace(/\u00a0/g, " ").replace(/[ \t]+/g, " ").trim();
   }
 
   function loadImageFromFile(file) {
@@ -177,20 +181,156 @@
   function chapterHeuristic(text) {
     const normalized = (text || "").replace(/\r/g, "").trimStart();
     if (!normalized) return false;
-    const firstLines = normalized.split("\n").map(s => s.trim()).filter(Boolean).slice(0, 6);
-    const firstChunk = firstLines.join(" ").slice(0, 220);
-    const hasChapterWord = /\b(chapter|prologue|epilogue)\b/i.test(firstChunk);
+
+    const firstLines = normalized
+      .split("\n")
+      .map(normalizeWhitespace)
+      .filter(Boolean)
+      .slice(0, 8);
+
+    const firstChunk = firstLines.join(" ").slice(0, 260);
+    const hasChapterWord = /\b(chapter|prologue|epilogue|interlude)\b/i.test(firstChunk);
     const startsWithNumber = /^\d{1,3}\b/.test(firstLines[0] || "");
-    const shortAllCaps = firstLines.some(line => line.length >= 2 && line.length <= 24 && /^[A-Z][A-Z\s.'&-]+$/.test(line));
+    const shortAllCaps = firstLines.some((line) => line.length >= 2 && line.length <= 28 && /^[A-Z][A-Z\s.'&-]+$/.test(line));
+
     return hasChapterWord || (startsWithNumber && shortAllCaps) || (startsWithNumber && firstLines.length >= 2);
   }
 
+  function getHeadingLines(text, maxLines = 8) {
+    return (text || "")
+      .replace(/\r/g, "")
+      .split("\n")
+      .map(normalizeWhitespace)
+      .filter(Boolean)
+      .slice(0, maxLines);
+  }
+
+  function isMostlySymbolLine(line) {
+    return !/[A-Za-z0-9]/.test(line) || /[©¢§=<>]/.test(line);
+  }
+
+  function looksLikeShortHeading(line) {
+    if (!line || line.length > 40) return false;
+    if (isMostlySymbolLine(line)) return false;
+    if (/^(chapter|prologue|epilogue|interlude)\b/i.test(line)) return true;
+    if (/^\d{1,3}$/.test(line)) return true;
+    if (/^[IVXLCDM]{1,8}$/i.test(line)) return true;
+    if (/^[A-Z][A-Z\s.'&-]{1,35}$/.test(line)) return true;
+    if (/^(?:[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,4})$/.test(line)) return true;
+    return false;
+  }
+
+  function detectChapterTitle(text, ordinal = 1) {
+    const lines = getHeadingLines(text, 10).filter((line) => !isMostlySymbolLine(line));
+    if (!lines.length) return `Chapter ${ordinal}`;
+
+    let numberLine = "";
+    let labelLine = "";
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (!numberLine && (/^\d{1,3}$/.test(line) || /^[IVXLCDM]{1,8}$/i.test(line))) {
+        numberLine = line;
+        continue;
+      }
+
+      if (!labelLine && /^(chapter|prologue|epilogue|interlude)\b/i.test(line)) {
+        labelLine = line;
+        break;
+      }
+
+      if (!labelLine && looksLikeShortHeading(line) && !/^\d{1,3}$/.test(line)) {
+        labelLine = line;
+        if (numberLine) break;
+      }
+    }
+
+    if (labelLine && /^(chapter|prologue|epilogue|interlude)\b/i.test(labelLine)) {
+      return labelLine;
+    }
+
+    if (numberLine && labelLine) {
+      return `${numberLine} — ${labelLine}`;
+    }
+
+    if (labelLine) {
+      return labelLine;
+    }
+
+    if (numberLine) {
+      return `Chapter ${numberLine}`;
+    }
+
+    return `Chapter ${ordinal}`;
+  }
+
+  function getPageChapterTitle(page, ordinal) {
+    const manual = normalizeWhitespace(page.chapterTitle || "");
+    if (manual) return manual;
+    return detectChapterTitle(page.text || "", ordinal);
+  }
+
   function combinedText() {
-    return state.pages.map(p => (p.text || "").trim()).filter(Boolean).join("\n\n");
+    return state.pages
+      .map((p) => (p.text || "").trim())
+      .filter(Boolean)
+      .join("\n\n");
   }
 
   function pageImageUrl(file) {
     return URL.createObjectURL(file);
+  }
+
+  function chapterIndices() {
+    return state.pages.reduce((list, page, index) => {
+      if (page.chapterStart) list.push(index);
+      return list;
+    }, []);
+  }
+
+  function buildSectionsFromPages() {
+    const pages = state.pages;
+    if (!pages.length) return [];
+
+    const starts = chapterIndices();
+    if (!starts.length) {
+      return [{
+        title: (els.bookTitle.value || "Book").trim() || "Book",
+        pages,
+        pageStartIndex: 0,
+        chapterOrdinal: 1,
+        isFrontMatter: false,
+      }];
+    }
+
+    const sections = [];
+    let chapterOrdinal = 0;
+
+    if (starts[0] > 0) {
+      sections.push({
+        title: "Opening",
+        pages: pages.slice(0, starts[0]),
+        pageStartIndex: 0,
+        chapterOrdinal: 0,
+        isFrontMatter: true,
+      });
+    }
+
+    for (let i = 0; i < starts.length; i++) {
+      const startIndex = starts[i];
+      const endIndex = i + 1 < starts.length ? starts[i + 1] : pages.length;
+      chapterOrdinal += 1;
+      const sectionPages = pages.slice(startIndex, endIndex);
+      sections.push({
+        title: getPageChapterTitle(pages[startIndex], chapterOrdinal),
+        pages: sectionPages,
+        pageStartIndex: startIndex,
+        chapterOrdinal,
+        isFrontMatter: false,
+      });
+    }
+
+    return sections.filter((section) => section.pages.some((page) => normalizeWhitespace(page.text)));
   }
 
   function renderReview() {
@@ -199,8 +339,9 @@
     els.reviewList.innerHTML = "";
 
     state.pages.forEach((page, index) => {
-      if (onlyChapters && !page.chapterCandidate) return;
-      if (q && !page.text.toLowerCase().includes(q) && !page.file.name.toLowerCase().includes(q)) return;
+      const pageText = page.text || "";
+      if (onlyChapters && !page.chapterStart) return;
+      if (q && !pageText.toLowerCase().includes(q) && !page.file.name.toLowerCase().includes(q)) return;
 
       const item = document.createElement("article");
       item.className = "review-item";
@@ -219,10 +360,10 @@
       name.textContent = page.file.name;
 
       left.append(strong, name);
-      if (page.chapterCandidate) {
+      if (page.chapterStart) {
         const badge = document.createElement("span");
         badge.className = "badge";
-        badge.textContent = "Check chapter start";
+        badge.textContent = page.chapterTouched ? "Chapter start" : "Auto chapter start";
         left.appendChild(badge);
       }
 
@@ -243,15 +384,63 @@
       img.src = url;
       img.alt = `Original screenshot ${index + 1}`;
 
-      const text = document.createElement("textarea");
-      text.value = page.text;
-      text.setAttribute("aria-label", `OCR text for page ${index + 1}`);
-      text.addEventListener("input", () => {
-        state.pages[index].text = text.value;
-        state.pages[index].chapterCandidate = chapterHeuristic(text.value);
+      const right = document.createElement("div");
+      right.className = "review-right";
+
+      const meta = document.createElement("div");
+      meta.className = "page-meta";
+
+      const chapterWrap = document.createElement("label");
+      chapterWrap.className = "mini-check";
+      const chapterBox = document.createElement("input");
+      chapterBox.type = "checkbox";
+      chapterBox.checked = !!page.chapterStart;
+      const chapterText = document.createElement("span");
+      chapterText.textContent = "Chapter start";
+      chapterWrap.append(chapterBox, chapterText);
+
+      const chapterTitleField = document.createElement("label");
+      chapterTitleField.className = "chapter-title-field";
+      const chapterTitleLabel = document.createElement("span");
+      chapterTitleLabel.textContent = "Chapter title";
+      const chapterTitleInput = document.createElement("input");
+      chapterTitleInput.type = "text";
+      chapterTitleInput.placeholder = getPageChapterTitle(page, chapterIndices().indexOf(index) + 1 || 1);
+      chapterTitleInput.value = page.chapterTitle || "";
+      chapterTitleInput.disabled = !page.chapterStart;
+      chapterTitleField.append(chapterTitleLabel, chapterTitleInput);
+
+      chapterBox.addEventListener("change", () => {
+        page.chapterStart = chapterBox.checked;
+        page.chapterTouched = true;
+        if (!page.chapterStart) {
+          chapterTitleInput.disabled = true;
+        } else {
+          chapterTitleInput.disabled = false;
+        }
+        renderReview();
       });
 
-      body.append(img, text);
+      chapterTitleInput.addEventListener("input", () => {
+        page.chapterTitle = chapterTitleInput.value;
+      });
+
+      meta.append(chapterWrap, chapterTitleField);
+
+      const text = document.createElement("textarea");
+      text.value = pageText;
+      text.setAttribute("aria-label", `OCR text for page ${index + 1}`);
+      text.addEventListener("input", () => {
+        page.text = text.value;
+        page.detectedChapterStart = chapterHeuristic(text.value);
+        if (!page.chapterTouched) {
+          page.chapterStart = page.detectedChapterStart;
+        }
+        chapterTitleInput.placeholder = getPageChapterTitle(page, chapterIndices().indexOf(index) + 1 || 1);
+      });
+
+      right.append(meta, text);
+      body.append(img, right);
       item.append(title, body);
       els.reviewList.appendChild(item);
     });
@@ -297,11 +486,15 @@
         const canvas = makeCroppedCanvas(img);
         const result = await worker.recognize(canvas);
         const text = result?.data?.text || "";
+        const detectedChapterStart = chapterHeuristic(text);
 
         state.pages.push({
           file,
           text,
-          chapterCandidate: chapterHeuristic(text),
+          detectedChapterStart,
+          chapterStart: detectedChapterStart,
+          chapterTouched: false,
+          chapterTitle: "",
         });
 
         const pct = Math.round(((i + 1) / state.files.length) * 100);
@@ -318,10 +511,11 @@
       els.exportSection.classList.remove("hidden");
       renderReview();
 
+      const starts = chapterIndices().length;
       if (state.stopRequested) {
-        setStatus(`Stopped after ${state.pages.length} pages. You can review/export what finished.`);
+        setStatus(`Stopped after ${state.pages.length} pages. ${starts} chapter start${starts === 1 ? "" : "s"} marked so far.`);
       } else {
-        setStatus(`Done. ${state.pages.length} pages processed. Review chapter candidates, then export.`);
+        setStatus(`Done. ${state.pages.length} pages processed. ${starts} chapter start${starts === 1 ? "" : "s"} detected. Review them, then export.`);
       }
     } catch (err) {
       console.error(err);
@@ -395,7 +589,7 @@
       region.getContext("2d", { alpha: false }).drawImage(cropped, sx, sy, sw, sh, 0, 0, sw, sh);
 
       const result = await worker.recognize(region);
-      let text = (result?.data?.text || "").trim();
+      let text = normalizeWhitespace(result?.data?.text || "");
 
       const letter = els.rescueLetter.value.trim();
       if (letter && text && !text.toLowerCase().startsWith(letter.toLowerCase())) {
@@ -419,7 +613,10 @@
 
     const original = state.pages[index].text.trimStart();
     state.pages[index].text = `${recovered}\n\n${original}`;
-    state.pages[index].chapterCandidate = true;
+    state.pages[index].detectedChapterStart = true;
+    if (!state.pages[index].chapterTouched) {
+      state.pages[index].chapterStart = true;
+    }
     renderReview();
     els.rescueDialog.close();
   }
@@ -441,10 +638,25 @@
     downloadBlob(new Blob([text], { type: "text/plain;charset=utf-8" }), `${title}.txt`);
   }
 
+  function buildXhtmlPage(title, innerHtml) {
+    return `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE html>\n<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en">\n<head>\n  <meta charset="utf-8"/>\n  <title>${escapeXml(title)}</title>\n  <link rel="stylesheet" type="text/css" href="style.css"/>\n</head>\n<body>\n  <section epub:type="bodymatter" xmlns:epub="http://www.idpf.org/2007/ops">\n    ${innerHtml}\n  </section>\n</body>\n</html>`;
+  }
+
+  function paragraphsFromSectionText(text) {
+    return text
+      .split(/\n{2,}/)
+      .map((p) => p.trim())
+      .filter(Boolean)
+      .map((p) => `<p>${escapeXml(p).replace(/\n/g, "<br/>")}</p>`)
+      .join("\n");
+  }
+
   async function buildEpub() {
     if (!window.JSZip) throw new Error("JSZip did not load.");
-    const text = combinedText();
-    if (!text) throw new Error("There is no OCR text to export.");
+    if (!state.pages.length) throw new Error("There is no OCR text to export.");
+
+    const sections = buildSectionsFromPages();
+    if (!sections.length) throw new Error("There is no OCR text to export.");
 
     const title = (els.bookTitle.value || "Untitled Book").trim();
     const author = (els.bookAuthor.value || "Unknown Author").trim();
@@ -454,52 +666,21 @@
 
     const zip = new JSZip();
 
-    // EPUB requires the mimetype entry to be stored without compression.
     zip.file("mimetype", "application/epub+zip", { compression: "STORE" });
 
-    zip.file("META-INF/container.xml", `<?xml version="1.0" encoding="UTF-8"?>
-<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
-  <rootfiles>
-    <rootfile full-path="EPUB/package.opf" media-type="application/oebps-package+xml"/>
-  </rootfiles>
-</container>`);
+    zip.file("META-INF/container.xml", `<?xml version="1.0" encoding="UTF-8"?>\n<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">\n  <rootfiles>\n    <rootfile full-path="EPUB/package.opf" media-type="application/oebps-package+xml"/>\n  </rootfiles>\n</container>`);
 
-    const paragraphs = text
-      .split(/\n{2,}/)
-      .map(p => p.trim())
-      .filter(Boolean)
-      .map(p => `<p>${escapeXml(p).replace(/\n/g, "<br/>")}</p>`)
-      .join("\n");
+    const manifestItems = [
+      '    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>',
+      '    <item id="style" href="style.css" media-type="text/css"/>',
+    ];
+    const spineItems = [];
+    const navItems = [];
 
-    zip.file("EPUB/book.xhtml", `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en">
-<head>
-  <meta charset="utf-8"/>
-  <title>${escapeXml(title)}</title>
-  <link rel="stylesheet" type="text/css" href="style.css"/>
-</head>
-<body>
-  <section epub:type="bodymatter" xmlns:epub="http://www.idpf.org/2007/ops">
-    <h1>${escapeXml(title)}</h1>
-    ${paragraphs}
-  </section>
-</body>
-</html>`);
-
-    zip.file("EPUB/nav.xhtml", `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
-<head><meta charset="utf-8"/><title>Contents</title></head>
-<body>
-<nav epub:type="toc" id="toc">
-  <h1>Contents</h1>
-  <ol><li><a href="book.xhtml">${escapeXml(title)}</a></li></ol>
-</nav>
-</body>
-</html>`);
-
-    zip.file("EPUB/style.css", `body{font-family:serif;line-height:1.5;margin:5%;}p{margin:0 0 1em;}h1{text-align:center;margin:2em 0;}`);
+    zip.file("EPUB/title.xhtml", buildXhtmlPage(title, `<h1 class="book-title">${escapeXml(title)}</h1><p class="book-author">${escapeXml(author)}</p>`));
+    manifestItems.push('    <item id="title-page" href="title.xhtml" media-type="application/xhtml+xml"/>');
+    spineItems.push('    <itemref idref="title-page"/>');
+    navItems.push(`<li><a href="title.xhtml">Title Page</a></li>`);
 
     let coverManifest = "";
     let coverMeta = "";
@@ -512,45 +693,37 @@
       const coverName = `cover.${ext}`;
       zip.file(`EPUB/${coverName}`, await state.coverFile.arrayBuffer());
 
-      zip.file("EPUB/cover.xhtml", `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml">
-<head><meta charset="utf-8"/><title>Cover</title><style>html,body{margin:0;padding:0;text-align:center}img{max-width:100%;max-height:100vh}</style></head>
-<body><img src="${coverName}" alt="Cover"/></body>
-</html>`);
+      zip.file("EPUB/cover.xhtml", `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE html>\n<html xmlns="http://www.w3.org/1999/xhtml">\n<head><meta charset="utf-8"/><title>Cover</title><style>html,body{margin:0;padding:0;text-align:center;background:#fff}img{max-width:100%;max-height:100vh}</style></head>\n<body><img src="${coverName}" alt="Cover"/></body>\n</html>`);
 
-      coverManifest = `
-    <item id="cover-image" href="${coverName}" media-type="${type}" properties="cover-image"/>
-    <item id="cover-page" href="cover.xhtml" media-type="application/xhtml+xml"/>`;
-      coverSpine = `    <itemref idref="cover-page" linear="yes"/>\n`;
-      coverMeta = `\n    <meta name="cover" content="cover-image"/>`;
-      coverGuide = `\n  <guide><reference type="cover" title="Cover" href="cover.xhtml"/></guide>`;
+      coverManifest = `\n    <item id="cover-image" href="${coverName}" media-type="${type}" properties="cover-image"/>\n    <item id="cover-page" href="cover.xhtml" media-type="application/xhtml+xml"/>`;
+      coverSpine = '    <itemref idref="cover-page" linear="yes"/>\n';
+      coverMeta = '\n    <meta name="cover" content="cover-image"/>';
+      coverGuide = '\n  <guide><reference type="cover" title="Cover" href="cover.xhtml"/></guide>';
+      navItems.unshift('<li><a href="cover.xhtml">Cover</a></li>');
     }
 
-    zip.file("EPUB/package.opf", `<?xml version="1.0" encoding="UTF-8"?>
-<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="pub-id">
-  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
-    <dc:identifier id="pub-id">${identifier}</dc:identifier>
-    <dc:title>${escapeXml(title)}</dc:title>
-    <dc:creator>${escapeXml(author)}</dc:creator>
-    <dc:language>en</dc:language>
-    <meta property="dcterms:modified">${modified}</meta>${coverMeta}
-  </metadata>
-  <manifest>
-    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
-    <item id="book" href="book.xhtml" media-type="application/xhtml+xml"/>
-    <item id="style" href="style.css" media-type="text/css"/>${coverManifest}
-  </manifest>
-  <spine>
-${coverSpine}    <itemref idref="book"/>
-  </spine>${coverGuide}
-</package>`);
+    sections.forEach((section, index) => {
+      const fileName = `chapter-${String(index + 1).padStart(3, "0")}.xhtml`;
+      const manifestId = `chap-${index + 1}`;
+      const sectionText = section.pages.map((page) => (page.text || "").trim()).filter(Boolean).join("\n\n");
+      const sectionBody = `<h2 class="chapter-title">${escapeXml(section.title)}</h2>\n${paragraphsFromSectionText(sectionText)}`;
+      zip.file(`EPUB/${fileName}`, buildXhtmlPage(section.title, sectionBody));
+      manifestItems.push(`    <item id="${manifestId}" href="${fileName}" media-type="application/xhtml+xml"/>`);
+      spineItems.push(`    <itemref idref="${manifestId}"/>`);
+      navItems.push(`<li><a href="${fileName}">${escapeXml(section.title)}</a></li>`);
+    });
+
+    zip.file("EPUB/nav.xhtml", `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE html>\n<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">\n<head><meta charset="utf-8"/><title>Contents</title></head>\n<body>\n<nav epub:type="toc" id="toc">\n  <h1>Contents</h1>\n  <ol>\n    ${navItems.join("\n    ")}\n  </ol>\n</nav>\n</body>\n</html>`);
+
+    zip.file("EPUB/style.css", `body{font-family:serif;line-height:1.5;margin:5%;}p{margin:0 0 1em;}h1.book-title{text-align:center;margin:28vh 0 .4em;font-size:2em;}p.book-author{text-align:center;margin:0 0 2em;font-style:italic;}h2.chapter-title{margin:0 0 1.2em;text-align:center;page-break-after:avoid;}img{max-width:100%;}`);
+
+    zip.file("EPUB/package.opf", `<?xml version="1.0" encoding="UTF-8"?>\n<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="pub-id">\n  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">\n    <dc:identifier id="pub-id">${identifier}</dc:identifier>\n    <dc:title>${escapeXml(title)}</dc:title>\n    <dc:creator>${escapeXml(author)}</dc:creator>\n    <dc:language>en</dc:language>\n    <meta property="dcterms:modified">${modified}</meta>${coverMeta}\n  </metadata>\n  <manifest>\n${manifestItems.join("\n")}${coverManifest}\n  </manifest>\n  <spine>\n${coverSpine}${spineItems.join("\n")}\n  </spine>${coverGuide}\n</package>`);
 
     const blob = await zip.generateAsync({
       type: "blob",
       mimeType: "application/epub+zip",
       compression: "DEFLATE",
-      compressionOptions: { level: 6 }
+      compressionOptions: { level: 6 },
     });
 
     downloadBlob(blob, `${safeTitle}.epub`);
@@ -570,9 +743,9 @@ ${coverSpine}    <itemref idref="book"/>
     }
   }
 
-  document.querySelectorAll("[data-preset]").forEach(btn => {
+  document.querySelectorAll("[data-preset]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      document.querySelectorAll("[data-preset]").forEach(b => b.classList.remove("active"));
+      document.querySelectorAll("[data-preset]").forEach((b) => b.classList.remove("active"));
       btn.classList.add("active");
       const preset = btn.dataset.preset;
       if (preset === "cloud") {
@@ -592,8 +765,8 @@ ${coverSpine}    <itemref idref="book"/>
     });
   });
 
-  [els.cropTop, els.cropBottom, els.cropSides].forEach(input => input.addEventListener("input", updatePreview));
-  [els.rescueLeft, els.rescueTop, els.rescueBottom].forEach(input => input.addEventListener("input", drawRescuePreview));
+  [els.cropTop, els.cropBottom, els.cropSides].forEach((input) => input.addEventListener("input", updatePreview));
+  [els.rescueLeft, els.rescueTop, els.rescueBottom].forEach((input) => input.addEventListener("input", drawRescuePreview));
 
   els.coverInput.addEventListener("change", () => {
     const file = els.coverInput.files?.[0] || null;
