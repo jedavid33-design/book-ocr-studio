@@ -12,7 +12,7 @@
     <div>
       <p class="eyebrow">LOCAL BOOK TOOL</p>
       <h1>Book OCR Studio</h1>
-      <p class="subhead">Bulk crop screenshots, OCR them in order, fix chapter openings, and export TXT or EPUB.</p>
+      <p class="subhead">Crop screenshots, OCR them one page at a time, fix pages as you go, and export TXT or EPUB.</p>
     </div>
   </header>
 
@@ -88,11 +88,10 @@
 
     <section class="card">
       <h2>4. OCR</h2>
-      <p class="hint">OCR runs in your browser with Tesseract.js. Progress is saved after every completed page. If Safari reloads, select the same screenshot batch again and the tool will continue from the last saved page.</p>
+      <p class="hint">This version runs one page at a time. Process the first page, make your edits, then tap <strong>Next page</strong> at the bottom to save and continue.</p>
 
       <div class="actions">
-        <button id="processBtn" class="button primary" type="button" disabled>Process all pages</button>
-        <button id="stopBtn" class="button ghost" type="button" disabled>Stop after current page</button>
+        <button id="processBtn" class="button primary" type="button" disabled>Process first page</button>
       </div>
 
       <div class="progress-wrap hidden" id="progressWrap">
@@ -109,18 +108,19 @@
     <section class="card hidden" id="reviewSection">
       <div class="section-head">
         <div>
-          <h2>5. Review text</h2>
-          <p class="hint">Pages appear here as they finish OCR. To keep iPad memory usage low, the newest 12 pages are shown by default; use Search to pull up older pages. Message-page OCR is still available for chat layouts.</p>
+          <h2>5. Review current page</h2>
+          <p class="hint">Edit what you need, then use the buttons at the bottom to move through the book one page at a time.</p>
         </div>
-        <div class="review-tools">
-          <input id="reviewSearch" type="search" placeholder="Search extracted text…" />
-          <label class="check">
-            <input id="chapterOnly" type="checkbox" />
-            <span>Chapter candidates only</span>
-          </label>
+        <div class="review-tools compact">
+          <span id="reviewProgress" class="progress-pill">0 of 0 processed</span>
         </div>
       </div>
       <div id="reviewList" class="review-list"></div>
+      <div class="nav-row">
+        <button id="prevPageBtn" class="button ghost" type="button" disabled>Previous page</button>
+        <button id="messageOcrBtn" class="button secondary" type="button" disabled>Message-page OCR</button>
+        <button id="nextPageBtn" class="button primary" type="button" disabled>Next page</button>
+      </div>
     </section>
 
     <section class="card hidden" id="exportSection">

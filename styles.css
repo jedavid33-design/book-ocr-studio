@@ -255,3 +255,37 @@ dialog::backdrop { background: rgba(30,25,20,.48); backdrop-filter: blur(5px); }
   .review-body { grid-template-columns: 86px 1fr; }
   .review-body textarea { min-height: 240px; }
 }
+
+
+.review-tools.compact { justify-content: flex-end; }
+.progress-pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 8px 12px;
+  background: #f2ede7;
+  color: var(--muted);
+  font-size: .86rem;
+  font-weight: 700;
+}
+.nav-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 14px;
+}
+.nav-row .button { flex: 1 1 160px; }
+.review-empty {
+  margin-top: 14px;
+  padding: 18px;
+  border: 1px dashed var(--line);
+  border-radius: 16px;
+  color: var(--muted);
+  background: rgba(255,255,255,.65);
+}
+@media (max-width: 760px) {
+  .nav-row { flex-direction: column; }
+  .nav-row .button { width: 100%; }
+}

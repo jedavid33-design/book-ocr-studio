@@ -11,11 +11,11 @@
     worker: null,
     stopRequested: false,
     processing: false,
+    currentPageIndex: -1,
   };
 
-  const CHECKPOINT_KEY = "bookOcrStudio.progress.v9";
+  const CHECKPOINT_KEY = "bookOcrStudio.progress.v10";
   const WORKER_RECYCLE_EVERY = 12;
-  const REVIEW_VISIBLE_LIMIT = 12;
 
   const els = {
     bookTitle: $("bookTitle"),
@@ -41,8 +41,10 @@
     statusBox: $("statusBox"),
     reviewSection: $("reviewSection"),
     reviewList: $("reviewList"),
-    reviewSearch: $("reviewSearch"),
-    chapterOnly: $("chapterOnly"),
+    reviewProgress: $("reviewProgress"),
+    prevPageBtn: $("prevPageBtn"),
+    nextPageBtn: $("nextPageBtn"),
+    messageOcrBtn: $("messageOcrBtn"),
     exportSection: $("exportSection"),
     downloadTxt: $("downloadTxt"),
     downloadEpub: $("downloadEpub"),
@@ -93,6 +95,7 @@
         cropTop: Number(els.cropTop.value) || 0,
         cropBottom: Number(els.cropBottom.value) || 0,
         cropSides: Number(els.cropSides.value) || 0,
+        currentPageIndex: state.currentPageIndex,
         pages: state.pages.map(p => ({
           fileName: p.file.name,
           text: p.text || "",
@@ -128,6 +131,7 @@
         text: p.text || "",
         chapterCandidate: !!p.chapterCandidate,
       })).filter(p => p.file);
+      state.currentPageIndex = state.pages.length ? clamp(Number(saved.currentPageIndex) || state.pages.length - 1, 0, state.pages.length - 1) : -1;
       return state.pages.length;
     } catch (err) {
       console.warn("Could not restore OCR checkpoint", err);
@@ -270,98 +274,109 @@
     return URL.createObjectURL(file);
   }
 
-  function renderReview() {
-    const q = els.reviewSearch.value.trim().toLowerCase();
-    const onlyChapters = els.chapterOnly.checked;
-    els.reviewList.innerHTML = "";
+  function updateNavigationControls() {
+    const processed = state.pages.length;
+    const total = state.files.length;
+    els.reviewProgress.textContent = `${processed} of ${total} processed`;
 
-    let entries = state.pages.map((page, index) => ({ page, index }));
-    if (onlyChapters) entries = entries.filter(({ page }) => page.chapterCandidate);
-    if (q) {
-      entries = entries.filter(({ page, index }) =>
-        page.text.toLowerCase().includes(q) ||
-        page.file.name.toLowerCase().includes(q) ||
-        `page ${index + 1}`.includes(q)
-      );
-    } else if (entries.length > REVIEW_VISIBLE_LIMIT) {
-      entries = entries.slice(-REVIEW_VISIBLE_LIMIT);
+    const hasCurrent = processed > 0 && state.currentPageIndex >= 0;
+    els.prevPageBtn.disabled = state.processing || !hasCurrent || state.currentPageIndex <= 0;
+    els.messageOcrBtn.disabled = state.processing || !hasCurrent;
+
+    if (!total) {
+      els.nextPageBtn.disabled = true;
+      els.nextPageBtn.textContent = 'Next page';
+      return;
     }
 
-    entries.forEach(({ page, index }) => {
+    if (!hasCurrent) {
+      els.nextPageBtn.disabled = state.processing;
+      els.nextPageBtn.textContent = 'Process first page';
+      return;
+    }
 
-      const item = document.createElement("article");
-      item.className = "review-item";
+    const canAdvanceToProcessed = state.currentPageIndex < processed - 1;
+    const canProcessNew = processed < total && state.currentPageIndex === processed - 1;
+    const isAtEnd = processed >= total && state.currentPageIndex >= total - 1;
 
-      const title = document.createElement("div");
-      title.className = "review-title";
+    els.nextPageBtn.disabled = state.processing || isAtEnd;
+    if (canAdvanceToProcessed) {
+      els.nextPageBtn.textContent = 'Next page';
+    } else if (canProcessNew) {
+      els.nextPageBtn.textContent = 'Save + next page';
+    } else if (isAtEnd) {
+      els.nextPageBtn.textContent = 'All pages done';
+    } else {
+      els.nextPageBtn.textContent = 'Next page';
+    }
+  }
 
-      const left = document.createElement("div");
-      left.className = "left";
+  function renderReview() {
+    els.reviewList.innerHTML = "";
 
-      const strong = document.createElement("strong");
-      strong.textContent = `Page ${index + 1}`;
+    if (!state.pages.length || state.currentPageIndex < 0) {
+      const empty = document.createElement('div');
+      empty.className = 'review-empty';
+      empty.textContent = state.files.length
+        ? 'No pages have been processed yet. Tap “Process first page” to begin.'
+        : 'Add screenshots above to begin.';
+      els.reviewList.appendChild(empty);
+      updateNavigationControls();
+      return;
+    }
 
-      const name = document.createElement("span");
-      name.className = "page-name";
-      name.textContent = page.file.name;
+    state.currentPageIndex = clamp(state.currentPageIndex, 0, state.pages.length - 1);
+    const index = state.currentPageIndex;
+    const page = state.pages[index];
 
-      left.append(strong, name);
-      if (page.chapterCandidate) {
-        const badge = document.createElement("span");
-        badge.className = "badge";
-        badge.textContent = "Check chapter start";
-        left.appendChild(badge);
-      }
+    const item = document.createElement("article");
+    item.className = "review-item";
 
-      const buttonWrap = document.createElement("div");
-      buttonWrap.className = "actions";
+    const title = document.createElement("div");
+    title.className = "review-title";
 
-      const messageBtn = document.createElement("button");
-      messageBtn.className = "button secondary";
-      messageBtn.type = "button";
-      messageBtn.textContent = "Message-page OCR";
-      messageBtn.addEventListener("click", async () => {
-        const original = messageBtn.textContent;
-        messageBtn.disabled = true;
-        messageBtn.textContent = "Working…";
-        try {
-          await runMessagePageOcr(index);
-          renderReview();
-          setStatus(`Message-page OCR updated page ${index + 1}.`);
-        } catch (err) {
-          console.error(err);
-          alert(`Message-page OCR failed: ${err.message || err}`);
-        } finally {
-          messageBtn.disabled = false;
-          messageBtn.textContent = original;
-        }
-      });
+    const left = document.createElement("div");
+    left.className = "left";
 
-      buttonWrap.appendChild(messageBtn);
-      title.append(left, buttonWrap);
+    const strong = document.createElement("strong");
+    strong.textContent = `Page ${index + 1} of ${state.files.length}`;
 
-      const body = document.createElement("div");
-      body.className = "review-body";
+    const name = document.createElement("span");
+    name.className = "page-name";
+    name.textContent = page.file.name;
 
-      const img = document.createElement("img");
-      const url = pageImageUrl(page.file);
-      img.onload = () => URL.revokeObjectURL(url);
-      img.src = url;
-      img.alt = `Original screenshot ${index + 1}`;
+    left.append(strong, name);
+    if (page.chapterCandidate) {
+      const badge = document.createElement("span");
+      badge.className = "badge";
+      badge.textContent = "Check chapter start";
+      left.appendChild(badge);
+    }
+    title.append(left);
 
-      const text = document.createElement("textarea");
-      text.value = page.text;
-      text.setAttribute("aria-label", `OCR text for page ${index + 1}`);
-      text.addEventListener("input", () => {
-        state.pages[index].text = text.value;
-        state.pages[index].chapterCandidate = chapterHeuristic(text.value);
-        saveCheckpoint();
-      });
+    const body = document.createElement("div");
+    body.className = "review-body";
 
-      body.append(img, text);
-      item.append(title, body);
-      els.reviewList.appendChild(item);
+    const img = document.createElement("img");
+    const url = pageImageUrl(page.file);
+    img.onload = () => URL.revokeObjectURL(url);
+    img.src = url;
+    img.alt = `Original screenshot ${index + 1}`;
+
+    const text = document.createElement("textarea");
+    text.value = page.text;
+    text.setAttribute("aria-label", `OCR text for page ${index + 1}`);
+    text.addEventListener("input", () => {
+      state.pages[index].text = text.value;
+      state.pages[index].chapterCandidate = chapterHeuristic(text.value);
+      saveCheckpoint();
     });
+
+    body.append(img, text);
+    item.append(title, body);
+    els.reviewList.appendChild(item);
+
+    updateNavigationControls();
   }
 
   async function ensureWorker(logger) {
@@ -667,90 +682,101 @@
     saveCheckpoint();
   }
 
-  async function processPages() {
+  async function processSinglePage(index) {
     if (!state.files.length) return;
+    if (index < 0 || index >= state.files.length) return;
 
-    state.stopRequested = false;
     state.processing = true;
     els.processBtn.disabled = true;
-    els.stopBtn.disabled = false;
+    els.nextPageBtn.disabled = true;
+    els.prevPageBtn.disabled = true;
+    els.messageOcrBtn.disabled = true;
     els.progressWrap.classList.remove("hidden");
     els.reviewSection.classList.remove("hidden");
     els.exportSection.classList.remove("hidden");
-
-    const startIndex = state.pages.length;
-    const startPct = Math.round((startIndex / state.files.length) * 100);
-    els.progressBar.value = startPct;
-    els.progressPercent.textContent = `${startPct}%`;
     renderReview();
 
     try {
-      let activePage = startIndex;
       const logger = (m) => {
         if (m.status === "recognizing text") {
-          const perPage = (activePage + (m.progress || 0)) / state.files.length;
+          const perPage = (index + (m.progress || 0)) / state.files.length;
           const pct = Math.round(perPage * 100);
           els.progressBar.value = pct;
           els.progressPercent.textContent = `${pct}%`;
         }
         if (m.status) {
-          els.progressLabel.textContent = `Page ${Math.min(activePage + 1, state.files.length)}: ${m.status}`;
+          els.progressLabel.textContent = `Page ${Math.min(index + 1, state.files.length)}: ${m.status}`;
         }
       };
 
-      let worker = await ensureWorker(logger);
+      const worker = await resetWorker(logger);
       await worker.setParameters({ tessedit_pageseg_mode: "6", preserve_interword_spaces: "1" });
 
-      for (let i = startIndex; i < state.files.length; i++) {
-        activePage = i;
-        if (state.stopRequested) break;
+      const file = state.files[index];
+      setStatus(`Processing page ${index + 1} of ${state.files.length}: ${file.name}`);
+      const img = await loadImageFromFile(file);
+      const canvas = makeCroppedCanvas(img);
+      const result = await worker.recognize(canvas);
+      const text = cleanBodyText(result?.data?.text || "");
+      const pageData = { file, text, chapterCandidate: chapterHeuristic(text) };
 
-        if (i > startIndex && (i - startIndex) % WORKER_RECYCLE_EVERY === 0) {
-          setStatus(`Freeing OCR memory after page ${i}…`);
-          worker = await resetWorker(logger);
-          await worker.setParameters({ tessedit_pageseg_mode: "6", preserve_interword_spaces: "1" });
-          await new Promise(resolve => setTimeout(resolve, 75));
-        }
+      if (index < state.pages.length) state.pages[index] = pageData;
+      else state.pages.push(pageData);
 
-        const file = state.files[i];
-        setStatus(`Processing page ${i + 1} of ${state.files.length}: ${file.name}`);
-        const img = await loadImageFromFile(file);
-        const canvas = makeCroppedCanvas(img);
-        const result = await worker.recognize(canvas);
-        const text = cleanBodyText(result?.data?.text || "");
+      state.currentPageIndex = index;
+      saveCheckpoint();
+      renderReview();
 
-        state.pages.push({ file, text, chapterCandidate: chapterHeuristic(text) });
-        saveCheckpoint();
-        renderReview();
+      canvas.width = 1;
+      canvas.height = 1;
 
-        canvas.width = 1;
-        canvas.height = 1;
-
-        const pct = Math.round(((i + 1) / state.files.length) * 100);
-        els.progressBar.value = pct;
-        els.progressPercent.textContent = `${pct}%`;
-        setStatus(`Finished page ${i + 1} of ${state.files.length}. Progress saved automatically.`);
-        await new Promise(resolve => setTimeout(resolve, 20));
-      }
-
-      if (!state.pages.length) {
-        setStatus("No pages were processed.");
-      } else if (state.stopRequested) {
-        setStatus(`Stopped after ${state.pages.length} pages. Progress is saved; tap Process all pages to continue.`);
-      } else if (state.pages.length >= state.files.length) {
-        setStatus(`Done. ${state.pages.length} pages processed. Progress is saved until you clear the batch.`);
-      } else {
-        setStatus(`Paused after ${state.pages.length} pages. Progress is saved.`);
-      }
+      const pct = Math.round(((index + 1) / state.files.length) * 100);
+      els.progressBar.value = pct;
+      els.progressPercent.textContent = `${pct}%`;
+      setStatus(`Finished page ${index + 1} of ${state.files.length}. Edit it if needed, then tap Next page.`);
     } catch (err) {
       console.error(err);
       saveCheckpoint();
-      setStatus(`OCR stopped after ${state.pages.length} pages. Progress was saved. Reload, select the same screenshots, and continue.`);
+      setStatus(`OCR failed on page ${index + 1}. Your previous progress was preserved.`);
+      alert(`OCR failed on page ${index + 1}: ${err.message || err}`);
     } finally {
+      try { await resetWorker(); } catch (_) {}
       state.processing = false;
-      els.processBtn.disabled = !state.files.length || state.pages.length >= state.files.length;
-      els.stopBtn.disabled = true;
+      els.processBtn.disabled = !state.files.length || state.pages.length > 0;
+      updateNavigationControls();
     }
+  }
+
+  async function goToPreviousPage() {
+    if (state.processing || state.currentPageIndex <= 0) return;
+    state.currentPageIndex -= 1;
+    saveCheckpoint();
+    renderReview();
+    setStatus(`Showing page ${state.currentPageIndex + 1} of ${state.files.length}.`);
+  }
+
+  async function goToNextPage() {
+    if (state.processing || !state.files.length) return;
+
+    if (!state.pages.length || state.currentPageIndex < 0) {
+      await processSinglePage(0);
+      return;
+    }
+
+    if (state.currentPageIndex < state.pages.length - 1) {
+      state.currentPageIndex += 1;
+      saveCheckpoint();
+      renderReview();
+      setStatus(`Showing page ${state.currentPageIndex + 1} of ${state.files.length}.`);
+      return;
+    }
+
+    if (state.pages.length < state.files.length) {
+      await processSinglePage(state.pages.length);
+      return;
+    }
+
+    setStatus('You are already on the last page.');
   }
 
   function downloadBlob(blob, filename) {
@@ -937,18 +963,20 @@ ${coverSpine}    <itemref idref="book"/>
   els.imageInput.addEventListener("change", async () => {
     state.files = Array.from(els.imageInput.files || []).sort(naturalSort);
     state.pages = [];
+    state.currentPageIndex = -1;
     const restored = state.files.length ? restoreCheckpointIfMatching() : 0;
+    if (restored && state.currentPageIndex < 0) state.currentPageIndex = restored - 1;
     els.fileCount.textContent = `${state.files.length} page${state.files.length === 1 ? "" : "s"} loaded`;
-    els.processBtn.disabled = !state.files.length || restored >= state.files.length;
+    els.processBtn.disabled = !state.files.length || restored > 0;
     els.reviewSection.classList.toggle("hidden", restored === 0);
     els.exportSection.classList.toggle("hidden", restored === 0);
     renderThumbs();
     renderReview();
     await updatePreview();
     if (restored) {
-      setStatus(`Recovered ${restored} processed pages. Tap Process all pages to continue from page ${restored + 1}.`);
+      setStatus(`Recovered ${restored} processed pages. Use Previous/Next page to review, or tap Next page to continue from page ${Math.min(restored + 1, state.files.length)}.`);
     } else {
-      setStatus(state.files.length ? "Ready to process." : "Add screenshots to begin.");
+      setStatus(state.files.length ? "Ready to process the first page." : "Add screenshots to begin.");
     }
   });
 
@@ -956,24 +984,44 @@ ${coverSpine}    <itemref idref="book"/>
     els.imageInput.value = "";
     state.files = [];
     state.pages = [];
+    state.currentPageIndex = -1;
     clearCheckpoint();
     els.fileCount.textContent = "0 pages loaded";
     els.processBtn.disabled = true;
     els.reviewSection.classList.add("hidden");
     els.exportSection.classList.add("hidden");
     renderThumbs();
+    renderReview();
     updatePreview();
     setStatus("Add screenshots to begin.");
   });
 
-  els.processBtn.addEventListener("click", processPages);
-  els.stopBtn.addEventListener("click", () => {
-    state.stopRequested = true;
-    setStatus("Stop requested. Finishing the current page…");
+  els.processBtn.addEventListener("click", async () => {
+    els.reviewSection.classList.remove("hidden");
+    els.exportSection.classList.remove("hidden");
+    await processSinglePage(0);
+  });
+  els.prevPageBtn.addEventListener("click", goToPreviousPage);
+  els.nextPageBtn.addEventListener("click", goToNextPage);
+  els.messageOcrBtn.addEventListener("click", async () => {
+    if (state.processing || state.currentPageIndex < 0) return;
+    const idx = state.currentPageIndex;
+    const original = els.messageOcrBtn.textContent;
+    els.messageOcrBtn.disabled = true;
+    els.messageOcrBtn.textContent = "Working…";
+    try {
+      await runMessagePageOcr(idx);
+      renderReview();
+      setStatus(`Message-page OCR updated page ${idx + 1}.`);
+    } catch (err) {
+      console.error(err);
+      alert(`Message-page OCR failed: ${err.message || err}`);
+    } finally {
+      els.messageOcrBtn.textContent = original;
+      updateNavigationControls();
+    }
   });
 
-  els.reviewSearch.addEventListener("input", renderReview);
-  els.chapterOnly.addEventListener("change", renderReview);
   els.downloadTxt.addEventListener("click", downloadTxt);
   els.downloadEpub.addEventListener("click", downloadEpub);
 
