@@ -885,41 +885,64 @@
     return { text: best, score: bestScore };
   }
 
-  async function ocrBubbleLabel(canvas, bubble) {
-    // Some Kindle layouts put the tiny speaker label a little farther above the bubble.
-    // Try two heights and keep the result that looks most like a short name.
-    const tries = [46, 68];
-    let best = "";
-    let bestScore = -Infinity;
+  function bubbleLane(canvas, bubble) {
+    const rightEdge = bubble.x + bubble.w;
+    // Kindle message bubbles are visually anchored to either the left or right lane.
+    // Using the outer edge is more reliable than the center for long bubbles.
+    if (rightEdge > canvas.width * 0.78 && bubble.x > canvas.width * 0.25) return "right";
+    return "left";
+  }
 
-    for (const stripHeight of tries) {
-      const y = Math.max(0, bubble.y - stripHeight);
-      const x = Math.max(0, bubble.x - 18);
-      const region = {
-        x,
-        y,
-        w: Math.min(canvas.width - x, Math.max(150, bubble.w + 36)),
-        h: Math.min(stripHeight - 4, bubble.y),
-      };
-      if (region.h < 10) continue;
-      const cropped = cropCanvasRegion(canvas, region);
-      const scaled = upscaleCanvas(cropped, 3);
-      const raw = await ocrCanvas(scaled, {
-        tessedit_pageseg_mode: "7",
-        tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz&'- ",
-        preserve_interword_spaces: "1",
-      });
-      const label = cleanLabel(raw);
-      const words = label ? label.split(/\s+/) : [];
-      const score = label ? (30 - Math.abs(label.length - 7) - Math.max(0, words.length - 3) * 8) : -100;
-      if (score > bestScore) {
-        best = label;
-        bestScore = score;
-      }
-      scaled.width = 1;
-      scaled.height = 1;
+  function horizontalOverlapRatio(a, b) {
+    const left = Math.max(a.x, b.x);
+    const right = Math.min(a.x + a.w, b.x + b.w);
+    const overlap = Math.max(0, right - left);
+    return overlap / Math.max(1, Math.min(a.w, b.w));
+  }
+
+  function labelSpaceAbove(bubble, priorBubbles) {
+    // Do not let the label crop reach into a previous message bubble. This was the
+    // source of fake labels such as "WHAT ARE YOU" and "AND YOU HAVE".
+    let blockerBottom = 0;
+    for (const prev of priorBubbles) {
+      if (prev.y >= bubble.y) continue;
+      if (horizontalOverlapRatio(prev, bubble) < 0.18) continue;
+      blockerBottom = Math.max(blockerBottom, prev.y + prev.h);
     }
-    return best;
+    const top = Math.max(blockerBottom + 5, bubble.y - 48);
+    const bottom = bubble.y - 7;
+    return { top, bottom, height: bottom - top };
+  }
+
+  async function ocrBubbleLabel(canvas, bubble, priorBubbles = []) {
+    const space = labelSpaceAbove(bubble, priorBubbles);
+    if (space.height < 13) return "";
+
+    // Speaker labels are tiny and sit directly above the bubble. Keep this crop
+    // deliberately shallow so message text cannot be mistaken for a name.
+    const x = Math.max(0, bubble.x - 12);
+    const maxLabelWidth = Math.min(360, Math.max(150, Math.round(bubble.w * 0.62)));
+    const region = {
+      x,
+      y: space.top,
+      w: Math.min(canvas.width - x, maxLabelWidth),
+      h: Math.min(34, space.height),
+    };
+    if (region.h < 13) return "";
+
+    const cropped = cropCanvasRegion(canvas, region);
+    const scaled = upscaleCanvas(cropped, 3.2);
+    const raw = await ocrCanvas(scaled, {
+      tessedit_pageseg_mode: "7",
+      tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz&'- ",
+      preserve_interword_spaces: "1",
+    });
+    const label = cleanLabel(raw);
+    cropped.width = 1;
+    cropped.height = 1;
+    scaled.width = 1;
+    scaled.height = 1;
+    return label;
   }
 
   async function ocrBubbleText(canvas, bubble) {
@@ -969,25 +992,49 @@
     }
 
     const pieces = [];
-    let cursorY = 0;
+    const priorBubbles = [];
+    const laneSpeaker = { left: "", right: "" };
+
+    // Preserve ordinary prose before the first message block, but do not OCR every
+    // little gap between bubbles. Full-width inter-bubble OCR was reading pieces of
+    // neighboring messages and turning them into garbage text.
+    const firstBubble = bubbles[0];
+    const openingBottom = Math.max(0, firstBubble.y - 56);
+    const opening = await ocrNarrativeRegion(canvas, 0, openingBottom);
+    if (opening) pieces.push(opening);
+
+    let previousBottom = firstBubble.y;
 
     for (const bubble of bubbles) {
-      const labelTop = Math.max(0, bubble.y - 42);
-      const narrativeTop = cursorY;
-      const narrativeBottom = Math.max(cursorY, labelTop - 8);
-      const narrative = await ocrNarrativeRegion(canvas, narrativeTop, narrativeBottom);
-      if (narrative) pieces.push(narrative);
+      const lane = bubbleLane(canvas, bubble);
+      const gap = bubble.y - previousBottom;
 
-      const label = await ocrBubbleLabel(canvas, bubble);
+      // A genuinely large gap can contain normal prose between message groups.
+      // Small gaps are bubble spacing / speaker-label space and are intentionally ignored.
+      if (priorBubbles.length && gap > 150) {
+        const narrative = await ocrNarrativeRegion(canvas, previousBottom + 12, bubble.y - 58);
+        if (narrative) pieces.push(narrative);
+      }
+
+      const space = labelSpaceAbove(bubble, priorBubbles);
+      const shouldCheckLabel = !laneSpeaker[lane] || space.height >= 18;
+      let label = "";
+      if (shouldCheckLabel) {
+        label = await ocrBubbleLabel(canvas, bubble, priorBubbles);
+        if (label) laneSpeaker[lane] = label;
+      }
+
       const bubbleText = await ocrBubbleText(canvas, bubble);
       if (label) pieces.push(label);
       if (bubbleText) pieces.push(bubbleText);
       pieces.push("");
 
-      cursorY = Math.max(cursorY, bubble.y + bubble.h + 8);
+      priorBubbles.push(bubble);
+      previousBottom = Math.max(previousBottom, bubble.y + bubble.h);
     }
 
-    const trailing = await ocrNarrativeRegion(canvas, cursorY, canvas.height);
+    const trailingTop = Math.min(canvas.height, previousBottom + 16);
+    const trailing = await ocrNarrativeRegion(canvas, trailingTop, canvas.height);
     if (trailing) pieces.push(trailing);
 
     const finalText = pieces.join("\n")
@@ -998,6 +1045,9 @@
     state.pages[index].text = finalText;
     state.pages[index].chapterCandidate = chapterHeuristic(finalText);
     saveCheckpoint();
+
+    canvas.width = 1;
+    canvas.height = 1;
   }
 
   async function processSinglePage(index) {
