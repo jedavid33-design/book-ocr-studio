@@ -5,12 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#f6efe4" />
   <title>Book OCR Studio</title>
-  <link rel="stylesheet" href="styles.css?v=19" />
+  <link rel="stylesheet" href="styles.css?v=2.0" />
 </head>
 <body>
   <header class="topbar">
     <div>
-      <p class="eyebrow">LOCAL BOOK TOOL · v19</p>
+      <p class="eyebrow">LOCAL BOOK TOOL · 2.0 · PaddleOCR</p>
       <h1>Book OCR Studio</h1>
       <p class="subhead">Crop screenshots, OCR them one page at a time, fix pages as you go, and export TXT or EPUB.</p>
     </div>
@@ -88,7 +88,7 @@
 
     <section class="card">
       <h2>4. OCR</h2>
-      <p class="hint">This version runs one page at a time. Process the first page, make your edits, then tap <strong>Next page</strong> at the bottom to save and continue.</p>
+      <p class="hint">Version 2.0 uses PaddleOCR (PP-OCRv5) in your browser. It still runs one page at a time: process, edit, then tap <strong>Next page</strong>. The first OCR run may take longer while the models load.</p>
 
       <div class="actions">
         <button id="processBtn" class="button primary" type="button" disabled>Process first page</button>
@@ -118,7 +118,7 @@
       <div id="reviewList" class="review-list"></div>
       <div class="nav-row">
         <button id="prevPageBtn" class="button ghost" type="button" disabled>Previous page</button>
-        <button id="messageOcrBtn" class="button secondary" type="button" disabled>Message-page OCR</button>
+        <button id="messageOcrBtn" class="button secondary" type="button" disabled>Message-page OCR · Paddle</button>
         <button id="nextPageBtn" class="button primary" type="button" disabled>Next page</button>
       </div>
     </section>
@@ -133,8 +133,7 @@
     </section>
   </main>
 
-  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
-  <script src="script.js?v=19"></script>
+  <script type="module" src="script.js?v=2.0"></script>
 </body>
 </html>

@@ -1,13 +1,14 @@
-# Book OCR Studio v19
+# Book OCR Studio 2.0 — PaddleOCR experiment
 
-Regression-tested message OCR patch for the seven known bubble-layout screenshots in this book.
+Version 2.0 keeps the v19 one-page workflow, project recovery, chapter controls, TXT export, and chapter-structured EPUB export, but changes the OCR engine from Tesseract.js to the official PaddleOCR.js browser SDK using PP-OCRv5 mobile detection/recognition models.
 
-## Message OCR changes
-- Stops merging nearby/stacked bubbles into one giant OCR region.
-- Uses denser fill detection so ordinary page text is less likely to be mistaken for a bubble.
-- Uses a higher-resolution bubble mask.
-- Speaker-label crops now keep a safety gap above the bubble text.
-- Speaker labels get multiple OCR passes and stricter rejection of phrase-like false labels.
-- Keeps the existing left/right lane logic and adaptive bubble-text retries.
+## What to test first
+- Re-run **Message-page OCR · Paddle** on the seven known message-layout pages, especially IMG_2251 and IMG_2252.
+- Compare normal prose OCR on a few ordinary pages.
+- The first OCR request may take longer because the browser downloads/initializes the Paddle models.
 
-The one-page workflow, saved project data, compact layout, chapter controls, and EPUB exporter are unchanged.
+## Saved progress
+The permanent `bookOcrStudio.progress.current` checkpoint key is unchanged, so selecting the same screenshot batch can recover existing v19 edits. Paddle OCR only replaces a page when you explicitly process/re-process that page.
+
+## Files
+Upload `index.html`, `script.js`, and `styles.css` to the GitHub Pages repository root. `README.md` is optional.

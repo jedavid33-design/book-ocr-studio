@@ -1,7 +1,9 @@
+import { PaddleOCR } from "https://cdn.jsdelivr.net/npm/@paddleocr/paddleocr-js@0.4.2/+esm";
+
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "v14";
+  const BUILD_VERSION = "2.0-paddle";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -12,6 +14,7 @@
     coverFile: null,
     coverUrl: "",
     worker: null,
+    paddle: null,
     stopRequested: false,
     processing: false,
     currentPageIndex: -1,
@@ -225,12 +228,104 @@
     }
   }
 
-  async function resetWorker(logger) {
-    if (state.worker) {
-      try { await state.worker.terminate(); } catch (_) {}
-      state.worker = null;
+  async function ensurePaddle() {
+    if (state.paddle) return state.paddle;
+    setStatus("Loading PaddleOCR PP-OCRv5 models… First run can take a moment.");
+    state.paddle = await PaddleOCR.create({
+      textDetectionModelName: "PP-OCRv5_mobile_det",
+      textRecognitionModelName: "PP-OCRv5_mobile_rec",
+      textDetectionBatchSize: 1,
+      textRecognitionBatchSize: 6,
+      ortOptions: {
+        backend: "wasm",
+        wasmPaths: "https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/",
+        numThreads: 1,
+        simd: true
+      }
+    });
+    console.info("PaddleOCR initialized", state.paddle.getInitializationSummary?.());
+    return state.paddle;
+  }
+
+  function polyBounds(poly) {
+    const points = Array.isArray(poly) ? poly : [];
+    const xs = [];
+    const ys = [];
+    for (const pt of points) {
+      if (Array.isArray(pt) && pt.length >= 2) {
+        const x = Number(pt[0]);
+        const y = Number(pt[1]);
+        if (Number.isFinite(x) && Number.isFinite(y)) { xs.push(x); ys.push(y); }
+      } else if (pt && typeof pt === "object") {
+        const x = Number(pt.x ?? pt[0]);
+        const y = Number(pt.y ?? pt[1]);
+        if (Number.isFinite(x) && Number.isFinite(y)) { xs.push(x); ys.push(y); }
+      }
     }
-    return ensureWorker(logger);
+    if (!xs.length) return { x:0, y:0, w:0, h:0, cx:0, cy:0 };
+    const minX=Math.min(...xs), maxX=Math.max(...xs), minY=Math.min(...ys), maxY=Math.max(...ys);
+    return { x:minX, y:minY, w:maxX-minX, h:maxY-minY, cx:(minX+maxX)/2, cy:(minY+maxY)/2 };
+  }
+
+  function median(values) {
+    const arr = values.filter(Number.isFinite).sort((a,b)=>a-b);
+    if (!arr.length) return 0;
+    const mid=Math.floor(arr.length/2);
+    return arr.length % 2 ? arr[mid] : (arr[mid-1]+arr[mid])/2;
+  }
+
+  function normalizePaddleItems(items) {
+    return (Array.isArray(items) ? items : [])
+      .map(item => ({
+        text: String(item?.text || "").trim(),
+        score: Number(item?.score ?? 0),
+        box: polyBounds(item?.poly)
+      }))
+      .filter(item => item.text && item.score >= 0.25)
+      .sort((a,b) => (a.box.cy-b.box.cy) || (a.box.x-b.box.x));
+  }
+
+  function paddleItemsToText(items, { messageMode=false } = {}) {
+    const lines = normalizePaddleItems(items);
+    if (!lines.length) return "";
+    const heights = lines.map(x => x.box.h).filter(h => h > 2);
+    const typicalH = median(heights) || 28;
+    const out=[];
+    let prev=null;
+    for (const line of lines) {
+      if (prev) {
+        const verticalGap = line.box.y - (prev.box.y + prev.box.h);
+        const sameVisualRow = Math.abs(line.box.cy-prev.box.cy) <= typicalH * 0.48;
+        if (sameVisualRow) {
+          // Rare same-row fragments: append in reading order.
+          out[out.length-1] = `${out[out.length-1]} ${line.text}`.replace(/\s{2,}/g," ").trim();
+          prev=line;
+          continue;
+        }
+        const blankThreshold = messageMode ? typicalH * 0.58 : typicalH * 0.95;
+        if (verticalGap > blankThreshold) out.push("");
+      }
+      out.push(line.text);
+      prev=line;
+    }
+    return out.join("
+").replace(/
+{3,}/g,"
+
+").trim();
+  }
+
+  async function paddleRecognizeCanvas(canvas, { messageMode=false } = {}) {
+    const ocr = await ensurePaddle();
+    const [result] = await ocr.predict(canvas, {
+      textDetLimitSideLen: messageMode ? 1600 : 1280,
+      textDetLimitType: "max",
+      textDetThresh: messageMode ? 0.25 : 0.3,
+      textDetBoxThresh: messageMode ? 0.45 : 0.5,
+      textDetUnclipRatio: messageMode ? 1.7 : 1.5,
+      textRecScoreThresh: 0.35
+    });
+    return { text: paddleItemsToText(result?.items, { messageMode }), result };
   }
 
   function loadImageFromFile(file) {
@@ -577,18 +672,15 @@
     updateNavigationControls();
   }
 
-  async function ensureWorker(logger) {
-    if (state.worker) return state.worker;
-    if (!window.Tesseract) throw new Error("Tesseract.js did not load. Check your internet connection and reload.");
-    state.worker = await Tesseract.createWorker("eng", 1, { logger });
-    return state.worker;
+  async function ensureWorker() {
+    // Compatibility shim for older helper functions retained from v19.
+    return ensurePaddle();
   }
 
-  async function ocrCanvas(canvas, parameters = {}, logger) {
-    const worker = await ensureWorker(logger);
-    await worker.setParameters(parameters);
-    const result = await worker.recognize(canvas);
-    return result?.data?.text || "";
+  async function ocrCanvas(canvas, parameters = {}) {
+    const messageMode = String(parameters?.tessedit_pageseg_mode || "") !== "6";
+    const { text } = await paddleRecognizeCanvas(canvas, { messageMode });
+    return text;
   }
 
   function cleanBodyText(text) {
@@ -1040,66 +1132,18 @@
 
     const img = await loadImageFromFile(page.file);
     const canvas = makeCroppedCanvas(img);
-    const bubbles = detectMessageBubbles(canvas);
-    if (!bubbles.length) {
-      throw new Error("No message bubbles were detected on this page.");
-    }
+    setStatus(`PaddleOCR is re-reading message page ${index + 1}…`);
 
-    const pieces = [];
-    const priorBubbles = [];
-    const laneSpeaker = { left: "", right: "" };
-
-    // Preserve ordinary prose before the first message block, but do not OCR every
-    // little gap between bubbles. Full-width inter-bubble OCR was reading pieces of
-    // neighboring messages and turning them into garbage text.
-    const firstBubble = bubbles[0];
-    const openingBottom = Math.max(0, firstBubble.y - 56);
-    const opening = await ocrNarrativeRegion(canvas, 0, openingBottom);
-    if (opening) pieces.push(opening);
-
-    let previousBottom = firstBubble.y;
-
-    for (const bubble of bubbles) {
-      const lane = bubbleLane(canvas, bubble);
-      const gap = bubble.y - previousBottom;
-
-      // A genuinely large gap can contain normal prose between message groups.
-      // Small gaps are bubble spacing / speaker-label space and are intentionally ignored.
-      if (priorBubbles.length && gap > 150) {
-        const narrative = await ocrNarrativeRegion(canvas, previousBottom + 12, bubble.y - 58);
-        if (narrative) pieces.push(narrative);
-      }
-
-      const space = labelSpaceAbove(bubble, priorBubbles);
-      const shouldCheckLabel = !laneSpeaker[lane] || space.height >= 18;
-      let label = "";
-      if (shouldCheckLabel) {
-        label = await ocrBubbleLabel(canvas, bubble, priorBubbles);
-        if (label) laneSpeaker[lane] = label;
-      }
-
-      const bubbleText = await ocrBubbleText(canvas, bubble);
-      if (label) pieces.push(label);
-      if (bubbleText) pieces.push(bubbleText);
-      pieces.push("");
-
-      priorBubbles.push(bubble);
-      previousBottom = Math.max(previousBottom, bubble.y + bubble.h);
-    }
-
-    const trailingTop = Math.min(canvas.height, previousBottom + 16);
-    const trailing = await ocrNarrativeRegion(canvas, trailingTop, canvas.height);
-    if (trailing) pieces.push(trailing);
-
-    const finalText = pieces.join("\n")
-      .replace(/\n{3,}/g, "\n\n")
-      .replace(/[ \t]+\n/g, "\n")
-      .trim();
+    const { text, result } = await paddleRecognizeCanvas(canvas, { messageMode: true });
+    const finalText = cleanBodyText(text);
+    if (!finalText) throw new Error("PaddleOCR did not find readable text on this page.");
 
     state.pages[index].text = finalText;
     state.pages[index].chapterCandidate = chapterHeuristic(finalText);
     saveCheckpoint();
 
+    const count = result?.items?.length || 0;
+    setStatus(`PaddleOCR updated page ${index + 1} from ${count} detected text lines.`);
     canvas.width = 1;
     canvas.height = 1;
   }
@@ -1119,27 +1163,13 @@
     renderReview();
 
     try {
-      const logger = (m) => {
-        if (m.status === "recognizing text") {
-          const perPage = (index + (m.progress || 0)) / state.files.length;
-          const pct = Math.round(perPage * 100);
-          els.progressBar.value = pct;
-          els.progressPercent.textContent = `${pct}%`;
-        }
-        if (m.status) {
-          els.progressLabel.textContent = `Page ${Math.min(index + 1, state.files.length)}: ${m.status}`;
-        }
-      };
-
-      const worker = await resetWorker(logger);
-      await worker.setParameters({ tessedit_pageseg_mode: "6", preserve_interword_spaces: "1" });
-
+      els.progressLabel.textContent = `Page ${index + 1}: PaddleOCR`;
       const file = state.files[index];
-      setStatus(`Processing page ${index + 1} of ${state.files.length}: ${file.name}`);
+      setStatus(`PaddleOCR processing page ${index + 1} of ${state.files.length}: ${file.name}`);
       const img = await loadImageFromFile(file);
       const canvas = makeCroppedCanvas(img);
-      const result = await worker.recognize(canvas);
-      const text = cleanBodyText(result?.data?.text || "");
+      const paddleResult = await paddleRecognizeCanvas(canvas, { messageMode: false });
+      const text = cleanBodyText(paddleResult.text || "");
       const isChapter = chapterHeuristic(text);
       const pageData = { file, text, chapterCandidate: isChapter, chapterStart: isChapter, chapterTitle: detectChapterTitle(text, index + 1) };
 
@@ -1163,7 +1193,6 @@
       setStatus(`OCR failed on page ${index + 1}. Your previous progress was preserved.`);
       alert(`OCR failed on page ${index + 1}: ${err.message || err}`);
     } finally {
-      try { await resetWorker(); } catch (_) {}
       state.processing = false;
       els.processBtn.disabled = !state.files.length || state.pages.length > 0;
       updateNavigationControls();
@@ -1349,7 +1378,7 @@ ${coverSpine}${spine.join("\n")}
       compressionOptions: { level: 6 }
     });
 
-    downloadBlob(blob, `${safeTitle}-v14.epub`);
+    downloadBlob(blob, `${safeTitle}-2.0.epub`);
   }
 
   async function downloadEpub() {
@@ -1455,7 +1484,7 @@ ${coverSpine}${spine.join("\n")}
     try {
       await runMessagePageOcr(idx);
       renderReview();
-      setStatus(`Message-page OCR updated page ${idx + 1}.`);
+      setStatus(`PaddleOCR message pass updated page ${idx + 1}.`);
     } catch (err) {
       console.error(err);
       alert(`Message-page OCR failed: ${err.message || err}`);
