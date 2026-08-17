@@ -1,9 +1,13 @@
-# Book OCR Studio v18
+# Book OCR Studio v19
 
-## Message OCR patch
-- Stops OCRing every small gap between message bubbles.
-- Reads speaker labels only from a shallow strip directly above a bubble.
-- Prevents the label crop from overlapping prior message bubbles.
-- Tracks left/right message lanes so unlabeled follow-up bubbles do not force a fake speaker label.
-- Preserves prose before/after a message block and only checks very large gaps for prose between message groups.
-- Keeps the existing one-page workflow, chapter exporter, compact UI, and permanent saved-progress key unchanged.
+Regression-tested message OCR patch for the seven known bubble-layout screenshots in this book.
+
+## Message OCR changes
+- Stops merging nearby/stacked bubbles into one giant OCR region.
+- Uses denser fill detection so ordinary page text is less likely to be mistaken for a bubble.
+- Uses a higher-resolution bubble mask.
+- Speaker-label crops now keep a safety gap above the bubble text.
+- Speaker labels get multiple OCR passes and stricter rejection of phrase-like false labels.
+- Keeps the existing left/right lane logic and adaptive bubble-text retries.
+
+The one-page workflow, saved project data, compact layout, chapter controls, and EPUB exporter are unchanged.

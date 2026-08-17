@@ -642,7 +642,8 @@
     const phraseWords = new Set([
       "WHAT","WHY","WHEN","WHERE","WHO","HOW","ARE","YOU","YOUR","AND","BUT",
       "THE","THIS","THAT","HAVE","HAS","HAD","TO","OF","FOR","WITH","ABOUT","NOT",
-      "CAN","COULD","WOULD","SHOULD","WILL","JUST","SHE","HE","THEY","WE","I"
+      "CAN","COULD","WOULD","SHOULD","WILL","JUST","SHE","HE","THEY","WE","I",
+      "NOTED","RIGHT","FINE","OKAY","YES","NO","THANKS","THANK","HELLO","HEY","SURE","GOT"
     ]);
     if (words.some(w => phraseWords.has(w))) {
       if (!(words.length === 1 && ["I","ME"].includes(words[0]))) return "";
@@ -712,7 +713,10 @@
   }
 
   function detectMessageBubbles(sourceCanvas) {
-    const scale = sourceCanvas.width > 900 ? 0.34 : 0.5;
+    // v19: keep each colored bubble as its own connected component. v18 merged
+    // components that were merely close together, which accidentally fused stacked
+    // bubbles into one giant OCR crop on several of our regression pages.
+    const scale = sourceCanvas.width > 900 ? 0.5 : 0.6;
     const w = Math.max(1, Math.round(sourceCanvas.width * scale));
     const h = Math.max(1, Math.round(sourceCanvas.height * scale));
     const small = document.createElement("canvas");
@@ -724,8 +728,8 @@
 
     const bg = sampleBackgroundColor(data, w, h);
     const mask = new Uint8Array(w * h);
-    const bubbleThreshSq = 42 * 42;
-    const bgThreshSq = 20 * 20;
+    const bubbleThreshSq = 46 * 46;
+    const bgThreshSq = 18 * 18;
 
     for (let y = 0; y < h; y++) {
       for (let x = 0; x < w; x++) {
@@ -782,22 +786,45 @@
 
         const bw = maxX - minX + 1;
         const bh = maxY - minY + 1;
-        if (count < 40 || bw < 18 || bh < 8) continue;
-        if (bw < bh) continue;
+        const density = count / Math.max(1, bw * bh);
 
-        boxes.push({
+        // The actual rounded fills are dense components. Decorative/text fragments
+        // that happen to be close to a bubble color are much sparser.
+        if (count < 55 || bw < 28 || bh < 10) continue;
+        if (bw < bh || density < 0.43) continue;
+
+        const box = {
           x: Math.round(minX / scale),
           y: Math.round(minY / scale),
           w: Math.round(bw / scale),
           h: Math.round(bh / scale),
           area: count,
-        });
+          density,
+        };
+        if (box.w < 70 || box.h < 20) continue;
+        boxes.push(box);
       }
     }
 
-    return mergeBoxes(boxes, 10)
-      .filter(box => box.w >= 70 && box.h >= 20)
-      .sort((a, b) => (a.y - b.y) || (a.x - b.x));
+    // Remove near-duplicate detections without ever joining neighboring bubbles.
+    const unique = [];
+    boxes.sort((a, b) => (a.y - b.y) || (a.x - b.x));
+    for (const box of boxes) {
+      const duplicate = unique.some(other => {
+        const x1 = Math.max(box.x, other.x);
+        const y1 = Math.max(box.y, other.y);
+        const x2 = Math.min(box.x + box.w, other.x + other.w);
+        const y2 = Math.min(box.y + box.h, other.y + other.h);
+        const overlap = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
+        const smaller = Math.min(box.w * box.h, other.w * other.h);
+        return smaller > 0 && overlap / smaller > 0.82;
+      });
+      if (!duplicate) unique.push(box);
+    }
+
+    small.width = 1;
+    small.height = 1;
+    return unique.sort((a, b) => (a.y - b.y) || (a.x - b.x));
   }
 
   function buildNarrativeRegion(canvas, topY, bottomY) {
@@ -916,33 +943,60 @@
 
   async function ocrBubbleLabel(canvas, bubble, priorBubbles = []) {
     const space = labelSpaceAbove(bubble, priorBubbles);
-    if (space.height < 13) return "";
+    if (space.height < 14) return "";
 
-    // Speaker labels are tiny and sit directly above the bubble. Keep this crop
-    // deliberately shallow so message text cannot be mistaken for a name.
-    const x = Math.max(0, bubble.x - 12);
-    const maxLabelWidth = Math.min(360, Math.max(150, Math.round(bubble.w * 0.62)));
+    // Speaker labels are tiny and hug the bubble edge. Keep a safety gap above the
+    // fill so the first line of message text can never leak into this crop.
+    const lane = bubbleLane(canvas, bubble);
+    const labelWidth = Math.min(260, Math.max(110, Math.round(bubble.w * 0.45)));
+    const x = lane === "right"
+      ? Math.max(0, bubble.x + bubble.w - labelWidth)
+      : Math.max(0, bubble.x - 8);
+    const bottom = Math.max(space.top, bubble.y - 12);
     const region = {
       x,
       y: space.top,
-      w: Math.min(canvas.width - x, maxLabelWidth),
-      h: Math.min(34, space.height),
+      w: Math.min(canvas.width - x, labelWidth),
+      h: Math.min(30, Math.max(0, bottom - space.top)),
     };
-    if (region.h < 13) return "";
+    if (region.h < 12) return "";
 
     const cropped = cropCanvasRegion(canvas, region);
-    const scaled = upscaleCanvas(cropped, 3.2);
-    const raw = await ocrCanvas(scaled, {
-      tessedit_pageseg_mode: "7",
-      tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz&'- ",
-      preserve_interword_spaces: "1",
-    });
-    const label = cleanLabel(raw);
+    const scaled = upscaleCanvas(cropped, 4.0);
+    const contrast = highContrastCanvas(scaled);
+    let best = "";
+    let bestScore = -Infinity;
+
+    for (const source of [scaled, contrast]) {
+      for (const mode of [7, 13]) {
+        const worker = await ensureWorker();
+        await worker.setParameters({
+          tessedit_pageseg_mode: String(mode),
+          tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz&'- ",
+          preserve_interword_spaces: "1",
+        });
+        const result = await worker.recognize(source);
+        const raw = result?.data?.text || "";
+        const label = cleanLabel(raw);
+        if (!label) continue;
+        const confidence = Number(result?.data?.confidence) || 0;
+        const words = label.split(/\s+/).filter(Boolean);
+        // Prefer confident, compact labels; two-word names remain supported.
+        const score = confidence + Math.min(18, label.length) - (words.length - 1) * 4;
+        if (score > bestScore) {
+          best = label;
+          bestScore = score;
+        }
+      }
+    }
+
     cropped.width = 1;
     cropped.height = 1;
     scaled.width = 1;
     scaled.height = 1;
-    return label;
+    contrast.width = 1;
+    contrast.height = 1;
+    return bestScore >= 35 ? best : "";
   }
 
   async function ocrBubbleText(canvas, bubble) {
