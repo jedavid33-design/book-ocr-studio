@@ -1,24 +1,12 @@
-# Book OCR Studio 2.0.1
+# Book OCR Studio 2.0.2
 
-Hotfix for the 2.0 page-selection issue on Safari/iPad.
+PaddleOCR build with a fresh-reprocess control.
 
-- The main app now loads before PaddleOCR is downloaded.
-- Selecting screenshots works even if the PaddleOCR CDN/module has a problem.
-- PaddleOCR is loaded only when you actually run OCR.
-- A second CDN is used as a fallback if the first module URL fails.
-- Existing saved project/checkpoint data is preserved.
+## New in 2.0.2
+- Added **Clear old OCR + restart with Paddle**.
+- Clears the current and legacy saved OCR checkpoints so old Tesseract text cannot carry over.
+- Keeps the currently selected screenshot batch loaded.
+- Preserves existing chapter-start markers and chapter titles where possible while pages are reprocessed.
+- Keeps the one-page-at-a-time workflow, Message-page OCR, and EPUB/TXT export.
 
-# Book OCR Studio 2.0 — PaddleOCR experiment
-
-Version 2.0 keeps the v19 one-page workflow, project recovery, chapter controls, TXT export, and chapter-structured EPUB export, but changes the OCR engine from Tesseract.js to the official PaddleOCR.js browser SDK using PP-OCRv5 mobile detection/recognition models.
-
-## What to test first
-- Re-run **Message-page OCR · Paddle** on the seven known message-layout pages, especially IMG_2251 and IMG_2252.
-- Compare normal prose OCR on a few ordinary pages.
-- The first OCR request may take longer because the browser downloads/initializes the Paddle models.
-
-## Saved progress
-The permanent `bookOcrStudio.progress.current` checkpoint key is unchanged, so selecting the same screenshot batch can recover existing v19 edits. Paddle OCR only replaces a page when you explicitly process/re-process that page.
-
-## Files
-Upload `index.html`, `script.js`, and `styles.css` to the GitHub Pages repository root. `README.md` is optional.
+Use the new restart button after selecting the same screenshot batch, then process page 1 and continue through the book with PaddleOCR.

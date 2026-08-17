@@ -56,6 +56,7 @@
   }
 
   const CHECKPOINT_KEY = "bookOcrStudio.progress.current";
+  const CHAPTER_MEMORY_KEY = "bookOcrStudio.chapterMemory.current";
   const LEGACY_CHECKPOINT_KEYS = [
     "bookOcrStudio.progress.v12",
     "bookOcrStudio.progress.v11",
@@ -80,6 +81,7 @@
     previewCanvas: $("previewCanvas"),
     previewDims: $("previewDims"),
     processBtn: $("processBtn"),
+    freshPaddleBtn: $("freshPaddleBtn"),
     stopBtn: $("stopBtn"),
     progressWrap: $("progressWrap"),
     progressLabel: $("progressLabel"),
@@ -162,6 +164,74 @@
       localStorage.removeItem(CHECKPOINT_KEY);
       LEGACY_CHECKPOINT_KEYS.forEach(key => localStorage.removeItem(key));
     } catch (_) {}
+  }
+
+  function saveChapterMemory() {
+    if (!state.files.length || !state.pages.length) return;
+    try {
+      const chapters = state.pages.map((page, index) => ({
+        fileName: page.file?.name || state.files[index]?.name || "",
+        chapterStart: !!page.chapterStart,
+        chapterTitle: page.chapterTitle || "",
+      }));
+      localStorage.setItem(CHAPTER_MEMORY_KEY, JSON.stringify({
+        signatureNames: state.files.map(file => normalizedStem(file.name)),
+        chapters,
+      }));
+    } catch (err) {
+      console.warn("Could not save chapter markers", err);
+    }
+  }
+
+  function rememberedChapterFor(file, index) {
+    try {
+      const raw = localStorage.getItem(CHAPTER_MEMORY_KEY);
+      if (!raw) return null;
+      const saved = JSON.parse(raw);
+      const currentNames = state.files.map(f => normalizedStem(f.name));
+      if (!Array.isArray(saved?.signatureNames) || saved.signatureNames.length !== currentNames.length) return null;
+      if (!saved.signatureNames.every((name, i) => name === currentNames[i])) return null;
+
+      const chapters = Array.isArray(saved.chapters) ? saved.chapters : [];
+      const exact = chapters.find(item => normalizedStem(item.fileName) === normalizedStem(file?.name));
+      const item = exact || chapters[index];
+      if (!item) return null;
+      return {
+        chapterStart: !!item.chapterStart,
+        chapterTitle: item.chapterTitle || "",
+      };
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function restartFreshWithPaddle() {
+    if (!state.files.length || state.processing) return;
+
+    const ok = confirm(
+      "Start this book over with PaddleOCR?\\n\\n" +
+      "This clears saved OCR text from the current and older versions. " +
+      "Your selected screenshots stay loaded, and existing chapter markers are preserved where possible."
+    );
+    if (!ok) return;
+
+    saveChapterMemory();
+    clearCheckpoint();
+
+    state.pages = [];
+    state.currentPageIndex = -1;
+
+    els.progressWrap.classList.add("hidden");
+    els.progressBar.value = 0;
+    els.progressPercent.textContent = "0%";
+    els.progressLabel.textContent = "Ready";
+    els.reviewSection.classList.add("hidden");
+    els.exportSection.classList.add("hidden");
+    els.processBtn.disabled = false;
+    els.freshPaddleBtn.disabled = false;
+
+    renderReview();
+    setStatus("Old OCR cleared. Ready to process page 1 fresh with PaddleOCR.");
   }
 
   function signatureFileName(entry) {
@@ -1209,7 +1279,16 @@
       const paddleResult = await paddleRecognizeCanvas(canvas, { messageMode: false });
       const text = cleanBodyText(paddleResult.text || "");
       const isChapter = chapterHeuristic(text);
-      const pageData = { file, text, chapterCandidate: isChapter, chapterStart: isChapter, chapterTitle: detectChapterTitle(text, index + 1) };
+      const rememberedChapter = rememberedChapterFor(file, index);
+      const pageData = {
+        file,
+        text,
+        chapterCandidate: isChapter,
+        chapterStart: rememberedChapter ? rememberedChapter.chapterStart : isChapter,
+        chapterTitle: rememberedChapter && rememberedChapter.chapterTitle
+          ? rememberedChapter.chapterTitle
+          : detectChapterTitle(text, index + 1)
+      };
 
       if (index < state.pages.length) state.pages[index] = pageData;
       else state.pages.push(pageData);
@@ -1478,6 +1557,7 @@ ${coverSpine}${spine.join("\n")}
     if (restored && state.currentPageIndex < 0) state.currentPageIndex = restored - 1;
     els.fileCount.textContent = `${state.files.length} page${state.files.length === 1 ? "" : "s"} loaded`;
     els.processBtn.disabled = !state.files.length || restored > 0;
+    els.freshPaddleBtn.disabled = !state.files.length;
     els.reviewSection.classList.toggle("hidden", restored === 0);
     els.exportSection.classList.toggle("hidden", restored === 0);
     renderThumbs();
@@ -1502,6 +1582,7 @@ ${coverSpine}${spine.join("\n")}
     clearCheckpoint();
     els.fileCount.textContent = "0 pages loaded";
     els.processBtn.disabled = true;
+    els.freshPaddleBtn.disabled = true;
     els.reviewSection.classList.add("hidden");
     els.exportSection.classList.add("hidden");
     renderThumbs();
@@ -1509,6 +1590,8 @@ ${coverSpine}${spine.join("\n")}
     updatePreview();
     setStatus("Add screenshots to begin.");
   });
+
+  els.freshPaddleBtn.addEventListener("click", restartFreshWithPaddle);
 
   els.processBtn.addEventListener("click", async () => {
     els.reviewSection.classList.remove("hidden");
