@@ -1,9 +1,7 @@
-import { PaddleOCR } from "https://cdn.jsdelivr.net/npm/@paddleocr/paddleocr-js@0.4.2/+esm";
-
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.0-paddle";
+  const BUILD_VERSION = "2.0.1-paddle";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -19,6 +17,43 @@ import { PaddleOCR } from "https://cdn.jsdelivr.net/npm/@paddleocr/paddleocr-js@
     processing: false,
     currentPageIndex: -1,
   };
+
+  let PaddleOCRClass = null;
+  let paddleModulePromise = null;
+
+  async function loadPaddleModule() {
+    if (PaddleOCRClass) return PaddleOCRClass;
+    if (!paddleModulePromise) {
+      paddleModulePromise = (async () => {
+        const urls = [
+          "https://cdn.jsdelivr.net/npm/@paddleocr/paddleocr-js@0.4.2/+esm",
+          "https://esm.sh/@paddleocr/paddleocr-js@0.4.2?bundle"
+        ];
+        let lastError = null;
+        for (const url of urls) {
+          try {
+            const mod = await import(url);
+            if (mod?.PaddleOCR) {
+              PaddleOCRClass = mod.PaddleOCR;
+              console.info(`Loaded PaddleOCR from ${url}`);
+              return PaddleOCRClass;
+            }
+            lastError = new Error(`PaddleOCR export not found from ${url}`);
+          } catch (err) {
+            console.warn(`Could not load PaddleOCR from ${url}`, err);
+            lastError = err;
+          }
+        }
+        throw lastError || new Error("Could not load PaddleOCR browser module.");
+      })();
+    }
+    try {
+      return await paddleModulePromise;
+    } catch (err) {
+      paddleModulePromise = null;
+      throw err;
+    }
+  }
 
   const CHECKPOINT_KEY = "bookOcrStudio.progress.current";
   const LEGACY_CHECKPOINT_KEYS = [
@@ -230,21 +265,28 @@ import { PaddleOCR } from "https://cdn.jsdelivr.net/npm/@paddleocr/paddleocr-js@
 
   async function ensurePaddle() {
     if (state.paddle) return state.paddle;
-    setStatus("Loading PaddleOCR PP-OCRv5 models… First run can take a moment.");
-    state.paddle = await PaddleOCR.create({
-      textDetectionModelName: "PP-OCRv5_mobile_det",
-      textRecognitionModelName: "PP-OCRv5_mobile_rec",
-      textDetectionBatchSize: 1,
-      textRecognitionBatchSize: 6,
-      ortOptions: {
-        backend: "wasm",
-        wasmPaths: "https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/",
-        numThreads: 1,
-        simd: true
-      }
-    });
-    console.info("PaddleOCR initialized", state.paddle.getInitializationSummary?.());
-    return state.paddle;
+    setStatus("Loading PaddleOCR PP-OCRv5… The first run can take a moment.");
+    const PaddleOCR = await loadPaddleModule();
+    try {
+      state.paddle = await PaddleOCR.create({
+        textDetectionModelName: "PP-OCRv5_mobile_det",
+        textRecognitionModelName: "PP-OCRv5_mobile_rec",
+        textDetectionBatchSize: 1,
+        textRecognitionBatchSize: 6,
+        ortOptions: {
+          backend: "wasm",
+          wasmPaths: "https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/",
+          numThreads: 1,
+          simd: true
+        }
+      });
+      console.info("PaddleOCR initialized", state.paddle.getInitializationSummary?.());
+      return state.paddle;
+    } catch (err) {
+      state.paddle = null;
+      setStatus("PaddleOCR could not initialize. Your selected pages are still loaded; try reloading or check your connection.");
+      throw err;
+    }
   }
 
   function polyBounds(poly) {
@@ -308,11 +350,7 @@ import { PaddleOCR } from "https://cdn.jsdelivr.net/npm/@paddleocr/paddleocr-js@
       out.push(line.text);
       prev=line;
     }
-    return out.join("
-").replace(/
-{3,}/g,"
-
-").trim();
+    return out.join("\n").replace(/\n{3,}/g,"\n\n").trim();
   }
 
   async function paddleRecognizeCanvas(canvas, { messageMode=false } = {}) {
@@ -1444,7 +1482,11 @@ ${coverSpine}${spine.join("\n")}
     els.exportSection.classList.toggle("hidden", restored === 0);
     renderThumbs();
     renderReview();
-    await updatePreview();
+    try {
+      await updatePreview();
+    } catch (err) {
+      console.warn("Could not render crop preview", err);
+    }
     if (restored) {
       setStatus(`Recovered ${restored} processed pages. Use Previous/Next page to review, or tap Next page to continue from page ${Math.min(restored + 1, state.files.length)}.`);
     } else {
@@ -1496,6 +1538,13 @@ ${coverSpine}${spine.join("\n")}
 
   els.downloadTxt.addEventListener("click", downloadTxt);
   els.downloadEpub.addEventListener("click", downloadEpub);
+
+  window.addEventListener("error", (event) => {
+    console.error("Book OCR Studio error", event.error || event.message);
+  });
+  window.addEventListener("unhandledrejection", (event) => {
+    console.error("Book OCR Studio promise error", event.reason);
+  });
 
   updatePreview();
 })();
