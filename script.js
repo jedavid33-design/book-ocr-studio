@@ -16,6 +16,7 @@
     stopRequested: false,
     processing: false,
     currentPageIndex: -1,
+    reviewMode: "all",
   };
 
   let PaddleOCRClass = null;
@@ -91,6 +92,8 @@
     reviewSection: $("reviewSection"),
     reviewList: $("reviewList"),
     reviewProgress: $("reviewProgress"),
+    reviewAllBtn: $("reviewAllBtn"),
+    reviewChaptersBtn: $("reviewChaptersBtn"),
     prevPageBtn: $("prevPageBtn"),
     nextPageBtn: $("nextPageBtn"),
     messageOcrBtn: $("messageOcrBtn"),
@@ -639,41 +642,42 @@
     return URL.createObjectURL(file);
   }
 
+  function reviewIndices() {
+    if (state.reviewMode === "chapters") {
+      return state.pages.map((page, index) => page.chapterStart ? index : -1).filter(index => index >= 0);
+    }
+    return state.pages.map((_, index) => index);
+  }
+
+  function setReviewMode(mode) {
+    state.reviewMode = mode === "chapters" ? "chapters" : "all";
+    const indices = reviewIndices();
+    if (indices.length && !indices.includes(state.currentPageIndex)) {
+      state.currentPageIndex = indices[0];
+    }
+    els.reviewAllBtn?.classList.toggle("active", state.reviewMode === "all");
+    els.reviewChaptersBtn?.classList.toggle("active", state.reviewMode === "chapters");
+    renderReview();
+    setStatus(state.reviewMode === "chapters"
+      ? `Showing ${indices.length} chapter start page${indices.length === 1 ? "" : "s"}.`
+      : `Showing all ${state.pages.length} processed pages.`);
+  }
+
   function updateNavigationControls() {
     const processed = state.pages.length;
     const total = state.files.length;
-    els.reviewProgress.textContent = `${processed} of ${total} processed`;
+    const indices = reviewIndices();
+    const pos = indices.indexOf(state.currentPageIndex);
+    els.reviewProgress.textContent = state.reviewMode === "chapters"
+      ? `${indices.length} chapter start${indices.length === 1 ? "" : "s"} · ${processed} of ${total} processed`
+      : `${processed} of ${total} processed`;
 
     const hasCurrent = processed > 0 && state.currentPageIndex >= 0;
-    els.prevPageBtn.disabled = state.processing || !hasCurrent || state.currentPageIndex <= 0;
+    els.prevPageBtn.disabled = state.processing || !hasCurrent || pos <= 0;
     els.messageOcrBtn.disabled = state.processing || !hasCurrent;
-
-    if (!total) {
-      els.nextPageBtn.disabled = true;
-      els.nextPageBtn.textContent = 'Next page';
-      return;
-    }
-
-    if (!hasCurrent) {
-      els.nextPageBtn.disabled = state.processing;
-      els.nextPageBtn.textContent = 'Process first page';
-      return;
-    }
-
-    const canAdvanceToProcessed = state.currentPageIndex < processed - 1;
-    const canProcessNew = processed < total && state.currentPageIndex === processed - 1;
-    const isAtEnd = processed >= total && state.currentPageIndex >= total - 1;
-
-    els.nextPageBtn.disabled = state.processing || isAtEnd;
-    if (canAdvanceToProcessed) {
-      els.nextPageBtn.textContent = 'Next page';
-    } else if (canProcessNew) {
-      els.nextPageBtn.textContent = 'Save + next page';
-    } else if (isAtEnd) {
-      els.nextPageBtn.textContent = 'All pages done';
-    } else {
-      els.nextPageBtn.textContent = 'Next page';
-    }
+    els.nextPageBtn.disabled = state.processing || !hasCurrent || pos < 0 || pos >= indices.length - 1;
+    els.prevPageBtn.textContent = state.reviewMode === "chapters" ? "Previous chapter" : "Previous page";
+    els.nextPageBtn.textContent = state.reviewMode === "chapters" ? "Next chapter" : "Next page";
   }
 
   function renderReview() {
@@ -683,7 +687,7 @@
       const empty = document.createElement('div');
       empty.className = 'review-empty';
       empty.textContent = state.files.length
-        ? 'No pages have been processed yet. Tap “Process first page” to begin.'
+        ? 'No pages have been processed yet. Tap “Process all pages” to begin.'
         : 'Add screenshots above to begin.';
       els.reviewList.appendChild(empty);
       updateNavigationControls();
@@ -1256,7 +1260,7 @@
     canvas.height = 1;
   }
 
-  async function processSinglePage(index) {
+  async function processSinglePage(index, { batch = false } = {}) {
     if (!state.files.length) return;
     if (index < 0 || index >= state.files.length) return;
 
@@ -1295,7 +1299,7 @@
 
       state.currentPageIndex = index;
       saveCheckpoint();
-      renderReview();
+      if (!batch) renderReview();
 
       canvas.width = 1;
       canvas.height = 1;
@@ -1303,49 +1307,72 @@
       const pct = Math.round(((index + 1) / state.files.length) * 100);
       els.progressBar.value = pct;
       els.progressPercent.textContent = `${pct}%`;
-      setStatus(`Finished page ${index + 1} of ${state.files.length}. Edit it if needed, then tap Next page.`);
+      if (!batch) setStatus(`Finished page ${index + 1} of ${state.files.length}.`);
     } catch (err) {
       console.error(err);
       saveCheckpoint();
       setStatus(`OCR failed on page ${index + 1}. Your previous progress was preserved.`);
-      alert(`OCR failed on page ${index + 1}: ${err.message || err}`);
+      if (!batch) alert(`OCR failed on page ${index + 1}: ${err.message || err}`);
+      else throw err;
     } finally {
       state.processing = false;
-      els.processBtn.disabled = !state.files.length || state.pages.length > 0;
+      els.processBtn.disabled = !state.files.length || state.pages.length >= state.files.length;
       updateNavigationControls();
     }
   }
 
-  async function goToPreviousPage() {
-    if (state.processing || state.currentPageIndex <= 0) return;
-    state.currentPageIndex -= 1;
+
+  async function processAllPages() {
+    if (!state.files.length || state.processing) return;
+    els.reviewSection.classList.remove("hidden");
+    els.exportSection.classList.remove("hidden");
+    const startIndex = state.pages.length;
+    if (startIndex >= state.files.length) {
+      setStatus("All pages are already processed.");
+      setReviewMode("chapters");
+      return;
+    }
+
+    setStatus(`Batch OCR starting at page ${startIndex + 1} of ${state.files.length}…`);
+    for (let index = startIndex; index < state.files.length; index++) {
+      try {
+        await processSinglePage(index, { batch: true });
+        // Yield to iPadOS between pages so the UI can repaint and memory can settle.
+        await new Promise(resolve => setTimeout(resolve, 60));
+      } catch (err) {
+        console.error(err);
+        setStatus(`Batch OCR stopped on page ${index + 1}. Pages 1–${index} are safely saved. Tap Process all pages to resume.`);
+        renderReview();
+        return;
+      }
+    }
+
+    state.currentPageIndex = 0;
+    state.reviewMode = "chapters";
     saveCheckpoint();
     renderReview();
-    setStatus(`Showing page ${state.currentPageIndex + 1} of ${state.files.length}.`);
+    const chapters = reviewIndices().length;
+    setStatus(`Batch OCR complete: ${state.pages.length} pages processed. Showing ${chapters} detected chapter start page${chapters === 1 ? "" : "s"} for review.`);
+  }
+
+  async function goToPreviousPage() {
+    if (state.processing) return;
+    const indices = reviewIndices();
+    const pos = indices.indexOf(state.currentPageIndex);
+    if (pos <= 0) return;
+    state.currentPageIndex = indices[pos - 1];
+    saveCheckpoint();
+    renderReview();
   }
 
   async function goToNextPage() {
-    if (state.processing || !state.files.length) return;
-
-    if (!state.pages.length || state.currentPageIndex < 0) {
-      await processSinglePage(0);
-      return;
-    }
-
-    if (state.currentPageIndex < state.pages.length - 1) {
-      state.currentPageIndex += 1;
-      saveCheckpoint();
-      renderReview();
-      setStatus(`Showing page ${state.currentPageIndex + 1} of ${state.files.length}.`);
-      return;
-    }
-
-    if (state.pages.length < state.files.length) {
-      await processSinglePage(state.pages.length);
-      return;
-    }
-
-    setStatus('You are already on the last page.');
+    if (state.processing) return;
+    const indices = reviewIndices();
+    const pos = indices.indexOf(state.currentPageIndex);
+    if (pos < 0 || pos >= indices.length - 1) return;
+    state.currentPageIndex = indices[pos + 1];
+    saveCheckpoint();
+    renderReview();
   }
 
   function downloadBlob(blob, filename) {
@@ -1556,7 +1583,7 @@ ${coverSpine}${spine.join("\n")}
     const restored = state.files.length ? restoreCheckpointIfMatching() : 0;
     if (restored && state.currentPageIndex < 0) state.currentPageIndex = restored - 1;
     els.fileCount.textContent = `${state.files.length} page${state.files.length === 1 ? "" : "s"} loaded`;
-    els.processBtn.disabled = !state.files.length || restored > 0;
+    els.processBtn.disabled = !state.files.length || restored >= state.files.length;
     els.freshPaddleBtn.disabled = !state.files.length;
     els.reviewSection.classList.toggle("hidden", restored === 0);
     els.exportSection.classList.toggle("hidden", restored === 0);
@@ -1568,9 +1595,9 @@ ${coverSpine}${spine.join("\n")}
       console.warn("Could not render crop preview", err);
     }
     if (restored) {
-      setStatus(`Recovered ${restored} processed pages. Use Previous/Next page to review, or tap Next page to continue from page ${Math.min(restored + 1, state.files.length)}.`);
+      setStatus(`Recovered ${restored} processed pages. Tap Process all pages to resume at page ${Math.min(restored + 1, state.files.length)}, or review what is already saved.`);
     } else {
-      setStatus(state.files.length ? "Ready to process the first page." : "Add screenshots to begin.");
+      setStatus(state.files.length ? "Ready to process all pages." : "Add screenshots to begin.");
     }
   });
 
@@ -1596,7 +1623,7 @@ ${coverSpine}${spine.join("\n")}
   els.processBtn.addEventListener("click", async () => {
     els.reviewSection.classList.remove("hidden");
     els.exportSection.classList.remove("hidden");
-    await processSinglePage(0);
+    await processAllPages();
   });
   els.prevPageBtn.addEventListener("click", goToPreviousPage);
   els.nextPageBtn.addEventListener("click", goToNextPage);

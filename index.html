@@ -12,14 +12,14 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=2.0.2" />
+  <link rel="stylesheet" href="styles.css?v=2.1.0" />
 </head>
 <body>
   <header class="topbar">
     <div>
-      <p class="eyebrow">LOCAL BOOK TOOL · 2.0.2 · PaddleOCR</p>
+      <p class="eyebrow">LOCAL BOOK TOOL · 2.1.0 · PaddleOCR</p>
       <h1>Book OCR Studio</h1>
-      <p class="subhead">Crop screenshots, OCR them one page at a time, fix pages as you go, and export TXT or EPUB.</p>
+      <p class="subhead">Crop screenshots, OCR them one page at a time, batch OCR the whole book, review chapter starts or any page, and export TXT or EPUB.</p>
     </div>
   </header>
 
@@ -95,10 +95,10 @@
 
     <section class="card">
       <h2>4. OCR</h2>
-      <p class="hint">Version 2.0 uses PaddleOCR (PP-OCRv5) in your browser. It still runs one page at a time: process, edit, then tap <strong>Next page</strong>. The first OCR run may take longer while the models load.</p>
+      <p class="hint">Version 2.0 uses PaddleOCR (PP-OCRv5) in your browser. Tap <strong>Process all pages</strong> and PaddleOCR will work through the book sequentially, saving after every page. The first OCR run may take longer while the models load.</p>
 
       <div class="actions">
-        <button id="processBtn" class="button primary" type="button" disabled>Process first page</button>
+        <button id="processBtn" class="button primary" type="button" disabled>Process all pages</button>
         <button id="freshPaddleBtn" class="button ghost" type="button" disabled>Clear old OCR + restart with Paddle</button>
       </div>
       <p class="hint">The restart button removes saved OCR text from older versions but keeps your current screenshot selection and preserves saved chapter markers where possible.</p>
@@ -117,8 +117,12 @@
     <section class="card hidden" id="reviewSection">
       <div class="section-head">
         <div>
-          <h2>5. Review current page</h2>
-          <p class="hint">Edit the current page, then save and move on. Your changes save automatically.</p>
+          <h2>5. Review</h2>
+          <p class="hint">After batch OCR, review every page or just the detected chapter starts. Edits save automatically.</p>
+          <div class="preset-row">
+            <button id="reviewAllBtn" class="chip" type="button">All pages</button>
+            <button id="reviewChaptersBtn" class="chip active" type="button">Chapter starts only</button>
+          </div>
         </div>
         <div class="review-tools compact">
           <span id="reviewProgress" class="progress-pill">0 of 0 processed</span>
@@ -143,7 +147,7 @@
   </main>
 
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
-  <script src="script.js?v=2.0.2"></script>
+  <script src="script.js?v=2.1.0"></script>
   <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
