@@ -1,0 +1,25 @@
+BOOK OCR STUDIO — HOME SCREEN / PWA FILES
+
+Upload these files to the ROOT of your GitHub repository, alongside script.js and styles.css.
+
+Replace:
+- index.html
+
+Add:
+- manifest.webmanifest
+- sw.js
+- icon-192.png
+- icon-512.png
+- icon-512-maskable.png
+- apple-touch-icon.png
+
+script.js and styles.css are included unchanged for convenience; you do not need to replace
+them if GitHub already has the same 2.0.2 versions.
+
+After GitHub Pages redeploys:
+1. Open https://jedavid33-design.github.io/book-ocr-studio/ in Safari.
+2. Tap Share.
+3. Tap Add to Home Screen.
+4. Launch Book OCR from the new icon.
+
+Note: the app shell can be cached, but PaddleOCR still needs its external model/CDN resources.
