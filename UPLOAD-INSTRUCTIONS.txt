@@ -1,0 +1,22 @@
+BOOK OCR STUDIO — REVIEW TOGGLE FIX
+
+Upload these three files to the ROOT of the book-ocr-studio GitHub repository:
+
+1. index.html
+   - Replace the existing file.
+
+2. sw.js
+   - Replace the existing file.
+
+3. script-loader.js
+   - Add this as a NEW file.
+
+Do NOT delete or replace your existing script.js.
+
+What this fixes:
+- "All pages" now switches out of Chapter Starts Only.
+- "Chapter starts only" switches back correctly.
+- The service-worker cache version is bumped so iPad/Safari is less likely to keep the broken version.
+
+After GitHub Pages deploys, fully close/reopen the Book OCR Studio PWA or reload the site.
+Your saved OCR checkpoint is stored separately in localStorage and this fix does not intentionally clear it.
