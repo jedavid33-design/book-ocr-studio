@@ -3,159 +3,118 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="theme-color" content="#765f91" />
+  <meta name="theme-color" content="#f8f4fb" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-  <meta name="apple-mobile-web-app-title" content="Book OCR" />
-  <meta name="mobile-web-app-capable" content="yes" />
-  <title>Book OCR Studio</title>
+  <meta name="apple-mobile-web-app-title" content="RP Studio" />
+  <title>Story RP Studio</title>
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=2.1.1" />
+  <link rel="stylesheet" href="style.css?v=1.0.6.1" />
 </head>
 <body>
-  <header class="topbar">
-    <div>
-      <p class="eyebrow">LOCAL BOOK TOOL · 2.1.1 · PaddleOCR</p>
-      <h1>Book OCR Studio</h1>
-      <p class="subhead">Crop screenshots, OCR them one page at a time, batch OCR the whole book, review chapter starts or any page, and export TXT or EPUB.</p>
-    </div>
-  </header>
-
-  <main class="app-shell">
-    <section class="card">
-      <h2>1. Book info</h2>
-      <div class="grid two">
-        <label>
-          <span>Title</span>
-          <input id="bookTitle" type="text" placeholder="Rewind It Back" />
-        </label>
-        <label>
-          <span>Author</span>
-          <input id="bookAuthor" type="text" placeholder="Author name" />
-        </label>
+  <div class="ambient ambient-one"></div>
+  <div class="ambient ambient-two"></div>
+  <div class="app">
+    <header class="topbar">
+      <div class="title-wrap">
+        <div class="eyebrow">RP STUDIO · v1.0.6.1 · SAVED ON THIS DEVICE</div>
+        <h1 id="storyTitle">Story RP Studio</h1>
       </div>
-      <label class="file-field">
-        <span>Book cover (optional, used for EPUB)</span>
-        <input id="coverInput" type="file" accept="image/*" />
-      </label>
-      <div id="coverPreviewWrap" class="cover-preview hidden">
-        <img id="coverPreview" alt="Selected cover preview" />
-      </div>
-    </section>
+      <div class="top-actions"><button class="icon-btn" id="libraryBtn" aria-label="Story library">📚</button><button class="icon-btn" id="settingsBtn" aria-label="Settings">⚙︎</button></div>
+    </header>
 
-    <section class="card">
-      <h2>2. Add screenshots</h2>
-      <label class="dropzone" id="dropzone">
-        <input id="imageInput" type="file" accept="image/*" multiple />
-        <strong>Choose book screenshots</strong>
-        <span>Select the whole batch. Files are sorted naturally by filename.</span>
-      </label>
-      <div class="summary-row">
-        <span id="fileCount">0 pages loaded</span>
-        <button id="clearImages" class="button ghost" type="button">Clear pages</button>
-      </div>
-      <div id="thumbStrip" class="thumb-strip" aria-live="polite"></div>
-    </section>
+    <main id="chat" class="chat" aria-live="polite"></main>
 
-    <section class="card">
-      <h2>3. Crop preset</h2>
-      <div class="preset-row">
-        <button class="chip active" data-preset="none" type="button">None</button>
-        <button class="chip" data-preset="cloud" type="button">CloudLibrary footer</button>
-        <button class="chip" data-preset="kindle" type="button">Kindle header</button>
-      </div>
-
-      <div class="grid three">
-        <label>
-          <span>Crop top (px)</span>
-          <input id="cropTop" type="number" min="0" value="0" inputmode="numeric" />
-        </label>
-        <label>
-          <span>Crop bottom (px)</span>
-          <input id="cropBottom" type="number" min="0" value="0" inputmode="numeric" />
-        </label>
-        <label>
-          <span>Crop left/right (px)</span>
-          <input id="cropSides" type="number" min="0" value="0" inputmode="numeric" />
-        </label>
-      </div>
-
-      <p class="hint">Presets are based on your 1488 × 2266 screenshots: CloudLibrary removes 75 px from the bottom; Kindle removes 130 px from the top. You can adjust either value.</p>
-
-      <div class="preview-panel">
-        <div class="preview-head">
-          <strong>Crop preview</strong>
-          <span id="previewDims"></span>
-        </div>
-        <canvas id="previewCanvas"></canvas>
-      </div>
-    </section>
-
-    <section class="card">
-      <h2>4. OCR</h2>
-      <p class="hint">Version 2.0 uses PaddleOCR (PP-OCRv5) in your browser. Tap <strong>Process all pages</strong> and PaddleOCR will work through the book sequentially, saving after every page. The first OCR run may take longer while the models load.</p>
-
-      <div class="actions">
-        <button id="processBtn" class="button primary" type="button" disabled>Process all pages</button>
-        <button id="freshPaddleBtn" class="button ghost" type="button" disabled>Clear old OCR + restart with Paddle</button>
-      </div>
-      <p class="hint">The restart button removes saved OCR text from older versions but keeps your current screenshot selection and preserves saved chapter markers where possible.</p>
-
-      <div class="progress-wrap hidden" id="progressWrap">
-        <div class="progress-meta">
-          <span id="progressLabel">Starting…</span>
-          <span id="progressPercent">0%</span>
-        </div>
-        <progress id="progressBar" max="100" value="0"></progress>
-      </div>
-
-      <div id="statusBox" class="status-box" role="status">Add screenshots to begin.</div>
-    </section>
-
-    <section class="card hidden" id="reviewSection">
-      <div class="section-head">
-        <div>
-          <h2>5. Review</h2>
-          <p class="hint">After batch OCR, review every page or just the detected chapter starts. Edits save automatically.</p>
-          <div class="preset-row">
-            <button id="reviewAllBtn" class="chip" type="button">All pages</button>
-            <button id="reviewChaptersBtn" class="chip active" type="button">Chapter starts only</button>
+    <section class="composer">
+      <div class="composer-inner">
+        <div class="who-row">
+          <span class="chip" id="playerChip">You</span>
+          <div class="story-actions">
+            <button class="text-btn" id="memoryBtn">Refresh memory</button>
+            <button class="text-btn" id="editScenarioBtn">✦ Edit story</button>
+            <button class="text-btn" id="clearBtn">New session</button>
           </div>
         </div>
-        <div class="review-tools compact">
-          <span id="reviewProgress" class="progress-pill">0 of 0 processed</span>
+        <div class="memory-status" id="memoryStatus">Full transcript in context</div>
+        <textarea id="input" rows="4" placeholder="Write what your character says, does, or thinks…"></textarea>
+        <div class="composer-actions">
+          <div class="retry-actions">
+            <button id="retryBtn" class="secondary" disabled>↻ Retry</button>
+            <button id="hijackBtn" class="warning" disabled>Hands off Olivia</button>
+          </div>
+          <button id="sendBtn" class="primary">Send <span aria-hidden="true">➜</span></button>
         </div>
       </div>
-      <div id="reviewList" class="review-list"></div>
-      <div class="nav-row">
-        <button id="prevPageBtn" class="button ghost" type="button" disabled>Previous page</button>
-        <button id="messageOcrBtn" class="button secondary" type="button" disabled>Message-page OCR · Paddle</button>
-        <button id="nextPageBtn" class="button primary" type="button" disabled>Next page</button>
-      </div>
     </section>
+  </div>
 
-    <section class="card hidden" id="exportSection">
-      <h2>6. Export</h2>
-      <div class="actions">
-        <button id="downloadTxt" class="button primary" type="button">Download TXT</button>
-        <button id="downloadEpub" class="button secondary" type="button">Download EPUB</button>
+  <dialog id="settingsDialog">
+    <form method="dialog" class="panel">
+      <div class="panel-head"><div><div class="modal-kicker">RP Studio</div><h2>Connection</h2></div><button class="icon-btn" value="cancel" aria-label="Close">✕</button></div>
+      <label>Worker URL<input id="workerUrl" placeholder="https://your-worker.workers.dev" /></label>
+      <label>App password<input id="appPassword" type="password" placeholder="The password you set on the Worker" /></label>
+      <label>OpenRouter model<input id="model" value="openrouter/free" /></label>
+      <div class="hint">Start with <code>openrouter/free</code> just to prove the app works. Later, paste any OpenRouter model ID you want to test.</div>
+      <label>Temperature<input id="temperature" type="number" min="0" max="2" step="0.1" value="0.9" /></label>
+      <label>Max reply tokens<input id="maxTokens" type="number" min="100" max="4000" step="100" value="900" /></label>
+      <button id="saveSettingsBtn" class="primary full-width" value="default">Save connection</button>
+    </form>
+  </dialog>
+
+  <dialog id="agencyDialog">
+    <div class="panel">
+      <div class="panel-head"><div><div class="modal-kicker">Agency shield</div><h2>Reply blocked</h2></div><button class="icon-btn" id="closeAgencyBtn" aria-label="Close">✕</button></div>
+      <p class="dialog-copy" id="agencyReason">The reply tried to narrate your character, so it was not added to the story.</p>
+      <details class="blocked-preview"><summary>Preview blocked reply</summary><pre id="blockedReply"></pre></details>
+      <div class="shield-actions">
+        <button type="button" id="repairAgencyBtn" class="primary">Repair · uses 1 request</button>
+        <button type="button" id="showBlockedBtn" class="secondary">Use it anyway</button>
+        <button type="button" id="discardBlockedBtn" class="warning">Discard</button>
       </div>
-      <p class="hint">EPUB export uses your title, author, cover image, and the edited OCR text above.</p>
-    </section>
-  </main>
+    </div>
+  </dialog>
 
-  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
-  <script src="script-loader.js?v=2.1.1"></script>
-  <script>
-    if ("serviceWorker" in navigator) {
-      window.addEventListener("load", () => {
-        navigator.serviceWorker.register("./sw.js").catch((err) => {
-          console.warn("Service worker registration failed:", err);
-        });
-      });
-    }
-  </script>
+  <dialog id="libraryDialog">
+    <form method="dialog" class="panel">
+      <div class="panel-head"><div><div class="modal-kicker">Your collection</div><h2>Story library</h2></div><button class="icon-btn" value="cancel" aria-label="Close">✕</button></div>
+      <div id="storyList" class="library-list"></div>
+      <div class="library-actions">
+        <button type="button" id="newStoryBtn" class="primary">＋ New story</button>
+        <button type="button" id="duplicateStoryBtn" class="secondary">Duplicate current</button>
+      </div>
+      <h3>Character profiles</h3>
+      <div id="profileList" class="library-list"></div>
+      <label>Profile name<input id="profileName" placeholder="Olivia" /></label>
+      <label>Character notes<textarea id="profileNotes" rows="4" placeholder="Appearance, personality, history, boundaries…"></textarea></label>
+      <button type="button" id="saveProfileBtn" class="secondary full-width">Save new profile</button>
+      <h3>Portable backup</h3>
+      <div class="hint">Exports every story, transcript, memory, and character profile. Connection details and passwords are never included.</div>
+      <div class="library-actions">
+        <button type="button" id="exportBtn" class="secondary">Export backup</button>
+        <button type="button" id="importBtn" class="secondary">Import backup</button>
+        <input id="importFile" type="file" accept="application/json,.json" hidden />
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="scenarioDialog">
+    <form method="dialog" class="panel">
+      <div class="panel-head"><div><div class="modal-kicker">Your world</div><h2>Story setup</h2></div><button class="icon-btn" value="cancel" aria-label="Close">✕</button></div>
+      <label>Story title<input id="scenarioTitle" value="Trapped Hearts-ish Test" /></label>
+      <label>Your character<input id="playerName" value="Olivia" /></label>
+      <label>Load a saved character<select id="playerProfile"><option value="">Choose a profile…</option></select></label>
+      <label>Your character notes<textarea id="playerNotes" rows="4">A sharp, ambitious attorney. The USER controls Olivia completely.</textarea></label>
+      <label>AI character(s)<textarea id="npcNotes" rows="6">Caleb Quinn — Olivia's brilliant, infuriating colleague. Confident, observant, dryly funny, and much more emotionally perceptive than Olivia gives him credit for.</textarea></label>
+      <label>Premise / contained story<textarea id="premise" rows="7">Olivia and Caleb are rival attorneys at the same firm. After months of professional friction and unresolved attraction, they become trapped together in an elevator during a blackout. The story should unfold as a contained forced-proximity romance with gradual reveals, tension, banter, and a clear forward-moving plot.</textarea></label>
+      <label>Writing style<textarea id="styleNotes" rows="5">Write immersive contemporary-romance prose with strong dialogue, chemistry, sensory detail, and natural pacing. Advance the situation without rushing major emotional or romantic beats.</textarea></label>
+      <label>Extra boundaries / rules<textarea id="boundaryNotes" rows="5">All characters are adults. Respect consent. Do not decide the player's choices for them.</textarea></label>
+      <button id="saveScenarioBtn" class="primary full-width" value="default">Save story</button>
+    </form>
+  </dialog>
+
+  <template id="messageTemplate"><article class="msg"><div class="msg-meta"></div><div class="msg-body"></div></article></template>
+  <script src="app.js?v=1.0.6.1"></script>
 </body>
 </html>
