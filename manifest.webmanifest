@@ -1,12 +1,14 @@
 {
-  "name": "Story RP Studio",
-  "short_name": "RP Studio",
-  "description": "A private, device-saved interactive fiction studio.",
-  "start_url": "./?v=1.0.6.1",
-  "scope": "./",
+  "name": "Book OCR Studio",
+  "short_name": "Book OCR",
+  "description": "Crop book screenshots, OCR them page by page, review text, and export TXT or EPUB.",
+  "id": "/book-ocr-studio/",
+  "start_url": "/book-ocr-studio/",
+  "scope": "/book-ocr-studio/",
   "display": "standalone",
-  "background_color": "#f8f4fb",
-  "theme_color": "#f8f4fb",
+  "orientation": "any",
+  "background_color": "#f7f3ed",
+  "theme_color": "#765f91",
   "icons": [
     {
       "src": "icon-192.png",
@@ -18,7 +20,13 @@
       "src": "icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
+    },
+    {
+      "src": "icon-512-maskable.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
     }
   ]
 }
