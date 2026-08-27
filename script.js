@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.2.1-dropcap-rescue";
+  const BUILD_VERSION = "2.3.0-page-dropcap-rescue";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -19,6 +19,8 @@
     reviewMode: "all",
     importedEpub: null,
     dropcapCandidates: [],
+    pageDropcapCandidate: null,
+    pageDropcapImageUrl: "",
   };
 
   let PaddleOCRClass = null;
@@ -85,7 +87,6 @@
     previewDims: $("previewDims"),
     processBtn: $("processBtn"),
     freshPaddleBtn: $("freshPaddleBtn"),
-    stopBtn: $("stopBtn"),
     progressWrap: $("progressWrap"),
     progressLabel: $("progressLabel"),
     progressPercent: $("progressPercent"),
@@ -99,6 +100,7 @@
     prevPageBtn: $("prevPageBtn"),
     nextPageBtn: $("nextPageBtn"),
     messageOcrBtn: $("messageOcrBtn"),
+    pageDropcapBtn: $("pageDropcapBtn"),
     exportSection: $("exportSection"),
     downloadTxt: $("downloadTxt"),
     downloadEpub: $("downloadEpub"),
@@ -110,6 +112,16 @@
     acceptHighDropcaps: $("acceptHighDropcaps"),
     dropcapEmpty: $("dropcapEmpty"),
     dropcapResults: $("dropcapResults"),
+    pageDropcapDialog: $("pageDropcapDialog"),
+    pageDropcapReason: $("pageDropcapReason"),
+    pageDropcapBefore: $("pageDropcapBefore"),
+    pageDropcapEdit: $("pageDropcapEdit"),
+    pageDropcapOrphan: $("pageDropcapOrphan"),
+    pageDropcapImageWrap: $("pageDropcapImageWrap"),
+    pageDropcapImage: $("pageDropcapImage"),
+    closePageDropcap: $("closePageDropcap"),
+    cancelPageDropcap: $("cancelPageDropcap"),
+    applyPageDropcap: $("applyPageDropcap"),
   };
 
   const MESSAGE_BUBBLE_COLORS = [
@@ -685,6 +697,7 @@
     const hasCurrent = processed > 0 && state.currentPageIndex >= 0;
     els.prevPageBtn.disabled = state.processing || !hasCurrent || pos <= 0;
     els.messageOcrBtn.disabled = state.processing || !hasCurrent;
+    els.pageDropcapBtn.disabled = state.processing || !hasCurrent;
     els.nextPageBtn.disabled = state.processing || !hasCurrent || pos < 0 || pos >= indices.length - 1;
     els.prevPageBtn.textContent = state.reviewMode === "chapters" ? "Previous chapter" : "Previous page";
     els.nextPageBtn.textContent = state.reviewMode === "chapters" ? "Next chapter" : "Next page";
@@ -1279,6 +1292,7 @@
     els.nextPageBtn.disabled = true;
     els.prevPageBtn.disabled = true;
     els.messageOcrBtn.disabled = true;
+    els.pageDropcapBtn.disabled = true;
     els.progressWrap.classList.remove("hidden");
     els.reviewSection.classList.remove("hidden");
     els.exportSection.classList.remove("hidden");
@@ -1481,35 +1495,69 @@
     return text;
   }
 
+  function selectProseOpening(paragraphTexts) {
+    const texts = (paragraphTexts || []).map(text => String(text || "").trim());
+    for (let index = 0; index < Math.min(texts.length, 12); index++) {
+      const fullText = texts[index];
+      if (!fullText) continue;
+      const startOffset = damagedOpeningOffset(fullText);
+      if (startOffset >= 0) return { index, startOffset };
+      if (isOpeningPrelude(fullText)) continue;
+      return { index, startOffset: 0 };
+    }
+    const fallback = texts.findIndex(text => text.length > 12);
+    return fallback >= 0 ? { index: fallback, startOffset: 0 } : null;
+  }
+
+  function pageParagraphEntries(text) {
+    const normalized = normalizedPageText(text);
+    if (!normalized) return [];
+    const blocks = normalized.split(/\n{2,}/);
+    const entries = [];
+    blocks.forEach((block, sourceBlockIndex) => {
+      const lines = block.split("\n").map(line => line.trim()).filter(Boolean);
+      const leadingMetadataLines = [];
+      while (lines.length > 1 && isOpeningPrelude(lines[0])) {
+        const metadata = lines.shift();
+        leadingMetadataLines.push(metadata);
+        entries.push({ text: metadata, sourceBlockIndex, metadataOnly: true });
+      }
+      if (lines.length) {
+        entries.push({
+          text: lines.join(" ").trim(), sourceBlockIndex,
+          leadingMetadataLines: [...leadingMetadataLines], metadataOnly: false
+        });
+      }
+    });
+    return entries;
+  }
+
+  function openingFromPage(page, pageIndex) {
+    const entries = pageParagraphEntries(page?.text || "");
+    const selected = selectProseOpening(entries.map(entry => entry.text));
+    if (!selected) return null;
+    const entry = entries[selected.index];
+    const fullText = entry.text;
+    return {
+      pageIndex, paragraphIndex: selected.index,
+      text: fullText.slice(selected.startOffset),
+      fullText, startOffset: selected.startOffset, page,
+      sourceBlockIndex: entry.sourceBlockIndex,
+      leadingMetadataLines: entry.leadingMetadataLines || []
+    };
+  }
+
   function likelyOpeningParagraphs() {
     if (state.importedEpub) {
       return state.importedEpub.documents.map((doc, pageIndex) => {
         const paragraphs = Array.from(doc.dom.querySelectorAll("p"));
-        const early = paragraphs.slice(0, 8);
-        let target = null;
-        let startOffset = 0;
-        for (const paragraph of early) {
-          const fullText = paragraph.textContent.trim();
-          const offset = damagedOpeningOffset(fullText);
-          if (offset >= 0) {
-            target = paragraph;
-            startOffset = offset;
-            break;
-          }
-          if (isOpeningPrelude(fullText)) continue;
-          // This is the first ordinary narrative paragraph. If it is already
-          // healthy, stop here instead of scanning later page-continuation
-          // paragraphs for lowercase false positives.
-          target = paragraph;
-          startOffset = 0;
-          break;
-        }
-        target ||= paragraphs.find(p => p.textContent.trim().length > 12) || paragraphs[0];
-        if (!target) return null;
+        const selected = selectProseOpening(paragraphs.map(paragraph => paragraph.textContent));
+        if (!selected) return null;
+        const target = paragraphs[selected.index];
         const fullText = target.textContent.trim();
         return {
-          pageIndex, paragraphIndex: paragraphs.indexOf(target),
-          text: fullText.slice(startOffset), fullText, startOffset,
+          pageIndex, paragraphIndex: selected.index,
+          text: fullText.slice(selected.startOffset), fullText, startOffset: selected.startOffset,
           element: target, doc
         };
       }).filter(Boolean);
@@ -1517,11 +1565,8 @@
 
     return state.pages.flatMap((page, pageIndex) => {
       if (!(page.chapterStart || page.chapterCandidate || pageIndex === 0)) return [];
-      const paragraphs = exportParagraphs(page.text);
-      let paragraphIndex = 0;
-      if (paragraphs.length > 1 && /^(chapter|prologue|epilogue|part|\d+|[ivxlcdm]+\b)/i.test(paragraphs[0])) paragraphIndex = 1;
-      const text = paragraphs[paragraphIndex] || paragraphs[0];
-      return text ? [{ pageIndex, paragraphIndex, text, page }] : [];
+      const opening = openingFromPage(page, pageIndex);
+      return opening ? [opening] : [];
     });
   }
 
@@ -1544,7 +1589,15 @@
   function isOpeningPrelude(text) {
     const value = String(text || "").trim();
     if (!value) return true;
-    if (value.length <= 40 && (/^[A-Z][A-Z\s.'&-]+$/.test(value) || /^(January|February|March|April|May|June|July|August|September|October|November|December)$/i.test(value))) return true;
+    const months = "January|February|March|April|May|June|July|August|September|October|November|December";
+    const holidays = "New Year(?:'s)?(?: Eve| Day)?|Valentine(?:'s)? Day|Easter|Memorial Day|Independence Day|Fourth of July|Labor Day|Halloween|Thanksgiving|Christmas(?: Eve| Day)?";
+    if (value.length <= 60 && (/^[A-Z][A-Z\s.'&-]+$/.test(value) || new RegExp(`^(?:${months}|${holidays})$`, "i").test(value))) return true;
+    if (value.length <= 60 && /^(?:\w+day,?\s+)?(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2}(?:st|nd|rd|th)?(?:,\s*\d{4})?$/i.test(value)) return true;
+    if (value.length <= 45 && /^(?:\d{1,2}:\d{2}\s*(?:a\.?m\.?|p\.?m\.?)?|(?:one|two|three|four|five|six|seven|eight|nine|ten|several|a few)\s+(?:hours?|days?|weeks?|months?|years?)\s+(?:later|earlier|before|after))$/i.test(value)) return true;
+    const labelWords = value.split(/\s+/);
+    if (value.length <= 40 && labelWords.length <= 8 && !/[.!?…][”"']?$/.test(value) &&
+        labelWords.every(word => /^(?:[A-Z0-9]|of$|the$|a$|an$|and$|at$|in$|on$|to$|for$)/.test(word)) &&
+        !knownDamagedOpening(value) && !legacyBadIOpening(value)) return true;
     // Book OCR Studio exports text-message exchanges as prose paragraphs with
     // uppercase speaker labels. They precede, but are not, the narrative start.
     return /\b(?:SABRINA|TUCKER)\b/.test(value) && value.length < 900;
@@ -1675,6 +1728,77 @@
     };
   }
 
+  function closePageDropcapReview() {
+    if (els.pageDropcapDialog.open) els.pageDropcapDialog.close();
+    if (state.pageDropcapImageUrl) URL.revokeObjectURL(state.pageDropcapImageUrl);
+    state.pageDropcapImageUrl = "";
+    state.pageDropcapCandidate = null;
+    els.pageDropcapImage.removeAttribute("src");
+    els.pageDropcapImageWrap.classList.add("hidden");
+  }
+
+  function openPageDropcapReview() {
+    if (state.processing || state.currentPageIndex < 0) return;
+    syncCurrentEditor();
+    const pageIndex = state.currentPageIndex;
+    const page = state.pages[pageIndex];
+    const opening = openingFromPage(page, pageIndex);
+    if (!opening) {
+      setStatus(`Page ${pageIndex + 1} has no prose paragraph to analyze.`);
+      return;
+    }
+
+    const detected = buildDropcapCandidate(opening, `page-${pageIndex + 1}`);
+    const candidate = detected || {
+      ...opening,
+      id: `page-${pageIndex + 1}`,
+      fragment: null,
+      confidence: "ambiguous",
+      reason: "No reliable missing or displaced initial was found. The likely first prose paragraph is shown unchanged; edit it only if you can verify the correction from the source image.",
+      before: opening.fullText,
+      proposed: opening.fullText,
+      status: "pending"
+    };
+    state.pageDropcapCandidate = candidate;
+
+    els.pageDropcapReason.textContent = candidate.reason;
+    els.pageDropcapBefore.textContent = candidate.before;
+    els.pageDropcapEdit.value = candidate.proposed;
+    if (candidate.fragment?.value) {
+      els.pageDropcapOrphan.textContent = `The proposed repair also removes the orphaned “${candidate.fragment.value}” from elsewhere in this paragraph/page.`;
+      els.pageDropcapOrphan.classList.remove("hidden");
+    } else {
+      els.pageDropcapOrphan.textContent = "";
+      els.pageDropcapOrphan.classList.add("hidden");
+    }
+
+    if (page?.file instanceof Blob) {
+      if (state.pageDropcapImageUrl) URL.revokeObjectURL(state.pageDropcapImageUrl);
+      state.pageDropcapImageUrl = URL.createObjectURL(page.file);
+      els.pageDropcapImage.src = state.pageDropcapImageUrl;
+      els.pageDropcapImageWrap.classList.remove("hidden");
+    } else {
+      els.pageDropcapImageWrap.classList.add("hidden");
+    }
+    els.pageDropcapDialog.showModal();
+    els.pageDropcapEdit.focus();
+  }
+
+  function applyPageDropcapReview() {
+    const candidate = state.pageDropcapCandidate;
+    if (!candidate) return;
+    const replacement = els.pageDropcapEdit.value.trim();
+    if (!replacement) {
+      alert("The proposed paragraph cannot be empty.");
+      return;
+    }
+    const pageNumber = candidate.pageIndex + 1;
+    replaceLocalParagraph(candidate, replacement);
+    closePageDropcapReview();
+    renderReview();
+    setStatus(`Dropcap Rescue applied the reviewed correction to page ${pageNumber}. No OCR was run.`);
+  }
+
   function scanDropcaps() {
     syncCurrentEditor();
     const openings = likelyOpeningParagraphs();
@@ -1690,8 +1814,12 @@
     const page = state.pages[candidate.pageIndex];
     if (!page) return;
     const blocks = normalizedPageText(page.text).split(/\n{2,}/);
-    if (!blocks[candidate.paragraphIndex]) return;
-    blocks[candidate.paragraphIndex] = replacement;
+    const blockIndex = Number.isInteger(candidate.sourceBlockIndex)
+      ? candidate.sourceBlockIndex : candidate.paragraphIndex;
+    if (!blocks[blockIndex]) return;
+    blocks[blockIndex] = candidate.leadingMetadataLines?.length
+      ? `${candidate.leadingMetadataLines.join("\n")}\n${replacement}`
+      : replacement;
     page.text = blocks.join("\n\n");
 
     if (candidate.fragment?.value) {
@@ -2153,6 +2281,14 @@ ${coverSpine}${spine.join("\n")}
   });
   els.prevPageBtn.addEventListener("click", goToPreviousPage);
   els.nextPageBtn.addEventListener("click", goToNextPage);
+  els.pageDropcapBtn.addEventListener("click", openPageDropcapReview);
+  els.closePageDropcap.addEventListener("click", closePageDropcapReview);
+  els.cancelPageDropcap.addEventListener("click", closePageDropcapReview);
+  els.applyPageDropcap.addEventListener("click", applyPageDropcapReview);
+  els.pageDropcapDialog.addEventListener("cancel", event => {
+    event.preventDefault();
+    closePageDropcapReview();
+  });
   els.messageOcrBtn.addEventListener("click", async () => {
     if (state.processing || state.currentPageIndex < 0) return;
     const idx = state.currentPageIndex;

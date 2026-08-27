@@ -1,6 +1,15 @@
-# Book OCR Studio 2.2.1
+# Book OCR Studio 2.3.0
 
 Dropcap Rescue 2.0 adds a post-OCR repair workflow. It can use a recovered browser checkpoint or import an already-exported Book OCR Studio EPUB; neither route reruns OCR.
+
+## New in 2.3.0
+- Adds **Dropcap Rescue** directly to the per-page OCR review/editor controls.
+- Opens a review dialog with the current paragraph, editable suggestion, evidence note, orphan-fragment notice, and source screenshot when available.
+- Applies nothing until **Apply suggested repair** is pressed; Cancel and dialog dismissal leave the page unchanged.
+- Uses the same candidate engine for page-level and full-book rescue.
+- Locates the first real prose paragraph after POV names, dates, holidays, time jumps, short subtitles, and other metadata-style labels.
+- Preserves metadata lines even when PaddleOCR stored the labels and prose in one newline-separated OCR block.
+- Supports ordinary chapters, sections, and Epilogues without requiring a pre-existing chapter-start marker for page-level rescue.
 
 ## Fixed in 2.2.1
 - Never treats an ordinary prose pronoun **I** as the missing first letter of words such as `rap`, `tay`, or `ucker`.

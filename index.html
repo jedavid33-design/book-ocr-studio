@@ -12,12 +12,12 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=2.2.1" />
+  <link rel="stylesheet" href="styles.css?v=2.3.0" />
 </head>
 <body>
   <header class="topbar">
     <div>
-      <p class="eyebrow">LOCAL BOOK TOOL · 2.2.1 · Dropcap Rescue</p>
+      <p class="eyebrow">LOCAL BOOK TOOL · 2.3.0 · Dropcap Rescue</p>
       <h1>Book OCR Studio</h1>
       <p class="subhead">Crop screenshots, OCR them one page at a time, batch OCR the whole book, review chapter starts or any page, and export TXT or EPUB.</p>
     </div>
@@ -140,6 +140,7 @@
       <div id="reviewList" class="review-list"></div>
       <div class="nav-row">
         <button id="prevPageBtn" class="button ghost" type="button" disabled>Previous page</button>
+        <button id="pageDropcapBtn" class="button secondary" type="button" disabled>Dropcap Rescue</button>
         <button id="messageOcrBtn" class="button secondary" type="button" disabled>Message-page OCR · Paddle</button>
         <button id="nextPageBtn" class="button primary" type="button" disabled>Next page</button>
       </div>
@@ -171,8 +172,41 @@
     </section>
   </main>
 
+  <dialog id="pageDropcapDialog" aria-labelledby="pageDropcapTitle">
+    <div class="dialog-card">
+      <div class="dialog-head">
+        <div>
+          <p class="eyebrow">PAGE-LEVEL REVIEW</p>
+          <h2 id="pageDropcapTitle">Dropcap Rescue</h2>
+        </div>
+        <button id="closePageDropcap" class="icon-button" type="button" aria-label="Cancel and close">×</button>
+      </div>
+      <p id="pageDropcapReason" class="hint"></p>
+      <div class="page-rescue-layout">
+        <div>
+          <div class="before-after">
+            <div><strong>Current</strong><p id="pageDropcapBefore"></p></div>
+            <div class="proposed"><strong>Suggested correction</strong></div>
+          </div>
+          <label>
+            <span>Edit the proposed paragraph before applying</span>
+            <textarea id="pageDropcapEdit" rows="8" aria-label="Editable page-level Dropcap Rescue proposal"></textarea>
+          </label>
+          <p id="pageDropcapOrphan" class="dropcap-note hidden"></p>
+        </div>
+        <div id="pageDropcapImageWrap" class="dropcap-source hidden">
+          <img id="pageDropcapImage" alt="Source page for Dropcap Rescue review" />
+        </div>
+      </div>
+      <div class="actions end">
+        <button id="cancelPageDropcap" class="button ghost" type="button">Cancel</button>
+        <button id="applyPageDropcap" class="button primary" type="button">Apply suggested repair</button>
+      </div>
+    </div>
+  </dialog>
+
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
-  <script src="script-loader.js?v=2.2.1"></script>
+  <script src="script-loader.js?v=2.3.0"></script>
   <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {

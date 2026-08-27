@@ -206,6 +206,9 @@ progress { width: 100%; height: 12px; }
 .dropcap-source img { width: 100%; max-height: 220px; object-fit: contain; border-radius: 10px; border: 1px solid var(--line); background: #eee; }
 .dropcap-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .dropcap-note { color: var(--muted); font-size: .82rem; line-height: 1.4; }
+.page-rescue-layout { display: grid; grid-template-columns: minmax(0, 1fr) 180px; gap: 14px; margin-top: 12px; }
+#pageDropcapBefore { margin: 5px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+#pageDropcapEdit { width: 100%; min-height: 180px; margin-top: 6px; }
 
 .review-tools { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
 .review-tools input[type="search"] { min-width: 230px; }
@@ -275,6 +278,7 @@ dialog::backdrop { background: rgba(30,25,20,.48); backdrop-filter: blur(5px); }
   .dropcap-body { grid-template-columns: 1fr; }
   .dropcap-source { order: -1; }
   .dropcap-source img { max-height: 260px; }
+  .page-rescue-layout { grid-template-columns: 1fr; }
   .review-body textarea { min-height: 240px; }
 }
 
@@ -489,7 +493,7 @@ dialog::backdrop { background: rgba(30,25,20,.48); backdrop-filter: blur(5px); }
     bottom: calc(5px + env(safe-area-inset-bottom));
     z-index: 30;
     display: grid !important;
-    grid-template-columns: 1fr 1.15fr 1.25fr;
+    grid-template-columns: 1fr 1fr;
     flex-direction: initial !important;
     gap: 6px;
     margin: 9px 0 0;
@@ -536,6 +540,6 @@ dialog::backdrop { background: rgba(30,25,20,.48); backdrop-filter: blur(5px); }
     max-height: 110px;
     margin: 0 auto 7px;
   }
-  .nav-row { grid-template-columns: .85fr 1.05fr 1.2fr; }
+  .nav-row { grid-template-columns: 1fr 1fr; }
   .nav-row .button { font-size: .74rem !important; padding-inline: 5px !important; }
 }
