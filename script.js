@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.2.0-dropcap-rescue";
+  const BUILD_VERSION = "2.2.1-dropcap-rescue";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -1392,7 +1392,28 @@
   const COMMON_DROPCAP_WORDS = new Map([
     ["abrina", "Sabrina"], ["rap", "Crap"], ["tay", "Stay"],
     ["ucker", "Tucker"], ["he", "The"], ["ractice", "Practice"],
-    ["ope's", "Hope's"], ["fter", "After"], ["oly", "Holy"]
+    ["ope's", "Hope's"], ["fter", "After"], ["oly", "Holy"],
+    ["aked", "Naked"], ["t", "At"], ["here's", "There's"],
+    ["hen", "When"], ["hat", "What"], ["n", "On"], ["h", "Oh"],
+    ["ittle", "Little"], ["otherhood", "Motherhood"], ["here", "There"],
+    ["kay", "Okay"], ["ucker's", "Tucker's"]
+  ]);
+
+  const COMMON_DROPCAP_PHRASES = [
+    { pattern: /^e suck\b/i, missing: "W", replace: text => text.replace(/^e\b/i, "We") },
+    { pattern: /^couple days\b/i, missing: "A", replace: text => `A ${text}` },
+    { pattern: /^always thought\b/i, missing: "I", replace: text => `I ${text}` }
+  ];
+
+  // These create review suggestions, never automatic repairs. At a chapter
+  // opening they can indicate that OCR lost a standalone first-person “I”
+  // rather than the first letter of the verb itself.
+  const FIRST_PERSON_OPENING_VERBS = new Set([
+    "wait", "walk", "watch", "wonder", "stare", "look", "feel", "hear",
+    "know", "think", "want", "need", "hate", "love", "drag", "step",
+    "sit", "stand", "turn", "glance", "take", "make", "head", "leave",
+    "wake", "pull", "push", "open", "close", "remember", "realize",
+    "like", "lie", "limp", "ask", "apologize"
   ]);
 
   function firstWordInfo(text) {
@@ -1406,22 +1427,46 @@
     return flat.length > limit ? `${flat.slice(0, limit).trim()}…` : flat;
   }
 
-  function standaloneFragment(text, paragraphText) {
+  function standaloneFragment(text, paragraphText, expectedInitial = "", allowPronounI = false) {
     const lines = String(text || "").split(/\n+/).map(line => line.trim()).filter(Boolean);
     const target = String(paragraphText || "").trim();
     const targetIndex = lines.findIndex(line => line === target || line.startsWith(target.slice(0, 40)));
-    let best = null;
+    const candidates = [];
     lines.forEach((line, index) => {
       if (line === target || !/^\P{N}$/u.test(line)) return;
       const distance = targetIndex < 0 ? 99 : Math.abs(index - targetIndex);
-      if (!best || distance < best.distance) best = { value: line, lineIndex: index, distance, source: "line" };
+      candidates.push({ value: line, lineIndex: index, distance, source: "line" });
     });
-    if (!best) {
-      const tokens = Array.from(target.matchAll(/(?:^|\s)([^\p{N}\s])(?=\s|[.,!?;:]|$)/gu));
-      const token = tokens.find(match => match.index > 0);
-      if (token) best = { value: token[1], charIndex: token.index, distance: token.index < 30 ? 1 : 3, source: "token" };
+    Array.from(target.matchAll(/(?:^|[^\p{L}\p{N}])([\p{L}\p{S}_])(?=$|[^\p{L}\p{N}])/gu))
+      .filter(match => match.index > 0)
+      .forEach(match => candidates.push({
+        value: match[1], charIndex: match.index,
+        distance: match.index < 30 ? 1 : 3, source: "token"
+      }));
+
+    const usable = candidates.filter(candidate => {
+      if (candidate.value === "I" && !allowPronounI) return false;
+      // Lowercase one-letter words (especially “a”) are ordinary prose, not
+      // detached decorative capitals.
+      return /^\p{Lu}$/u.test(candidate.value) || !/^[a-z]$/iu.test(candidate.value);
+    });
+    const exact = expectedInitial && usable
+      .filter(candidate => candidate.value.toLocaleUpperCase() === expectedInitial.toLocaleUpperCase())
+      .filter(candidate => expectedInitial !== "I" || candidate.source === "line")
+      .sort((a, b) => a.distance - b.distance)[0];
+    if (exact) return exact;
+
+    // A bad glyph such as 可 is useful only as an ambiguous removable fragment
+    // when a separate word/phrase rule already supplies the expected letter.
+    if (expectedInitial) {
+      return usable.filter(candidate => !/^[A-Z]$/u.test(candidate.value))
+        .sort((a, b) => a.distance - b.distance)[0] || null;
     }
-    return best;
+
+    // With no proposed initial, only a separate adjacent line is strong enough
+    // to flag. Never fish through ordinary paragraph prose for a letter.
+    return usable.filter(candidate => candidate.source === "line" && candidate.distance <= 1)
+      .sort((a, b) => a.distance - b.distance)[0] || null;
   }
 
   function removeDetachedToken(text, fragment, firstWordEnd) {
@@ -1429,7 +1474,9 @@
     const escaped = fragment.value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     if (fragment.source === "token") {
       const tail = text.slice(firstWordEnd);
-      return text.slice(0, firstWordEnd) + tail.replace(new RegExp(`(^|\\s)${escaped}(?=\\s|[.,!?;:]|$)`, "u"), "$1").replace(/ {2,}/g, " ");
+      return text.slice(0, firstWordEnd) + tail
+        .replace(new RegExp(`(^|\\s)[“”"'‘’]?${escaped}[“”"'‘’]?(?=\\s|[.,!?;:]|$)`, "u"), "$1")
+        .replace(/ {2,}/g, " ");
     }
     return text;
   }
@@ -1438,9 +1485,33 @@
     if (state.importedEpub) {
       return state.importedEpub.documents.map((doc, pageIndex) => {
         const paragraphs = Array.from(doc.dom.querySelectorAll("p"));
-        const target = paragraphs.find(p => p.textContent.trim().length > 12) || paragraphs[0];
+        const early = paragraphs.slice(0, 8);
+        let target = null;
+        let startOffset = 0;
+        for (const paragraph of early) {
+          const fullText = paragraph.textContent.trim();
+          const offset = damagedOpeningOffset(fullText);
+          if (offset >= 0) {
+            target = paragraph;
+            startOffset = offset;
+            break;
+          }
+          if (isOpeningPrelude(fullText)) continue;
+          // This is the first ordinary narrative paragraph. If it is already
+          // healthy, stop here instead of scanning later page-continuation
+          // paragraphs for lowercase false positives.
+          target = paragraph;
+          startOffset = 0;
+          break;
+        }
+        target ||= paragraphs.find(p => p.textContent.trim().length > 12) || paragraphs[0];
         if (!target) return null;
-        return { pageIndex, paragraphIndex: paragraphs.indexOf(target), text: target.textContent, element: target, doc };
+        const fullText = target.textContent.trim();
+        return {
+          pageIndex, paragraphIndex: paragraphs.indexOf(target),
+          text: fullText.slice(startOffset), fullText, startOffset,
+          element: target, doc
+        };
       }).filter(Boolean);
     }
 
@@ -1454,42 +1525,153 @@
     });
   }
 
-  function buildDropcapCandidate(opening, id) {
+  function knownDamagedOpening(text) {
+    const info = firstWordInfo(text);
+    if (!info || !/^\p{Ll}/u.test(info.word)) return false;
+    return COMMON_DROPCAP_WORDS.has(info.word.toLowerCase()) ||
+      COMMON_DROPCAP_PHRASES.some(item => item.pattern.test(text)) ||
+      FIRST_PERSON_OPENING_VERBS.has(info.word.toLowerCase()) ||
+      /^['’]m\b/i.test(text);
+  }
+
+  function legacyBadIOpening(text) {
+    const info = firstWordInfo(text);
+    if (!info || !/^I\p{Ll}/u.test(info.word)) return false;
+    const withoutBadI = `${text.slice(0, info.start)}${info.word.slice(1)}${text.slice(info.end)}`;
+    return knownDamagedOpening(withoutBadI);
+  }
+
+  function isOpeningPrelude(text) {
+    const value = String(text || "").trim();
+    if (!value) return true;
+    if (value.length <= 40 && (/^[A-Z][A-Z\s.'&-]+$/.test(value) || /^(January|February|March|April|May|June|July|August|September|October|November|December)$/i.test(value))) return true;
+    // Book OCR Studio exports text-message exchanges as prose paragraphs with
+    // uppercase speaker labels. They precede, but are not, the narrative start.
+    return /\b(?:SABRINA|TUCKER)\b/.test(value) && value.length < 900;
+  }
+
+  function damagedOpeningOffset(text) {
+    const full = String(text || "").trim();
+    if (knownDamagedOpening(full) || legacyBadIOpening(full)) return 0;
+    // Some exported pages contain a text-message prelude and the narrative
+    // opening in one paragraph. Find a known damaged opening immediately after
+    // punctuation without scanning arbitrary lowercase words in ordinary prose.
+    const matches = full.matchAll(/(?:^|[.!?;:)\]])\s+[“”"'‘’]?([a-z][\p{L}’'-]*)/gu);
+    for (const match of matches) {
+      const wordOffset = match.index + match[0].lastIndexOf(match[1]);
+      if (knownDamagedOpening(full.slice(wordOffset))) return wordOffset;
+    }
+    return -1;
+  }
+
+  function buildDropcapCandidate(opening, id, { legacyRetry = false } = {}) {
     const info = firstWordInfo(opening.text);
-    if (!info || !/^\p{Ll}/u.test(info.word)) return null;
+    if (!info) return null;
 
     const pageText = state.importedEpub
       ? Array.from(opening.doc.dom.querySelectorAll("p, div"))
         .map(element => element.textContent.trim()).filter(Boolean).join("\n")
       : opening.page.text;
-    const fragment = standaloneFragment(pageText, opening.text);
-    const latinFragment = fragment && /^\p{Lu}$/u.test(fragment.value) ? fragment.value : "";
+
+    // Dropcap Rescue 2.2.0 could incorrectly glue an ordinary prose “I” to
+    // the damaged opening. Recognize only known repair shapes so that valid
+    // words beginning with I are never broadly rewritten.
+    if (!legacyRetry && /^I\p{Ll}/u.test(info.word)) {
+      const withoutBadI = `${opening.text.slice(0, info.start)}${info.word.slice(1)}${opening.text.slice(info.end)}`;
+      if (knownDamagedOpening(withoutBadI)) {
+        const recovered = buildDropcapCandidate({ ...opening, text: withoutBadI }, id, { legacyRetry: true });
+        if (recovered) {
+          recovered.before = opening.text;
+          recovered.reason = `A previous Dropcap Rescue appears to have attached a prose “I” to this opening. ${recovered.reason}`;
+          recovered.confidence = "ambiguous";
+          return recovered;
+        }
+      }
+    }
+    if (!/^\p{Ll}/u.test(info.word)) {
+      const openingInitial = info.word.charAt(0);
+      if (!/^[A-Z]$/.test(openingInitial) || openingInitial === "I") return null;
+      const duplicate = standaloneFragment(pageText, opening.text, openingInitial, false);
+      if (!duplicate || duplicate.value !== openingInitial) return null;
+      let cleaned = removeDetachedToken(opening.text, duplicate, info.end);
+      if (cleaned === opening.text) return null;
+      if (opening.fullText && opening.startOffset > 0) cleaned = `${opening.fullText.slice(0, opening.startOffset)}${cleaned}`;
+      return {
+        id, ...opening, info, fragment: duplicate,
+        confidence: duplicate.source === "line" && duplicate.distance <= 1 ? "high" : "ambiguous",
+        reason: `The opening already begins with “${openingInitial},” and another standalone “${openingInitial}” appears later. The proposal removes only the duplicate.`,
+        before: opening.fullText || opening.text, proposed: cleaned, status: "pending"
+      };
+    }
     const dictionaryProposal = COMMON_DROPCAP_WORDS.get(info.word.toLowerCase()) || "";
+    const fixedPhraseProposal = COMMON_DROPCAP_PHRASES.find(item => item.pattern.test(opening.text));
+    const firstPersonProposal = FIRST_PERSON_OPENING_VERBS.has(info.word.toLowerCase())
+      ? { missing: "I", replace: text => `I ${text}`, firstPerson: true }
+      : null;
+    const phraseProposal = fixedPhraseProposal || firstPersonProposal;
+    const contractionProposal = /^['’]m\b/i.test(opening.text);
+    const expectedInitial = contractionProposal
+      ? "I"
+      : phraseProposal?.missing || dictionaryProposal.charAt(0) || "";
+    const fragment = standaloneFragment(pageText, opening.text, expectedInitial, contractionProposal);
+    const latinFragment = fragment && /^\p{Lu}$/u.test(fragment.value) ? fragment.value : "";
     let proposedWord = "";
     let confidence = "ambiguous";
     let reason = "The chapter-opening word begins with a lowercase letter, but no reliable detached letter was found.";
 
-    if (latinFragment) {
+    if (contractionProposal) {
+      proposedWord = info.word;
+      reason = latinFragment === "I"
+        ? "A detached capital “I” matches the missing start of the opening contraction."
+        : "The opening contraction appears to be missing “I”; please verify the suggestion.";
+      confidence = latinFragment === "I" && fragment.source === "line" && fragment.distance <= 1
+        ? "high" : "ambiguous";
+    } else if (phraseProposal) {
+      proposedWord = info.word;
+      reason = phraseProposal.firstPerson
+        ? "This chapter may begin with a standalone first-person “I” before the opening verb; please verify the suggestion."
+        : latinFragment === expectedInitial
+          ? `A detached capital “${expectedInitial}” matches this opening phrase.`
+          : `This opening phrase appears to be missing “${expectedInitial}”; please verify the suggestion.`;
+      // A normal pronoun “I” inside prose is never strong evidence. Only a
+      // separate adjacent OCR line can raise an I-based repair to high.
+      confidence = latinFragment === expectedInitial && fragment.source === "line" && fragment.distance <= 1
+        ? "high" : "ambiguous";
+    } else if (dictionaryProposal) {
+      proposedWord = dictionaryProposal;
+      const matches = latinFragment.toLocaleUpperCase() === expectedInitial.toLocaleUpperCase();
+      confidence = matches && fragment.distance <= 2 ? "high" : "ambiguous";
+      reason = matches
+        ? `A detached capital “${latinFragment}” matches the missing start of “${dictionaryProposal}.”`
+        : fragment
+          ? `A stray “${fragment.value}” may be the misread decorative letter. “${dictionaryProposal}” is a review suggestion.`
+          : `“${dictionaryProposal}” is a review suggestion; no reliable detached letter was found.`;
+    } else if (latinFragment) {
       proposedWord = `${latinFragment}${info.word}`;
-      const fragmentMatchesSuggestion = !dictionaryProposal || dictionaryProposal.toLowerCase() === proposedWord.toLowerCase();
-      confidence = fragment.distance <= 2 && fragmentMatchesSuggestion ? "high" : "ambiguous";
+      confidence = fragment.source === "line" && fragment.distance <= 1 ? "high" : "ambiguous";
       reason = confidence === "high"
         ? `A detached capital “${latinFragment}” appears beside this opening paragraph.`
         : `A detached capital “${latinFragment}” appears elsewhere in this chapter; please verify it.`;
-    } else if (dictionaryProposal) {
-      proposedWord = dictionaryProposal;
-      reason = fragment
-        ? `A stray “${fragment.value}” may be the misread decorative letter. The proposed word is only a review suggestion.`
-        : "The opening resembles a common word missing its first letter. This is a review suggestion only.";
     } else {
       proposedWord = info.word;
     }
 
-    let proposedText = `${opening.text.slice(0, info.start)}${proposedWord}${opening.text.slice(info.end)}`;
-    proposedText = removeDetachedToken(proposedText, fragment, info.start + proposedWord.length);
+    let proposedText;
+    if (contractionProposal) proposedText = `I${opening.text}`;
+    else if (phraseProposal) proposedText = phraseProposal.replace(opening.text);
+    else proposedText = `${opening.text.slice(0, info.start)}${proposedWord}${opening.text.slice(info.end)}`;
+    const mayRemoveFragment = fragment && (
+      (fragment.value.toLocaleUpperCase() === expectedInitial.toLocaleUpperCase() &&
+        !(expectedInitial === "I" && fragment.source === "token")) ||
+      (expectedInitial && !/^[A-Za-z]$/u.test(fragment.value))
+    );
+    if (mayRemoveFragment) proposedText = removeDetachedToken(proposedText, fragment, info.start + proposedWord.length);
+    if (opening.fullText && opening.startOffset > 0) {
+      proposedText = `${opening.fullText.slice(0, opening.startOffset)}${proposedText}`;
+    }
     return {
       id, ...opening, info, fragment, confidence, reason,
-      before: opening.text, proposed: proposedText, status: "pending"
+      before: opening.fullText || opening.text, proposed: proposedText, status: "pending"
     };
   }
 

@@ -1,6 +1,14 @@
-# Book OCR Studio 2.2.0
+# Book OCR Studio 2.2.1
 
 Dropcap Rescue 2.0 adds a post-OCR repair workflow. It can use a recovered browser checkpoint or import an already-exported Book OCR Studio EPUB; neither route reruns OCR.
+
+## Fixed in 2.2.1
+- Never treats an ordinary prose pronoun **I** as the missing first letter of words such as `rap`, `tay`, or `ucker`.
+- Distinguishes missing letters (`rap` → `Crap`), missing standalone words (`wait` → `I wait`), and missing contraction letters (`'m` → `I'm`).
+- Matches displaced initials wrapped in quotation marks and handles non-Latin OCR glyphs conservatively.
+- Finds narrative openings after text-message/date preludes, including preludes merged into the same EPUB paragraph.
+- Flags duplicate displaced initials even when the opening word itself is already correct; ordinary **I** is excluded from duplicate detection.
+- Can recognize and repair mistaken `Irap`/`Itay`/`Icouple`-style output created by 2.2.0.
 
 ## New in 2.2.0
 - Scans all likely chapter-opening paragraphs for separated or missing decorative initials.
