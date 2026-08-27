@@ -1,4 +1,6 @@
-Book OCR Studio 2.1 batch update
+Book OCR Studio 2.2 Dropcap Rescue update
+
+Import a completed Book OCR Studio EPUB at the top of the app to scan and repair chapter-opening drop caps without rerunning OCR. Existing browser checkpoints remain compatible and are not cleared by this update.
 
 Replace these two files in the ROOT of the GitHub repo:
 - index.html

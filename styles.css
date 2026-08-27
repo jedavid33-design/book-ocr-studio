@@ -187,6 +187,25 @@ progress { width: 100%; height: 12px; }
   color: var(--muted);
   font-size: .92rem;
 }
+.status-box.subtle { background: #fbf8ff; border: 1px solid #e5daee; }
+.rescue-import-card { border-color: #d7c6e5; background: linear-gradient(135deg, rgba(255,255,255,.9), rgba(247,240,252,.92)); }
+.progress-pill { display: inline-flex; padding: 6px 10px; border-radius: 999px; background: var(--accent-2); color: #4f3d65; font-size: .78rem; font-weight: 800; white-space: nowrap; }
+.dropcap-results { display: grid; gap: 14px; margin-top: 14px; }
+.dropcap-card { border: 1px solid var(--line); border-radius: 16px; overflow: hidden; background: rgba(255,255,255,.82); }
+.dropcap-card.resolved { opacity: .7; }
+.dropcap-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 12px; background: #f4efe9; }
+.confidence { border-radius: 999px; padding: 4px 8px; font-size: .72rem; font-weight: 800; }
+.confidence.high { background: #dff0e5; color: #285d39; }
+.confidence.ambiguous { background: #fff0ce; color: #775310; }
+.dropcap-body { display: grid; grid-template-columns: minmax(0, 1fr) 150px; gap: 14px; padding: 14px; }
+.dropcap-copy { min-width: 0; }
+.before-after { display: grid; gap: 8px; margin: 10px 0; }
+.before-after div { padding: 10px; border-radius: 11px; background: #f5f1ec; overflow-wrap: anywhere; }
+.before-after .proposed { background: #f4edfa; }
+.dropcap-edit { width: 100%; }
+.dropcap-source img { width: 100%; max-height: 220px; object-fit: contain; border-radius: 10px; border: 1px solid var(--line); background: #eee; }
+.dropcap-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.dropcap-note { color: var(--muted); font-size: .82rem; line-height: 1.4; }
 
 .review-tools { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
 .review-tools input[type="search"] { min-width: 230px; }
@@ -253,6 +272,9 @@ dialog::backdrop { background: rgba(30,25,20,.48); backdrop-filter: blur(5px); }
   .review-tools { align-items: stretch; flex-direction: column; }
   .review-tools input[type="search"] { min-width: 0; }
   .review-body { grid-template-columns: 86px 1fr; }
+  .dropcap-body { grid-template-columns: 1fr; }
+  .dropcap-source { order: -1; }
+  .dropcap-source img { max-height: 260px; }
   .review-body textarea { min-height: 240px; }
 }
 

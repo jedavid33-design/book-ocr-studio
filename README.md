@@ -1,4 +1,15 @@
-# Book OCR Studio 2.0.2
+# Book OCR Studio 2.2.0
+
+Dropcap Rescue 2.0 adds a post-OCR repair workflow. It can use a recovered browser checkpoint or import an already-exported Book OCR Studio EPUB; neither route reruns OCR.
+
+## New in 2.2.0
+- Scans all likely chapter-opening paragraphs for separated or missing decorative initials.
+- Automatically classifies only strong detached-letter evidence as high confidence.
+- Sends dictionary-like and symbol/non-Latin cases to review instead of silently changing them.
+- Supports accept, reject, edit, and **Accept all high-confidence** actions.
+- Shows the source screenshot when a recovered browser project has its files selected.
+- Preserves an imported EPUB package and changes only accepted paragraph repairs.
+- Keeps the existing local-storage checkpoint keys and completed OCR text intact.
 
 PaddleOCR build with a fresh-reprocess control.
 

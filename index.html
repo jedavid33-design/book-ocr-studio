@@ -12,18 +12,27 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=2.1.1" />
+  <link rel="stylesheet" href="styles.css?v=2.2.0" />
 </head>
 <body>
   <header class="topbar">
     <div>
-      <p class="eyebrow">LOCAL BOOK TOOL · 2.1.1 · PaddleOCR</p>
+      <p class="eyebrow">LOCAL BOOK TOOL · 2.2.0 · Dropcap Rescue</p>
       <h1>Book OCR Studio</h1>
       <p class="subhead">Crop screenshots, OCR them one page at a time, batch OCR the whole book, review chapter starts or any page, and export TXT or EPUB.</p>
     </div>
   </header>
 
   <main class="app-shell">
+    <section class="card rescue-import-card">
+      <h2>Repair an existing EPUB — no OCR needed</h2>
+      <p class="hint">Import an untouched EPUB previously exported by Book OCR Studio. Dropcap Rescue scans and repairs its chapter openings as a post-OCR step. Your original EPUB remains unchanged.</p>
+      <label class="file-field">
+        <span>Book OCR Studio EPUB</span>
+        <input id="epubInput" type="file" accept="application/epub+zip,.epub" />
+      </label>
+      <div id="epubImportStatus" class="status-box subtle">No EPUB imported.</div>
+    </section>
     <section class="card">
       <h2>1. Book info</h2>
       <div class="grid two">
@@ -136,18 +145,34 @@
       </div>
     </section>
 
+    <section class="card hidden" id="dropcapSection">
+      <div class="section-head">
+        <div>
+          <h2>6. Dropcap Rescue</h2>
+          <p class="hint">Scans likely chapter-opening paragraphs using existing OCR text. Strong positional evidence can be applied automatically; uncertain suggestions wait for your review.</p>
+        </div>
+        <span id="dropcapSummary" class="progress-pill">Not scanned</span>
+      </div>
+      <div class="actions">
+        <button id="scanDropcaps" class="button primary" type="button">Scan completed book</button>
+        <button id="acceptHighDropcaps" class="button secondary" type="button" disabled>Accept all high-confidence</button>
+      </div>
+      <div id="dropcapEmpty" class="status-box hidden"></div>
+      <div id="dropcapResults" class="dropcap-results"></div>
+    </section>
+
     <section class="card hidden" id="exportSection">
-      <h2>6. Export</h2>
+      <h2>7. Export</h2>
       <div class="actions">
         <button id="downloadTxt" class="button primary" type="button">Download TXT</button>
         <button id="downloadEpub" class="button secondary" type="button">Download EPUB</button>
       </div>
-      <p class="hint">EPUB export uses your title, author, cover image, and the edited OCR text above.</p>
+      <p class="hint">For imported EPUBs, export keeps the original package and changes only accepted Dropcap Rescue paragraphs. For screenshot projects, it uses the existing Book OCR Studio exporter.</p>
     </section>
   </main>
 
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
-  <script src="script-loader.js?v=2.1.1"></script>
+  <script src="script-loader.js?v=2.2.0"></script>
   <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {

@@ -1,7 +1,7 @@
 {
   "name": "Book OCR Studio",
   "short_name": "Book OCR",
-  "description": "Crop book screenshots, OCR them page by page, review text, and export TXT or EPUB.",
+  "description": "OCR book screenshots or repair drop caps in an existing EPUB without rerunning OCR.",
   "id": "/book-ocr-studio/",
   "start_url": "/book-ocr-studio/",
   "scope": "/book-ocr-studio/",
