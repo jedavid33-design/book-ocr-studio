@@ -8,14 +8,14 @@
 affair affairs affect affected affecting affects affiliate affiliated affiliation
 baffle baffled baffling baffles cliff cliffs coffee coffees cuff cuffs different
 differently difficult difficulties effect effects effort efforts efficient efficiently
-efficiency fifteen fifth fifty fiction field fields fierce fight fights fighting file
-files filing fill filled filling fills film films filter filtered filtering final finally
+efficiency fifteen fifth fifty fiction field fields fierce fiercely fight fights fighting file
+files filing fill filled filling fills film films filter filtered filtering filthy final finally
 finals finance finances financial find finder finding finds fine finely finer finest
 finger fingers fingertip fingertips finish finished finishes finishing fire fired fires
-firing firm firmly firms first fish fishing fist fit fits fitted fitting five fix fixed
-fixes fixing fixture fixtures flag flags flame flames flash flat flatter flattest flesh
+firing firm firmly firms first firstborn fish fishing fist fists fit fits fitted fitting fitness five fix fixed
+fixated fixes fixing figure figured fixture fixtures flag flags flame flames flash flat flatter flattest flesh
 flexible flight flights fling flip flipped flipping float floated floating floats flock
-flood flooded flooding floor floors flow flowed flowing flows flower flowers flowering
+flood flooded flooding floor floors flow flowed flowing flows flower flowers flowering flushed
 fluff fluffed fluffier fluffiest fluffy fly flies flying offer offered offering offers
 office officer officers official officially raffle raffled raffles raffling staff staffs
 stuff stuffed stuffing stuffs suffer suffered suffering suffers sufficient sufficiently

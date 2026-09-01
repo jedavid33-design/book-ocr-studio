@@ -1,4 +1,9 @@
-# Book OCR Studio 2.4.0
+# Book OCR Studio 2.4.1
+
+## New in 2.4.1
+- Tunes only Split Ligature Repair recall by adding nine confirmed ordinary English forms that the existing local allowlist omitted: `filthy`, `figured`, `firstborn`, `fists`, `fixated`, `figure`, `fitness`, `flushed`, and `fiercely`.
+- Keeps the same conservative candidate matcher, exact-word validation, capitalization guard, and same-line-only spacing rule.
+- Expands the deterministic regression suite from 13 to 22 cases.
 
 ## New in 2.4.0
 - Adds a focused **EPUB Polish → Repair split ligatures** action for existing OCR projects and imported EPUBs; it never runs OCR.
