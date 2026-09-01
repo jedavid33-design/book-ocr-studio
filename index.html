@@ -12,12 +12,12 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=2.3.0" />
+  <link rel="stylesheet" href="styles.css?v=2.4.0" />
 </head>
 <body>
   <header class="topbar">
     <div>
-      <p class="eyebrow">LOCAL BOOK TOOL · 2.3.0 · Dropcap Rescue</p>
+      <p class="eyebrow">LOCAL BOOK TOOL · 2.4.0 · EPUB Polish</p>
       <h1>Book OCR Studio</h1>
       <p class="subhead">Crop screenshots, OCR them one page at a time, batch OCR the whole book, review chapter starts or any page, and export TXT or EPUB.</p>
     </div>
@@ -164,11 +164,19 @@
 
     <section class="card hidden" id="exportSection">
       <h2>7. Export</h2>
+      <div class="subcard">
+        <h3>EPUB Polish</h3>
+        <p class="hint">Repair high-confidence OCR spaces inside fi, fl, ff, ffi, and ffl words. This uses existing text only and leaves uncertain candidates unchanged.</p>
+        <div class="actions">
+          <button id="repairLigatures" class="button secondary" type="button">Repair split ligatures</button>
+          <span id="ligatureStatus" class="progress-pill">Not run</span>
+        </div>
+      </div>
       <div class="actions">
         <button id="downloadTxt" class="button primary" type="button">Download TXT</button>
         <button id="downloadEpub" class="button secondary" type="button">Download EPUB</button>
       </div>
-      <p class="hint">For imported EPUBs, export keeps the original package and changes only accepted Dropcap Rescue paragraphs. For screenshot projects, it uses the existing Book OCR Studio exporter.</p>
+      <p class="hint">For imported EPUBs, export keeps the original package and changes only repairs you applied. For screenshot projects, it uses the existing Book OCR Studio exporter.</p>
     </section>
   </main>
 
@@ -206,7 +214,8 @@
   </dialog>
 
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
-  <script src="script-loader.js?v=2.3.0"></script>
+  <script src="epub-polish.js?v=2.4.0"></script>
+  <script src="script-loader.js?v=2.4.0"></script>
   <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {

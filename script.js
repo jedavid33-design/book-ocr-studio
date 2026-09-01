@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.3.0-page-dropcap-rescue";
+  const BUILD_VERSION = "2.4.0-split-ligature-polish";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -104,6 +104,8 @@
     exportSection: $("exportSection"),
     downloadTxt: $("downloadTxt"),
     downloadEpub: $("downloadEpub"),
+    repairLigatures: $("repairLigatures"),
+    ligatureStatus: $("ligatureStatus"),
     epubInput: $("epubInput"),
     epubImportStatus: $("epubImportStatus"),
     dropcapSection: $("dropcapSection"),
@@ -2020,6 +2022,61 @@
     return true;
   }
 
+  function repairTextNodesInParagraph(paragraph, repair) {
+    const walker = paragraph.ownerDocument.createTreeWalker(paragraph, 4);
+    let fixedCount = 0;
+    let ambiguousCount = 0;
+    let node = walker.nextNode();
+    while (node) {
+      const result = repair(node.nodeValue);
+      if (result.fixedCount) node.nodeValue = result.text;
+      fixedCount += result.fixedCount;
+      ambiguousCount += result.ambiguousCount;
+      node = walker.nextNode();
+    }
+    return { fixedCount, ambiguousCount };
+  }
+
+  function runSplitLigaturePolish() {
+    const repair = globalThis.BookOcrEpubPolish?.repairSplitLigatures;
+    if (!repair) {
+      alert("Split Ligature Repair did not load. Refresh the app and try again.");
+      return;
+    }
+    syncCurrentEditor();
+    let fixedCount = 0;
+    let ambiguousCount = 0;
+
+    if (state.importedEpub) {
+      state.importedEpub.documents.forEach((doc, index) => {
+        let documentFixed = 0;
+        doc.dom.querySelectorAll("p").forEach(paragraph => {
+          const result = repairTextNodesInParagraph(paragraph, repair);
+          documentFixed += result.fixedCount;
+          fixedCount += result.fixedCount;
+          ambiguousCount += result.ambiguousCount;
+        });
+        if (documentFixed) doc.changed = true;
+        state.pages[index].text = Array.from(doc.dom.querySelectorAll("p"))
+          .map(paragraph => paragraph.textContent.trim()).filter(Boolean).join("\n\n");
+      });
+    } else {
+      state.pages.forEach(page => {
+        const result = repair(page.text || "");
+        page.text = result.text;
+        fixedCount += result.fixedCount;
+        ambiguousCount += result.ambiguousCount;
+      });
+      saveCheckpoint();
+      renderReview();
+    }
+
+    const fixedLabel = `${fixedCount} high-confidence split ligature${fixedCount === 1 ? "" : "s"} repaired`;
+    const ambiguousLabel = `${ambiguousCount} uncertain candidate${ambiguousCount === 1 ? "" : "s"} left unchanged`;
+    els.ligatureStatus.textContent = `${fixedCount} fixed`;
+    setStatus(`${fixedLabel}; ${ambiguousLabel}. No OCR was run.`);
+  }
+
   function downloadBlob(blob, filename) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -2310,6 +2367,7 @@ ${coverSpine}${spine.join("\n")}
 
   els.downloadTxt.addEventListener("click", downloadTxt);
   els.downloadEpub.addEventListener("click", downloadEpub);
+  els.repairLigatures.addEventListener("click", runSplitLigaturePolish);
   els.scanDropcaps.addEventListener("click", scanDropcaps);
   els.acceptHighDropcaps.addEventListener("click", () => {
     state.dropcapCandidates

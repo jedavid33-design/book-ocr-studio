@@ -1,4 +1,11 @@
-# Book OCR Studio 2.3.0
+# Book OCR Studio 2.4.0
+
+## New in 2.4.0
+- Adds a focused **EPUB Polish → Repair split ligatures** action for existing OCR projects and imported EPUBs; it never runs OCR.
+- Repairs only same-line splits whose joined token is in a conservative local word allowlist.
+- Supports `fi`, `fl`, `ff`, `ffi`, and `ffl`, while preserving punctuation, capitalization, dialogue, paragraph boundaries, and unrelated spacing.
+- Reports the number repaired and the number of uncertain candidates deliberately left unchanged.
+- Includes 13 deterministic regression tests. Run them with `node tests/epub-polish.test.js`.
 
 Dropcap Rescue 2.0 adds a post-OCR repair workflow. It can use a recovered browser checkpoint or import an already-exported Book OCR Studio EPUB; neither route reruns OCR.
 
