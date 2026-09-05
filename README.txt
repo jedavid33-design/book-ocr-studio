@@ -1,4 +1,4 @@
-Book OCR Studio 2.7.0 — Guided Repair + Regression
+Book OCR Studio 2.7.1 — Guided Repair + Regression
 
 Guided Repair runs the safe repair stages in the order that preserves source-geometry formatting: paragraph rebuild → conservative Auto Italics → Safe Text Cleanup → split-ligature repair → Dropcap Rescue. High-confidence dropcaps are accepted automatically; uncertain candidates remain for review.
 
@@ -38,3 +38,6 @@ v2.6.1: Safe cleanup now survives paragraph rebuilds. Added a conservative autom
 
 
 v2.6.5: Added exportable italic detection 2.0 diagnostics with per-line slant/gain scores for calibration against known italic source text.
+
+
+2.7.1: Dropcap Rescue now handles the fresh regression cases eese→Reese and quoted his→This while preserving opening punctuation; detached matching capitals are removed from their orphaned position when safe.

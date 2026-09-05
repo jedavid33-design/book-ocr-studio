@@ -46,6 +46,25 @@ traffic waffle waffled waffles waffling
     return { text, fixedCount, ambiguousCount, familyCounts };
   }
 
+
+  function listSplitLigatureCandidates(input) {
+    const text = String(input ?? "");
+    const re = new RegExp(CANDIDATE.source, CANDIDATE.flags);
+    const out = [];
+    let m;
+    while ((m = re.exec(text))) {
+      const original = m[0], left = m[1], right = m[2];
+      const joined = left + right;
+      const family = ["ffi", "ffl", "fi", "fl", "ff"].find(item => left.toLowerCase().endsWith(item)) || "";
+      const safe = hasSafeCapitalization(joined) && PLAUSIBLE_WORDS.has(joined.toLowerCase());
+      if (!safe) {
+        out.push({ original, left, right, joined, family, index: m.index });
+      }
+      if (m[0].length === 0) re.lastIndex++;
+    }
+    return out;
+  }
+
   const SCENE_MARKER = /^(?:\*{3,}|[-–—]{3,}|[•·◆◇❖✦⁂❦☙❧]+|[①②③④⑤⑥⑦⑧⑨⑩]+)$/u;
 
   function normalizeEllipses(input) {
@@ -104,7 +123,7 @@ traffic waffle waffled waffles waffling
     };
   }
 
-  const api = Object.freeze({ repairSplitLigatures, normalizeEllipses, normalizeSceneMarkers, repairObviousDialogueClosers, safePolishText });
+  const api = Object.freeze({ repairSplitLigatures, listSplitLigatureCandidates, normalizeEllipses, normalizeSceneMarkers, repairObviousDialogueClosers, safePolishText });
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   if (typeof globalThis !== "undefined") globalThis.BookOcrEpubPolish = api;
 })();

@@ -555,3 +555,8 @@ dialog::backdrop { background: rgba(30,25,20,.48); backdrop-filter: blur(5px); }
 .regression-row.fail { background: #fff1ed; }
 .regression-row.warn { background: #fff7df; }
 .regression-icon { font-weight: 900; text-align: center; }
+
+.ligature-review-item { border: 1px solid rgba(120,105,90,.22); border-radius: 14px; padding: 12px; background: rgba(255,255,255,.56); }
+.ligature-review-item p { margin: 6px 0; }
+.ligature-context { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .9rem; overflow-wrap: anywhere; }
+.ligature-candidate { font-weight: 700; text-decoration: underline; text-decoration-thickness: 2px; }

@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.0-guided-repair-regression";
+  const BUILD_VERSION = "2.7.1-dropcap-ligature-review";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -115,6 +115,12 @@
     polishStatus: $("polishStatus"),
     repairLigatures: $("repairLigatures"),
     ligatureStatus: $("ligatureStatus"),
+    reviewLigatures: $("reviewLigatures"),
+    ligatureReviewDialog: $("ligatureReviewDialog"),
+    ligatureReviewSummary: $("ligatureReviewSummary"),
+    ligatureReviewList: $("ligatureReviewList"),
+    closeLigatureReview: $("closeLigatureReview"),
+    doneLigatureReview: $("doneLigatureReview"),
     rebuildParagraphs: $("rebuildParagraphs"),
     downloadLayoutDiagnostics: $("downloadLayoutDiagnostics"),
     paragraphStatus: $("paragraphStatus"),
@@ -1844,6 +1850,7 @@
     ["aked", "Naked"], ["t", "At"], ["here's", "There's"],
     ["hen", "When"], ["hat", "What"], ["n", "On"], ["h", "Oh"],
     ["ittle", "Little"], ["otherhood", "Motherhood"], ["here", "There"],
+    ["eese", "Reese"], ["his", "This"],
     ["kay", "Okay"], ["ucker's", "Tucker's"]
   ]);
 
@@ -2128,11 +2135,12 @@
       proposedWord = dictionaryProposal;
       const matches = latinFragment.toLocaleUpperCase() === expectedInitial.toLocaleUpperCase();
       confidence = matches && fragment.distance <= 2 ? "high" : "ambiguous";
+      const punctuationNote = info.prefix ? ` Opening punctuation “${info.prefix}” will be preserved.` : "";
       reason = matches
-        ? `A detached capital “${latinFragment}” matches the missing start of “${dictionaryProposal}.”`
+        ? `A detached capital “${latinFragment}” matches the missing start of “${dictionaryProposal}.”${punctuationNote}`
         : fragment
-          ? `A stray “${fragment.value}” may be the misread decorative letter. “${dictionaryProposal}” is a review suggestion.`
-          : `“${dictionaryProposal}” is a review suggestion; no reliable detached letter was found.`;
+          ? `A stray “${fragment.value}” may be the misread decorative letter. “${dictionaryProposal}” is a review suggestion.${punctuationNote}`
+          : `“${dictionaryProposal}” is a review suggestion; no reliable detached letter was found.${punctuationNote}`;
     } else if (latinFragment) {
       proposedWord = `${latinFragment}${info.word}`;
       confidence = fragment.source === "line" && fragment.distance <= 1 ? "high" : "ambiguous";
@@ -2979,6 +2987,47 @@
     return { fixedCount, ambiguousCount };
   }
 
+  function collectUncertainLigatures() {
+    const list = globalThis.BookOcrEpubPolish?.listSplitLigatureCandidates;
+    if (!list) return [];
+    const found = [];
+    state.pages.forEach((page, pageIndex) => {
+      const text = page.text || "";
+      list(text).forEach(candidate => {
+        const start = Math.max(0, candidate.index - 55);
+        const end = Math.min(text.length, candidate.index + candidate.original.length + 55);
+        found.push({ ...candidate, pageIndex, fileName: page.fileName || `Page ${pageIndex + 1}`, context: text.slice(start, end).replace(/\s+/g, " ").trim() });
+      });
+    });
+    return found;
+  }
+
+  function openLigatureReview() {
+    syncCurrentEditor();
+    const candidates = collectUncertainLigatures();
+    els.ligatureReviewSummary.textContent = candidates.length ? `${candidates.length} uncertain candidate${candidates.length===1?"":"s"}. Nothing changes unless you press Repair.` : "No uncertain split-ligature candidates remain.";
+    els.ligatureReviewList.innerHTML = "";
+    candidates.forEach((c, idx) => {
+      const item = document.createElement("div"); item.className = "ligature-review-item";
+      const safeContext = escapeHtml(c.context);
+      const markedContext = safeContext.replace(escapeHtml(c.original), `<span class="ligature-candidate">${escapeHtml(c.original)}</span>`);
+      item.innerHTML = `<strong>${escapeHtml(c.fileName)}</strong><p class="ligature-context">${markedContext}</p><p class="hint">Candidate: <b>${escapeHtml(c.original)}</b> → <b>${escapeHtml(c.joined)}</b> · ${escapeHtml(c.family || "ligature")} family</p><div class="actions"><button class="button ghost keep" type="button">Keep as-is</button><button class="button secondary repair" type="button">Repair</button></div>`;
+      item.querySelector(".keep").addEventListener("click", () => item.remove());
+      item.querySelector(".repair").addEventListener("click", () => {
+        const page = state.pages[c.pageIndex];
+        const pos = (page.text || "").indexOf(c.original);
+        if (pos >= 0) {
+          page.text = page.text.slice(0,pos) + c.joined + page.text.slice(pos + c.original.length);
+          saveCheckpoint(); renderReview();
+          item.remove();
+          setStatus(`Repaired uncertain split-ligature candidate “${c.original}” → “${c.joined}”.`);
+        }
+      });
+      els.ligatureReviewList.appendChild(item);
+    });
+    els.ligatureReviewDialog.showModal();
+  }
+
   function runSplitLigaturePolish() {
     const repair = globalThis.BookOcrEpubPolish?.repairSplitLigatures;
     if (!repair) {
@@ -3015,7 +3064,8 @@
 
     const fixedLabel = `${fixedCount} high-confidence split ligature${fixedCount === 1 ? "" : "s"} repaired`;
     const ambiguousLabel = `${ambiguousCount} uncertain candidate${ambiguousCount === 1 ? "" : "s"} left unchanged`;
-    els.ligatureStatus.textContent = `${fixedCount} fixed`;
+    els.ligatureStatus.textContent = `${fixedCount} fixed · ${ambiguousCount} review`;
+    if (els.reviewLigatures) { els.reviewLigatures.classList.toggle("hidden", ambiguousCount === 0); els.reviewLigatures.textContent = `Review uncertain (${ambiguousCount})`; }
     setStatus(`${fixedLabel}; ${ambiguousLabel}. No OCR was run.`);
     return { fixedCount, ambiguousCount };
   }
@@ -3343,6 +3393,9 @@ ${coverSpine}${spine.join("\n")}
   els.autoItalicScan?.addEventListener("click", autoScanItalics);
   els.downloadItalicDiagnostics?.addEventListener("click", downloadItalicDiagnostics);
   els.repairLigatures.addEventListener("click", runSplitLigaturePolish);
+  els.reviewLigatures?.addEventListener("click", openLigatureReview);
+  els.closeLigatureReview?.addEventListener("click", () => els.ligatureReviewDialog.close());
+  els.doneLigatureReview?.addEventListener("click", () => els.ligatureReviewDialog.close());
   els.rebuildParagraphs?.addEventListener("click", () => rebuildParagraphsFromSavedGeometry({ confirmOverwrite: true }));
   els.downloadLayoutDiagnostics?.addEventListener("click", downloadLayoutDiagnostics);
   els.scanDropcaps.addEventListener("click", scanDropcaps);
