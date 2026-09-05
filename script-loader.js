@@ -1,4 +1,4 @@
-// Book OCR Studio 2.7.1-inline-review"./script.js?v=2.7.1-inline-review", { cache: "no-store" });
+// Book OCR Studio 2.7.1-native-review"./script.js?v=2.7.1-native-review", { cache: "no-store" });
   if (!response.ok) {
     throw new Error(`Could not load script.js (${response.status})`);
   }
@@ -19,7 +19,7 @@
   }
 
   source = source.replace(anchor, replacement);
-  source += "\n//# sourceURL=book-ocr-studio-2.7.1-inline-review";
+  source += "\n//# sourceURL=book-ocr-studio-2.7.1-native-review";
 
   (0, eval)(source);
 })().catch((err) => {

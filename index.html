@@ -17,8 +17,8 @@
 <body>
   <header class="topbar">
     <div>
-      <p class="eyebrow">LOCAL BOOK TOOL · 2.7.1 · Dropcap + Inline Ligature Review</p>
-      <div id="buildIdentifier" class="build-identifier">BUILD 2.7.1 · INLINE LIGATURE REVIEW</div>
+      <p class="eyebrow">LOCAL BOOK TOOL · 2.7.1 · Dropcap + Native Ligature Review</p>
+      <div id="buildIdentifier" class="build-identifier">BUILD 2.7.1 · NATIVE LIGATURE REVIEW</div>
       <h1>Book OCR Studio</h1>
       <p class="subhead">Crop screenshots, OCR them one page at a time, batch OCR the whole book, review chapter starts or any page, and export TXT or EPUB.</p>
     </div>
@@ -210,21 +210,18 @@
         <p class="hint">Repair high-confidence OCR spaces inside fi, fl, ff, ffi, and ffl words. This uses existing text only and leaves uncertain candidates unchanged.</p>
         <div class="actions">
           <button id="repairLigatures" class="button secondary" type="button">Repair split ligatures</button>
-          <button id="reviewLigatures" class="button ghost hidden" type="button" aria-expanded="false" aria-controls="ligatureReviewInline">Review uncertain</button>
+          
           <span id="ligatureStatus" class="progress-pill">Not run</span>
         </div>
-        <div id="ligatureReviewInline" class="ligature-inline-review hidden">
-          <div class="ligature-inline-head">
-            <div>
-              <p class="eyebrow">UNCERTAIN OCR REVIEW</p>
-              <h4>Split-ligature candidates</h4>
-            </div>
-            <button id="closeLigatureReviewInline" class="button ghost" type="button">Hide review</button>
+        <details id="ligatureReviewDetails" class="ligature-inline-review hidden">
+          <summary id="ligatureReviewSummaryToggle">Review uncertain (0)</summary>
+          <div class="ligature-inline-body">
+            <p id="ligatureReviewSummary" class="hint"></p>
+            <div id="ligatureReviewList" class="review-list"></div>
           </div>
-          <p id="ligatureReviewSummary" class="hint"></p>
-          <div id="ligatureReviewList" class="review-list"></div>
-        </div>
+        </details>
       </div>
+    </div>
       <div class="actions">
         <button id="downloadTxt" class="button primary" type="button">Download TXT</button>
         <button id="downloadEpub" class="button secondary" type="button">Download EPUB</button>

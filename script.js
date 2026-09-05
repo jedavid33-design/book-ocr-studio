@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.1-dropcap-inline-ligature-review";
+  const BUILD_VERSION = "2.7.1-dropcap-native-ligature-review";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -116,12 +116,11 @@
     polishStatus: $("polishStatus"),
     repairLigatures: $("repairLigatures"),
     ligatureStatus: $("ligatureStatus"),
-    reviewLigatures: $("reviewLigatures"),
-    ligatureReviewInline: $("ligatureReviewInline"),
+    ligatureReviewDetails: $("ligatureReviewDetails"),
+    ligatureReviewSummaryToggle: $("ligatureReviewSummaryToggle"),
     ligatureReviewSummary: $("ligatureReviewSummary"),
     ligatureReviewList: $("ligatureReviewList"),
-    closeLigatureReviewInline: $("closeLigatureReviewInline"),
-    rebuildParagraphs: $("rebuildParagraphs"),
+        rebuildParagraphs: $("rebuildParagraphs"),
     downloadLayoutDiagnostics: $("downloadLayoutDiagnostics"),
     paragraphStatus: $("paragraphStatus"),
     repairBook: $("repairBook"),
@@ -3024,27 +3023,17 @@
     return found;
   }
 
-  function updateLigatureReviewButton() {
-    const remaining = collectUncertainLigatures().length;
-    if (!els.reviewLigatures) return;
-    els.reviewLigatures.classList.toggle("hidden", remaining === 0);
-    els.reviewLigatures.textContent = `Review uncertain (${remaining})`;
-    if (remaining === 0 && els.ligatureReviewInline) {
-      els.ligatureReviewInline.classList.add("hidden");
-      els.reviewLigatures.setAttribute("aria-expanded", "false");
-    }
-  }
-
-  function openLigatureReview() {
+  function renderLigatureReview() {
     syncCurrentEditor();
 
-    const panel = els.ligatureReviewInline;
-    if (!panel || !els.ligatureReviewList || !els.ligatureReviewSummary) {
-      setStatus("Ligature review panel is unavailable. Refresh the app and try again.");
-      return;
-    }
+    const details = els.ligatureReviewDetails;
+    const toggle = els.ligatureReviewSummaryToggle;
+    if (!details || !toggle || !els.ligatureReviewList || !els.ligatureReviewSummary) return;
 
     const candidates = collectUncertainLigatures();
+    details.classList.toggle("hidden", candidates.length === 0);
+    toggle.textContent = `Review uncertain (${candidates.length})`;
+
     els.ligatureReviewSummary.textContent = candidates.length
       ? `${candidates.length} uncertain candidate${candidates.length===1?"":"s"}. Nothing changes unless you press Repair. Keep as-is dismisses that candidate for this session.`
       : "No uncertain split-ligature candidates remain.";
@@ -3067,18 +3056,15 @@
           <button class="button secondary repair" type="button">Repair</button>
         </div>`;
 
-      item.querySelector(".keep").addEventListener("click", () => {
+      item.querySelector(".keep").addEventListener("click", (event) => {
+        event.preventDefault();
         state.ignoredLigatureCandidates.add(c.key);
-        item.remove();
-        updateLigatureReviewButton();
-        const remaining = collectUncertainLigatures().length;
-        els.ligatureReviewSummary.textContent = remaining
-          ? `${remaining} uncertain candidate${remaining===1?"":"s"} remaining.`
-          : "All uncertain candidates reviewed.";
         setStatus(`Kept “${c.original}” as-is.`);
+        renderLigatureReview();
       });
 
-      item.querySelector(".repair").addEventListener("click", () => {
+      item.querySelector(".repair").addEventListener("click", (event) => {
+        event.preventDefault();
         const page = state.pages[c.pageIndex];
         const text = page?.text || "";
         const exactAtIndex = text.slice(c.index, c.index + c.original.length) === c.original;
@@ -3087,13 +3073,8 @@
           page.text = text.slice(0, pos) + c.joined + text.slice(pos + c.original.length);
           saveCheckpoint();
           renderReview();
-          item.remove();
-          updateLigatureReviewButton();
-          const remaining = collectUncertainLigatures().length;
-          els.ligatureReviewSummary.textContent = remaining
-            ? `${remaining} uncertain candidate${remaining===1?"":"s"} remaining.`
-            : "All uncertain candidates reviewed.";
           setStatus(`Repaired uncertain split-ligature candidate “${c.original}” → “${c.joined}”.`);
+          renderLigatureReview();
         } else {
           setStatus(`Could not locate “${c.original}” again; rerun split-ligature inspection.`);
         }
@@ -3101,19 +3082,10 @@
 
       els.ligatureReviewList.appendChild(item);
     });
-
-    panel.classList.remove("hidden");
-    els.reviewLigatures?.setAttribute("aria-expanded", "true");
-    setStatus(candidates.length
-      ? `Reviewing ${candidates.length} uncertain split-ligature candidate${candidates.length===1?"":"s"}.`
-      : "No uncertain split-ligature candidates remain.");
-
-    requestAnimationFrame(() => panel.scrollIntoView({ behavior: "smooth", block: "nearest" }));
   }
 
-  function closeLigatureReviewInline() {
-    els.ligatureReviewInline?.classList.add("hidden");
-    els.reviewLigatures?.setAttribute("aria-expanded", "false");
+  function updateLigatureReviewButton() {
+    renderLigatureReview();
   }
 
   function runSplitLigaturePolish() {
@@ -3481,11 +3453,7 @@ ${coverSpine}${spine.join("\n")}
   els.autoItalicScan?.addEventListener("click", autoScanItalics);
   els.downloadItalicDiagnostics?.addEventListener("click", downloadItalicDiagnostics);
   els.repairLigatures.addEventListener("click", runSplitLigaturePolish);
-  els.reviewLigatures?.addEventListener("click", () => {
-    if (els.ligatureReviewInline?.classList.contains("hidden")) openLigatureReview();
-    else closeLigatureReviewInline();
-  });
-  els.closeLigatureReviewInline?.addEventListener("click", closeLigatureReviewInline);
+
   els.rebuildParagraphs?.addEventListener("click", () => rebuildParagraphsFromSavedGeometry({ confirmOverwrite: true }));
   els.downloadLayoutDiagnostics?.addEventListener("click", downloadLayoutDiagnostics);
   els.scanDropcaps.addEventListener("click", scanDropcaps);
