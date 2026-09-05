@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.5.4-two-lane-indent-fix";
+  const BUILD_VERSION = "2.5.5-layout-profile-plumbing-fix";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -21,6 +21,7 @@
     dropcapCandidates: [],
     pageDropcapCandidate: null,
     pageDropcapImageUrl: "",
+    bookLayoutProfile: null,
   };
 
   let PaddleOCRClass = null;
@@ -175,6 +176,7 @@
         cropBottom: Number(els.cropBottom.value) || 0,
         cropSides: Number(els.cropSides.value) || 0,
         currentPageIndex: state.currentPageIndex,
+        bookLayoutProfile: state.bookLayoutProfile || null,
         pages: state.pages.map(p => ({
           fileName: p.file.name,
           text: p.text || "",
@@ -251,6 +253,7 @@
     clearCheckpoint();
 
     state.pages = [];
+    state.bookLayoutProfile = null;
     state.currentPageIndex = -1;
 
     els.progressWrap.classList.add("hidden");
@@ -308,6 +311,7 @@
     const byName = new Map(state.files.map(f => [f.name, f]));
     const byStem = new Map(state.files.map(f => [normalizedStem(f.name), f]));
     const savedPages = saved.pages || [];
+    state.bookLayoutProfile = saved.bookLayoutProfile || null;
 
     state.pages = savedPages.map((page, index) => {
       const file = byName.get(page.fileName)
@@ -1596,9 +1600,15 @@
     els.rebuildParagraphs.disabled = state.processing || available === 0;
     if (els.downloadLayoutDiagnostics) els.downloadLayoutDiagnostics.disabled = state.processing || available === 0;
     if (els.paragraphStatus) {
-      els.paragraphStatus.textContent = available
-        ? `${available}/${state.pages.length} pages have layout data`
-        : "Needs OCR from this build";
+      const profile = state.bookLayoutProfile || (available ? buildBookLayoutProfile(state.pages) : null);
+      if (profile && available) {
+        state.bookLayoutProfile = profile;
+        els.paragraphStatus.textContent = `${available}/${state.pages.length} layout pages · body ${Math.round(profile.bodyLeft)} / indent ${Math.round(profile.indentLeft)}`;
+      } else {
+        els.paragraphStatus.textContent = available
+          ? `${available}/${state.pages.length} pages have layout data`
+          : "Needs OCR from this build";
+      }
     }
   }
 
@@ -1609,7 +1619,8 @@
       setStatus("No saved line geometry is available to export yet.");
       return;
     }
-    const bookProfile = buildBookLayoutProfile(eligible);
+    const bookProfile = state.bookLayoutProfile || buildBookLayoutProfile(eligible);
+    state.bookLayoutProfile = bookProfile;
     const payload = {
       format: "book-ocr-studio-layout-diagnostics-v1",
       buildVersion: BUILD_VERSION,
@@ -1657,6 +1668,7 @@
     )) return 0;
 
     const bookProfile = buildBookLayoutProfile(eligible);
+    state.bookLayoutProfile = bookProfile;
     let rebuiltCount = 0;
     state.pages.forEach(page => {
       if (!Array.isArray(page.layoutLines) || !page.layoutLines.length) return;
@@ -1672,7 +1684,7 @@
     renderReview();
     refreshParagraphRebuildUi();
     const profileNote = bookProfile?.indentCount
-      ? ` Learned body/indent lanes from ${bookProfile.learnedFromLines} OCR lines.`
+      ? ` Layout profile: body ${Math.round(bookProfile.bodyLeft)} / indent ${Math.round(bookProfile.indentLeft)} from ${bookProfile.learnedFromLines} OCR lines.`
       : " Used the best available body-margin profile.";
     setStatus(`Paragraph structure rebuilt on ${rebuiltCount} page${rebuiltCount === 1 ? "" : "s"} from saved OCR geometry. No OCR rerun was needed.${profileNote}`);
     return rebuiltCount;
@@ -1704,9 +1716,10 @@
       }
     }
 
-    // Once the batch exists as a whole, learn the book's recurring body and
-    // first-line-indent lanes and rebuild once from saved geometry. This avoids
-    // page-by-page margin drift without running OCR again.
+    // Once the batch exists as a whole, learn one authoritative profile and
+    // feed that exact object through rebuild, diagnostics, status, and export.
+    // This prevents helper/profile drift between code paths.
+    state.bookLayoutProfile = buildBookLayoutProfile(state.pages);
     rebuildParagraphsFromSavedGeometry({ confirmOverwrite: false });
     state.currentPageIndex = 0;
     state.reviewMode = "chapters";
