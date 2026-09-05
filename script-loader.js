@@ -1,9 +1,9 @@
-// Book OCR Studio 2.6.5 loader. Keeps the review-toggle compatibility patch.
+// Book OCR Studio 2.6.6 loader. Keeps the review-toggle compatibility patch.
 // Keeps the existing script.js intact, injects the two missing click handlers,
 // then runs the patched source.
 
 (async () => {
-  const response = await fetch("./script.js?v=2.6.5", { cache: "no-store" });
+  const response = await fetch("./script.js?v=2.6.6", { cache: "no-store" });
   if (!response.ok) {
     throw new Error(`Could not load script.js (${response.status})`);
   }
@@ -24,7 +24,7 @@
   }
 
   source = source.replace(anchor, replacement);
-  source += "\n//# sourceURL=book-ocr-studio-2.6.5.js";
+  source += "\n//# sourceURL=book-ocr-studio-2.6.6.js";
 
   (0, eval)(source);
 })().catch((err) => {
