@@ -69,4 +69,4 @@ Book OCR Studio 2.5.1 — Book-Level Paragraph Profile
 - Ellipsis normalization now treats existing Unicode ellipses and spaced/compact three-dot OCR forms consistently.
 
 
-v2.6.2: Added exportable italic diagnostics with per-line slant/gain scores for calibration against known italic source text.
+v2.6.3: Added exportable italic detection 2.0 diagnostics with per-line slant/gain scores for calibration against known italic source text.
