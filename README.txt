@@ -1,3 +1,9 @@
+Book OCR Studio 2.7.0 — Guided Repair + Regression
+
+Guided Repair runs the safe repair stages in the order that preserves source-geometry formatting: paragraph rebuild → conservative Auto Italics → Safe Text Cleanup → split-ligature repair → Dropcap Rescue. High-confidence dropcaps are accepted automatically; uncertain candidates remain for review.
+
+Run Regression Check is inspection-only and does not change the book. It checks continuity, paragraph sanity, cleanup, scene breaks, ligatures, layout geometry, dropcaps, and italic sanity. The IMG_2701–IMG_2720 reference set also gets its known 125/161-style layout-profile check.
+
 Book OCR Studio 2.2 Dropcap Rescue update
 
 Import a completed Book OCR Studio EPUB at the top of the app to scan and repair chapter-opening drop caps without rerunning OCR. Existing browser checkpoints remain compatible and are not cleared by this update.

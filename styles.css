@@ -543,3 +543,15 @@ dialog::backdrop { background: rgba(30,25,20,.48); backdrop-filter: blur(5px); }
   .nav-row { grid-template-columns: 1fr 1fr; }
   .nav-row .button { font-size: .74rem !important; padding-inline: 5px !important; }
 }
+
+
+/* v2.7.0 guided repair + regression */
+.guided-repair-card { border-color: #cdb8dc; background: linear-gradient(135deg, rgba(255,255,255,.94), rgba(246,239,251,.96)); }
+.regression-card { background: rgba(250,248,252,.92); }
+.advanced-label { margin: 18px 0 8px; }
+.regression-results { margin-top: 12px; display: grid; gap: 7px; }
+.regression-row { display: grid; grid-template-columns: 24px minmax(0,1fr); gap: 8px; align-items: start; padding: 8px 10px; border-radius: 11px; background: #f5f1f7; font-size: .88rem; line-height: 1.35; }
+.regression-row.pass { background: #edf6ef; }
+.regression-row.fail { background: #fff1ed; }
+.regression-row.warn { background: #fff7df; }
+.regression-icon { font-weight: 900; text-align: center; }

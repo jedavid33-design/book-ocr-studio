@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.6.7-italic-conservative-final";
+  const BUILD_VERSION = "2.7.0-guided-repair-regression";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -22,6 +22,7 @@
     pageDropcapCandidate: null,
     pageDropcapImageUrl: "",
     bookLayoutProfile: null,
+    lastRegressionReport: null,
   };
 
   let PaddleOCRClass = null;
@@ -117,6 +118,11 @@
     rebuildParagraphs: $("rebuildParagraphs"),
     downloadLayoutDiagnostics: $("downloadLayoutDiagnostics"),
     paragraphStatus: $("paragraphStatus"),
+    repairBook: $("repairBook"),
+    repairBookStatus: $("repairBookStatus"),
+    runRegression: $("runRegression"),
+    regressionStatus: $("regressionStatus"),
+    regressionResults: $("regressionResults"),
     epubInput: $("epubInput"),
     epubImportStatus: $("epubImportStatus"),
     dropcapSection: $("dropcapSection"),
@@ -2236,6 +2242,7 @@
     setStatus(count
       ? `Dropcap Rescue found ${count} chapter opening${count === 1 ? "" : "s"} to review. No OCR was run.`
       : "Dropcap Rescue found no likely missing drop caps. No text was changed and no OCR was run.");
+    return state.dropcapCandidates;
   }
 
   function replaceLocalParagraph(candidate, replacement) {
@@ -2686,9 +2693,11 @@
       saveCheckpoint();
       if (els.italicStatus) els.italicStatus.textContent = `${markedRuns} run${markedRuns === 1 ? "" : "s"} · ${markedWords} words`;
       setStatus(`Automatic italic scan 2.4 checked ${scannedWords} words across ${scannedLines} OCR lines and marked ${markedRuns} hybrid run${markedRuns === 1 ? "" : "s"} (${markedWords} words). Full-line italics use line typography; inline runs must beat both same-line and surrounding-line baselines.`);
+      return { markedRuns, markedWords, scannedWords, scannedLines };
     } catch (err) {
       console.error(err);
       setStatus(`Automatic italic scan failed: ${err.message || err}`);
+      return null;
     } finally {
       els.autoItalicScan.disabled = false;
       renderReview();
@@ -2766,6 +2775,169 @@
   }
 
 
+
+  function isReferenceTwentyPagePack() {
+    if (state.pages.length !== 20) return false;
+    const names = state.pages.map((page, index) => String(page.fileName || state.files[index]?.name || "").toUpperCase());
+    return names.every((name, index) => name.includes(`IMG_${2701 + index}`));
+  }
+
+  function renderRegressionReport(report) {
+    state.lastRegressionReport = report;
+    if (!els.regressionResults) return;
+    els.regressionResults.innerHTML = "";
+    els.regressionResults.classList.remove("hidden");
+    report.checks.forEach(check => {
+      const row = document.createElement("div");
+      row.className = `regression-row ${check.status}`;
+      const icon = document.createElement("div");
+      icon.className = "regression-icon";
+      icon.textContent = check.status === "pass" ? "✓" : check.status === "warn" ? "!" : "×";
+      const text = document.createElement("div");
+      const title = document.createElement("strong");
+      title.textContent = check.name;
+      const detail = document.createElement("div");
+      detail.textContent = check.detail;
+      text.append(title, detail);
+      row.append(icon, text);
+      els.regressionResults.appendChild(row);
+    });
+    const failed = report.checks.filter(c => c.status === "fail").length;
+    const warned = report.checks.filter(c => c.status === "warn").length;
+    if (els.regressionStatus) els.regressionStatus.textContent = failed ? `${failed} failed` : warned ? `PASS · ${warned} note${warned===1?"":"s"}` : "PASS";
+  }
+
+  function runRegressionCheck() {
+    syncCurrentEditor();
+    const checks = [];
+    const add = (name, status, detail) => checks.push({ name, status, detail });
+    const pages = state.pages;
+    if (!pages.length) {
+      add("Project loaded", "fail", "No processed pages are available to inspect.");
+      const report = { buildVersion: BUILD_VERSION, runAt: new Date().toISOString(), checks };
+      renderRegressionReport(report);
+      setStatus("Regression check cannot run until pages are processed.");
+      return report;
+    }
+
+    const emptyPages = pages.map((p,i) => normalizedPageText(p.text) ? -1 : i + 1).filter(n => n > 0);
+    add("Page continuity", emptyPages.length ? "fail" : "pass", emptyPages.length ? `Empty processed pages: ${emptyPages.join(", ")}.` : `${pages.length} processed pages contain text.`);
+
+    let duplicateAdjacent = 0;
+    for (let i=1;i<pages.length;i++) {
+      const a = stripItalicMarkers(normalizedPageText(pages[i-1].text));
+      const b = stripItalicMarkers(normalizedPageText(pages[i].text));
+      if (a && b && a === b) duplicateAdjacent++;
+    }
+    add("Adjacent duplicate pages", duplicateAdjacent ? "fail" : "pass", duplicateAdjacent ? `${duplicateAdjacent} adjacent page pair${duplicateAdjacent===1?"":"s"} contain identical text.` : "No exact adjacent duplicate-page text found.");
+
+    const paragraphs = pages.flatMap(p => exportParagraphs(p.text));
+    const largest = paragraphs.reduce((m,p) => Math.max(m, stripItalicMarkers(p).length), 0);
+    const giant = paragraphs.filter(p => stripItalicMarkers(p).length > 2000).length;
+    add("Paragraph reconstruction", giant ? "fail" : "pass", `${paragraphs.length} paragraph blocks; largest ${largest.toLocaleString()} characters${giant ? `; ${giant} giant block${giant===1?"":"s"} over 2,000 characters` : ""}.`);
+
+    const allText = pages.map(p => p.text || "").join("\n");
+    const rawEllipses = (allText.match(/(?:\.\s*){3}/g) || []).length;
+    const rawScene = (allText.match(/[①-⑳]/g) || []).length;
+    add("Safe cleanup normalization", rawEllipses || rawScene ? "fail" : "pass", rawEllipses || rawScene ? `${rawEllipses} unnormalized dot-ellipsis pattern${rawEllipses===1?"":"s"}; ${rawScene} raw circled scene marker${rawScene===1?"":"s"}.` : "No raw dot-ellipsis patterns or circled scene markers remain.");
+
+    const sceneBreaks = pages.reduce((n,p) => n + exportParagraphs(p.text).filter(x => x.trim() === "* * *").length, 0);
+    add("Scene breaks", sceneBreaks ? "pass" : "warn", sceneBreaks ? `${sceneBreaks} semantic scene break${sceneBreaks===1?"":"s"} found.` : "No semantic scene breaks found in this sample; that may be valid for the book.");
+
+    const repair = globalThis.BookOcrEpubPolish?.repairSplitLigatures;
+    let unresolvedLigatures = 0, ambiguousLigatures = 0;
+    if (typeof repair === "function") {
+      pages.forEach(page => {
+        const r = repair(page.text || "");
+        unresolvedLigatures += r.fixedCount || 0;
+        ambiguousLigatures += r.ambiguousCount || 0;
+      });
+      add("Split ligatures", unresolvedLigatures ? "fail" : "pass", unresolvedLigatures ? `${unresolvedLigatures} high-confidence repair${unresolvedLigatures===1?"":"s"} still available; ${ambiguousLigatures} uncertain candidate${ambiguousLigatures===1?"":"s"}.` : `No high-confidence split-ligature repairs remain; ${ambiguousLigatures} uncertain candidate${ambiguousLigatures===1?"":"s"} left untouched.`);
+    } else add("Split ligatures", "warn", "Ligature inspection helper is unavailable in this session.");
+
+    const layoutPages = pages.filter(p => Array.isArray(p.layoutLines) && p.layoutLines.length);
+    const profile = state.bookLayoutProfile || (layoutPages.length ? buildBookLayoutProfile(layoutPages) : null);
+    if (profile) {
+      const sane = Number.isFinite(profile.bodyLeft) && Number.isFinite(profile.indentLeft) && profile.indentLeft > profile.bodyLeft && (profile.indentLeft - profile.bodyLeft) >= Math.max(10, (profile.typicalH || 20) * 0.45);
+      add("Layout profile", sane ? "pass" : "fail", `${layoutPages.length}/${pages.length} layout pages · body ${Math.round(profile.bodyLeft)} / indent ${Math.round(profile.indentLeft)}.`);
+    } else add("Layout profile", "warn", "No saved OCR geometry is available for this project.");
+
+    const openings = likelyOpeningParagraphs();
+    const dropCandidates = openings.map((opening,index) => buildDropcapCandidate(opening,index+1)).filter(Boolean);
+    const highDropcaps = dropCandidates.filter(c => c.confidence === "high").length;
+    add("Dropcap Rescue", highDropcaps ? "fail" : (dropCandidates.length ? "warn" : "pass"), highDropcaps ? `${highDropcaps} high-confidence dropcap repair${highDropcaps===1?"":"s"} still pending.` : dropCandidates.length ? `${dropCandidates.length} uncertain opening candidate${dropCandidates.length===1?"":"s"} remains for review.` : "No likely missing dropcaps detected.");
+
+    const italicRuns = [];
+    let markedWords = 0, scoredWords = 0;
+    pages.forEach(page => (page.layoutLines || []).forEach(line => {
+      (line.italicWordMeta || []).forEach(w => { scoredWords++; if (w.italic) markedWords++; });
+      (line.italicRunMeta || []).filter(r => r.accepted).forEach(r => italicRuns.push(r));
+    }));
+    if (scoredWords) {
+      const badShortInline = italicRuns.filter(r => r.route === "inline" && (r.wordCount || 0) < 3).length;
+      const ratio = markedWords / scoredWords;
+      const status = badShortInline || ratio > 0.02 ? "fail" : "pass";
+      add("Italic sanity", status, `${italicRuns.length} accepted run${italicRuns.length===1?"":"s"}, ${markedWords}/${scoredWords} scored words marked${badShortInline ? `; ${badShortInline} short inline run${badShortInline===1?"":"s"} violated the 3-word rule` : ""}.`);
+    } else add("Italic sanity", "warn", "Auto Italic Scan has not been run for this project.");
+
+    if (isReferenceTwentyPagePack() && profile) {
+      const bodyOk = profile.bodyLeft >= 115 && profile.bodyLeft <= 135;
+      const indentOk = profile.indentLeft >= 150 && profile.indentLeft <= 170;
+      const sceneOk = sceneBreaks >= 1;
+      add("20-page reference pack", bodyOk && indentOk && sceneOk ? "pass" : "fail", `IMG_2701–IMG_2720 recognized · expected body ≈125 / indent ≈161; got ${Math.round(profile.bodyLeft)} / ${Math.round(profile.indentLeft)}; scene breaks ${sceneBreaks}.`);
+    }
+
+    const report = { buildVersion: BUILD_VERSION, runAt: new Date().toISOString(), pageCount: pages.length, checks };
+    renderRegressionReport(report);
+    const failed = checks.filter(c => c.status === "fail").length;
+    const warned = checks.filter(c => c.status === "warn").length;
+    setStatus(failed ? `Regression check found ${failed} failure${failed===1?"":"s"} and ${warned} note${warned===1?"":"s"}. Nothing was changed.` : `Regression check PASS${warned ? ` with ${warned} note${warned===1?"":"s"}` : ""}. Nothing was changed.`);
+    return report;
+  }
+
+  async function repairBookGuided() {
+    if (!state.pages.length || state.processing) {
+      setStatus("Process or import a book before running Guided Repair.");
+      return;
+    }
+    const originalLabel = els.repairBook?.textContent || "Repair Book";
+    if (els.repairBook) { els.repairBook.disabled = true; els.repairBook.textContent = "Repairing…"; }
+    if (els.repairBookStatus) els.repairBookStatus.textContent = "Working…";
+    try {
+      syncCurrentEditor();
+      setStatus("Guided Repair 1/5 · Rebuilding paragraph structure…");
+      const rebuiltCount = rebuildParagraphsFromSavedGeometry({ confirmOverwrite: false });
+
+      setStatus("Guided Repair 2/5 · Scanning conservative italics…");
+      const italics = await autoScanItalics();
+
+      setStatus("Guided Repair 3/5 · Applying safe text cleanup…");
+      const polishStats = applySafePolishToProject() || { fixedCount:0 };
+
+      setStatus("Guided Repair 4/5 · Repairing high-confidence split ligatures…");
+      const ligatureStats = runSplitLigaturePolish() || { fixedCount:0, ambiguousCount:0 };
+
+      setStatus("Guided Repair 5/5 · Running Dropcap Rescue…");
+      scanDropcaps();
+      const high = state.dropcapCandidates.filter(c => c.status === "pending" && c.confidence === "high");
+      high.forEach(candidate => applyDropcap(candidate, candidate.proposed));
+      const remaining = state.dropcapCandidates.filter(c => c.status === "pending").length;
+      saveCheckpoint();
+      renderReview();
+      renderDropcapResults();
+
+      if (els.repairBookStatus) els.repairBookStatus.textContent = remaining ? `Done · ${remaining} review` : "Done";
+      setStatus(`Guided Repair complete: ${rebuiltCount} pages rebuilt, ${italics?.markedRuns || 0} italic run${italics?.markedRuns === 1 ? "" : "s"}, ${polishStats.fixedCount || 0} safe cleanup fix${polishStats.fixedCount === 1 ? "" : "es"}, ${ligatureStats.fixedCount || 0} split ligature${ligatureStats.fixedCount === 1 ? "" : "s"}, ${high.length} high-confidence dropcap${high.length === 1 ? "" : "s"} accepted${remaining ? `, and ${remaining} uncertain dropcap candidate${remaining===1?"":"s"} left for review` : ""}.`);
+    } catch (err) {
+      console.error(err);
+      if (els.repairBookStatus) els.repairBookStatus.textContent = "Stopped";
+      setStatus(`Guided Repair stopped safely: ${err.message || err}`);
+    } finally {
+      if (els.repairBook) { els.repairBook.disabled = false; els.repairBook.textContent = originalLabel; }
+      updateNavigationControls();
+    }
+  }
+
   function applySafePolishToProject() {
     const polish = globalThis.BookOcrEpubPolish?.safePolishText;
     if (typeof polish !== "function") {
@@ -2789,6 +2961,7 @@
     renderReview();
     if (els.polishStatus) els.polishStatus.textContent = `${fixedCount} safe fix${fixedCount === 1 ? "" : "es"}`;
     setStatus(`Safe text cleanup applied ${ellipsisCount} ellipsis normalization${ellipsisCount === 1 ? "" : "s"}, ${sceneCount} scene-divider normalization${sceneCount === 1 ? "" : "s"}, and ${quoteCount} obvious dialogue-quote repair${quoteCount === 1 ? "" : "s"}. No spelling or prose rewrites were performed.`);
+    return { fixedCount, ellipsisCount, sceneCount, quoteCount };
   }
 
   function repairTextNodesInParagraph(paragraph, repair) {
@@ -2844,6 +3017,7 @@
     const ambiguousLabel = `${ambiguousCount} uncertain candidate${ambiguousCount === 1 ? "" : "s"} left unchanged`;
     els.ligatureStatus.textContent = `${fixedCount} fixed`;
     setStatus(`${fixedLabel}; ${ambiguousLabel}. No OCR was run.`);
+    return { fixedCount, ambiguousCount };
   }
 
   function downloadBlob(blob, filename) {
@@ -3163,6 +3337,8 @@ ${coverSpine}${spine.join("\n")}
 
   els.downloadTxt.addEventListener("click", downloadTxt);
   els.downloadEpub.addEventListener("click", downloadEpub);
+  els.repairBook?.addEventListener("click", repairBookGuided);
+  els.runRegression?.addEventListener("click", runRegressionCheck);
   els.safePolish?.addEventListener("click", applySafePolishToProject);
   els.autoItalicScan?.addEventListener("click", autoScanItalics);
   els.downloadItalicDiagnostics?.addEventListener("click", downloadItalicDiagnostics);

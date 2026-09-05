@@ -12,12 +12,12 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=2.6.7" />
+  <link rel="stylesheet" href="styles.css?v=2.7.0" />
 </head>
 <body>
   <header class="topbar">
     <div>
-      <p class="eyebrow">LOCAL BOOK TOOL · 2.6.7 · Italic Conservative Final</p>
+      <p class="eyebrow">LOCAL BOOK TOOL · 2.7.0 · Guided Repair + Regression</p>
       <h1>Book OCR Studio</h1>
       <p class="subhead">Crop screenshots, OCR them one page at a time, batch OCR the whole book, review chapter starts or any page, and export TXT or EPUB.</p>
     </div>
@@ -165,7 +165,25 @@
     </section>
 
     <section class="card hidden" id="exportSection">
-      <h2>7. Export</h2>
+      <h2>7. Repair + Export</h2>
+      <div class="subcard guided-repair-card">
+        <h3>Guided Repair</h3>
+        <p class="hint">One pass through the safe, proven repair pipeline. Studio rebuilds paragraph structure first, applies conservative italics while source geometry is still authoritative, then runs safe cleanup, split-ligature repair, and Dropcap Rescue. High-confidence dropcaps are accepted automatically; anything uncertain stays for review.</p>
+        <div class="actions">
+          <button id="repairBook" class="button primary" type="button">Repair Book</button>
+          <span id="repairBookStatus" class="progress-pill">Ready</span>
+        </div>
+      </div>
+      <div class="subcard regression-card">
+        <h3>Regression Check</h3>
+        <p class="hint">Inspection only. Checks paragraph sanity, text continuity, cleanup normalization, scene breaks, split ligatures, layout geometry, dropcaps, and italic sanity without changing the book. The original 20-page IMG_2701–IMG_2720 test set also gets its known layout-profile checks.</p>
+        <div class="actions">
+          <button id="runRegression" class="button secondary" type="button">Run Regression Check</button>
+          <span id="regressionStatus" class="progress-pill">Not run</span>
+        </div>
+        <div id="regressionResults" class="regression-results hidden"></div>
+      </div>
+      <p class="hint advanced-label"><strong>Advanced / Individual Repairs</strong> · Use these when you want to inspect or rerun one stage manually.</p>
       <div class="subcard">
         <h3>Paragraph Reconstruction</h3>
         <p class="hint">PaddleOCR now saves line positions and uses first-line indentation as primary paragraph evidence. Rebuild from saved geometry later without re-running OCR. Rebuilding replaces current page text, so do it before manual text edits.</p>
@@ -236,8 +254,8 @@
   </dialog>
 
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
-  <script src="epub-polish.js?v=2.6.7"></script>
-  <script src="script-loader.js?v=2.6.7"></script>
+  <script src="epub-polish.js?v=2.7.0"></script>
+  <script src="script-loader.js?v=2.7.0"></script>
   <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {

@@ -1,4 +1,10 @@
-# Book OCR Studio 2.5.0
+# Book OCR Studio 2.7.0
+
+## New in 2.7.0
+- Adds **Guided Repair**: one button runs paragraph rebuild, conservative Auto Italics, Safe Text Cleanup, split-ligature repair, then Dropcap Rescue. High-confidence dropcaps are accepted automatically; uncertain candidates remain for review.
+- Adds **Run Regression Check**, a read-only integrity pass for page continuity, duplicate pages, paragraph size, cleanup normalization, scene breaks, split ligatures, layout geometry, dropcaps, and italic sanity.
+- Recognizes the 20-page `IMG_2701`–`IMG_2720` reference pack and verifies its known body/indent geometry without embedding the source screenshots.
+- Keeps all individual repair controls available for debugging and manual use.
 
 ## New in 2.4.1
 - Tunes only Split Ligature Repair recall by adding nine confirmed ordinary English forms that the existing local allowlist omitted: `filthy`, `figured`, `firstborn`, `fists`, `fixated`, `figure`, `fitness`, `flushed`, and `fiercely`.
