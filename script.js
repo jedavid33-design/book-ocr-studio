@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.5.2-layout-diagnostics";
+  const BUILD_VERSION = "2.5.3-layout-diagnostics-download-fix";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -1594,7 +1594,7 @@
         layoutLines: Array.isArray(page.layoutLines) ? page.layoutLines : [],
       })),
     };
-    const safeTitle = safeFilename(els.bookTitle?.value || "book");
+    const safeTitle = cleanFilename(els.bookTitle?.value || "book");
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
