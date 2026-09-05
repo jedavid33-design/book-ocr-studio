@@ -1,4 +1,9 @@
-// Book OCR Studio 2.7.1-native-review"./script.js?v=2.7.1-native-review", { cache: "no-store" });
+// Book OCR Studio 2.7.1 review1 loader. Keeps the review-toggle compatibility patch.
+// Keeps the existing script.js intact, injects the two missing click handlers,
+// then runs the patched source.
+
+(async () => {
+  const response = await fetch("./script.js?v=2.7.1-native-review-loaderfix", { cache: "no-store" });
   if (!response.ok) {
     throw new Error(`Could not load script.js (${response.status})`);
   }
@@ -19,7 +24,7 @@
   }
 
   source = source.replace(anchor, replacement);
-  source += "\n//# sourceURL=book-ocr-studio-2.7.1-native-review";
+  source += "\n//# sourceURL=book-ocr-studio-2.7.1-native-review-loaderfix.js";
 
   (0, eval)(source);
 })().catch((err) => {
