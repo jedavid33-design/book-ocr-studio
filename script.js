@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.5.0-paragraph-reconstruction-2";
+  const BUILD_VERSION = "2.5.1-book-layout-profile";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -504,18 +504,79 @@
     return out.replace(/\s{2,}/g, " ").trim();
   }
 
-  function reconstructParagraphsFromLayout(layoutLines, { messageMode=false } = {}) {
+  function clusterLeftEdges(lines, tolerance) {
+    const clusters=[];
+    const sorted = lines
+      .filter(line => line?.text && line?.box && Number.isFinite(Number(line.box.x)))
+      .slice().sort((a,b) => a.box.x - b.box.x);
+    for (const line of sorted) {
+      const x = Number(line.box.x);
+      let cluster = clusters.find(c => Math.abs(x - c.center) <= tolerance);
+      if (!cluster) {
+        cluster = { xs: [], weight: 0, count: 0, center: x };
+        clusters.push(cluster);
+      }
+      cluster.xs.push(x);
+      cluster.count += 1;
+      cluster.weight += Math.min(100, Math.max(10, String(line.text || "").trim().length));
+      cluster.center = median(cluster.xs);
+    }
+    return clusters;
+  }
+
+  function buildBookLayoutProfile(pages) {
+    const allLines = (pages || []).flatMap(page => Array.isArray(page?.layoutLines) ? page.layoutLines : [])
+      .filter(line => line?.text && line?.box && String(line.text).trim());
+    if (allLines.length < 8) return null;
+
+    const typicalH = median(allLines.map(line => Number(line.box.h)).filter(h => h > 2)) || 28;
+    const tolerance = Math.max(7, typicalH * 0.32);
+    const clusters = clusterLeftEdges(allLines, tolerance)
+      .filter(c => c.count >= 2)
+      .sort((a,b) => a.center - b.center);
+    if (!clusters.length) return null;
+
+    // The body lane is the strongest recurring left edge. The paragraph-indent
+    // lane is the strongest recurring lane a modest distance to its right.
+    const body = clusters.slice().sort((a,b) => b.weight - a.weight || b.count - a.count)[0];
+    const minIndentDelta = Math.max(10, typicalH * 0.30);
+    const maxIndentDelta = Math.max(42, typicalH * 2.4);
+    const indentCandidates = clusters.filter(c => {
+      const delta = c.center - body.center;
+      return delta >= minIndentDelta && delta <= maxIndentDelta && c.count >= 3;
+    });
+    const indent = indentCandidates.sort((a,b) => b.weight - a.weight || b.count - a.count)[0] || null;
+    const indentDelta = indent ? indent.center - body.center : Math.max(14, typicalH * 0.58);
+
+    return {
+      bodyLeft: body.center,
+      indentLeft: indent ? indent.center : body.center + indentDelta,
+      indentDelta,
+      typicalH,
+      laneTolerance: Math.max(6, Math.min(tolerance, indentDelta * 0.38)),
+      learnedFromLines: allLines.length,
+      bodyCount: body.count,
+      indentCount: indent?.count || 0,
+    };
+  }
+
+  function reconstructParagraphsFromLayout(layoutLines, { messageMode=false, bookProfile=null } = {}) {
     const lines = Array.isArray(layoutLines) ? layoutLines.filter(line => line?.text && line?.box) : [];
     if (!lines.length) return { text: "", paragraphs: [], meta: null };
 
-    const typicalH = median(lines.map(line => Number(line.box.h)).filter(h => h > 2)) || 28;
+    const typicalH = bookProfile?.typicalH || median(lines.map(line => Number(line.box.h)).filter(h => h > 2)) || 28;
     const minX = Math.min(...lines.map(line => line.box.x));
     const maxRight = Math.max(...lines.map(line => line.box.x + line.box.w));
     const pageWidth = Math.max(1, maxRight - Math.min(0, minX));
     const pageCenter = (Math.min(0, minX) + maxRight) / 2;
-    const bodyLeft = dominantBodyLeft(lines, typicalH, pageWidth);
-    const indentThreshold = Math.max(12, typicalH * 0.58);
-    const strongIndentThreshold = Math.max(18, typicalH * 0.82);
+    const bodyLeft = Number.isFinite(bookProfile?.bodyLeft) ? bookProfile.bodyLeft : dominantBodyLeft(lines, typicalH, pageWidth);
+    const learnedIndentLeft = Number.isFinite(bookProfile?.indentLeft) ? bookProfile.indentLeft : null;
+    const indentThreshold = learnedIndentLeft !== null
+      ? Math.max(8, (learnedIndentLeft - bodyLeft) * 0.48)
+      : Math.max(12, typicalH * 0.58);
+    const strongIndentThreshold = learnedIndentLeft !== null
+      ? Math.max(indentThreshold + 4, (learnedIndentLeft - bodyLeft) * 0.78)
+      : Math.max(18, typicalH * 0.82);
     const gapThreshold = messageMode ? typicalH * 0.58 : typicalH * 0.92;
 
     const paragraphs=[];
@@ -568,9 +629,11 @@
       paragraphs,
       meta: {
         bodyLeft,
+        indentLeft: learnedIndentLeft,
         typicalH,
         indentThreshold,
         pageWidth,
+        bookProfileUsed: !!bookProfile,
         firstStartsIndented: paragraphs[0]?.startsIndented ?? false,
         firstIsFurniture: !!(paragraphs[0]?.scene || paragraphs[0]?.centered),
         lastIsFurniture: !!(paragraphs.at(-1)?.scene || paragraphs.at(-1)?.centered),
@@ -1512,10 +1575,11 @@
       "This uses the saved PaddleOCR line geometry and replaces the current page text on those pages. Run it before manual text edits, or export a copy first."
     )) return 0;
 
+    const bookProfile = buildBookLayoutProfile(eligible);
     let rebuiltCount = 0;
     state.pages.forEach(page => {
       if (!Array.isArray(page.layoutLines) || !page.layoutLines.length) return;
-      const rebuilt = reconstructParagraphsFromLayout(page.layoutLines, { messageMode: false });
+      const rebuilt = reconstructParagraphsFromLayout(page.layoutLines, { messageMode: false, bookProfile });
       if (!rebuilt.text) return;
       page.text = cleanBodyText(rebuilt.text);
       page.layoutMeta = rebuilt.meta;
@@ -1526,7 +1590,10 @@
     saveCheckpoint();
     renderReview();
     refreshParagraphRebuildUi();
-    setStatus(`Paragraph structure rebuilt on ${rebuiltCount} page${rebuiltCount === 1 ? "" : "s"} from saved OCR geometry. No OCR rerun was needed.`);
+    const profileNote = bookProfile?.indentCount
+      ? ` Learned body/indent lanes from ${bookProfile.learnedFromLines} OCR lines.`
+      : " Used the best available body-margin profile.";
+    setStatus(`Paragraph structure rebuilt on ${rebuiltCount} page${rebuiltCount === 1 ? "" : "s"} from saved OCR geometry. No OCR rerun was needed.${profileNote}`);
     return rebuiltCount;
   }
 
@@ -1556,13 +1623,17 @@
       }
     }
 
+    // Once the batch exists as a whole, learn the book's recurring body and
+    // first-line-indent lanes and rebuild once from saved geometry. This avoids
+    // page-by-page margin drift without running OCR again.
+    rebuildParagraphsFromSavedGeometry({ confirmOverwrite: false });
     state.currentPageIndex = 0;
     state.reviewMode = "chapters";
     saveCheckpoint();
     renderReview();
     refreshParagraphRebuildUi();
     const chapters = reviewIndices().length;
-    setStatus(`Batch OCR complete: ${state.pages.length} pages processed. Showing ${chapters} detected chapter start page${chapters === 1 ? "" : "s"} for review.`);
+    setStatus(`Batch OCR complete: ${state.pages.length} pages processed. Book-level paragraph profile applied automatically. Showing ${chapters} detected chapter start page${chapters === 1 ? "" : "s"} for review.`);
   }
 
   async function goToPreviousPage() {

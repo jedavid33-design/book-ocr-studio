@@ -52,7 +52,10 @@ PaddleOCR build with a fresh-reprocess control.
 Use the new restart button after selecting the same screenshot batch, then process page 1 and continue through the book with PaddleOCR.
 
 
-Book OCR Studio 2.5.0 — Paragraph Reconstruction 2.0
+Book OCR Studio 2.5.1 — Book-Level Paragraph Profile
+- Learns one body-margin lane and one first-line-indent lane across the OCRed book.
+- Applies the learned profile automatically after batch OCR and during manual paragraph rebuilds.
+- Keeps punctuation as supporting evidence only; indentation remains the primary paragraph signal.
 - Uses dominant body-left geometry and first-line indentation to reconstruct paragraphs.
 - Indentation no longer requires preceding sentence punctuation.
 - Saves PaddleOCR line geometry in the local checkpoint for no-re-OCR paragraph rebuilding.
