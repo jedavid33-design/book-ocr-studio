@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.1-dropcap-ligature-review-hotfix2";
+  const BUILD_VERSION = "2.7.1-dropcap-inline-ligature-review";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -23,6 +23,7 @@
     pageDropcapImageUrl: "",
     bookLayoutProfile: null,
     lastRegressionReport: null,
+    ignoredLigatureCandidates: new Set(),
   };
 
   let PaddleOCRClass = null;
@@ -116,11 +117,10 @@
     repairLigatures: $("repairLigatures"),
     ligatureStatus: $("ligatureStatus"),
     reviewLigatures: $("reviewLigatures"),
-    ligatureReviewDialog: $("ligatureReviewDialog"),
+    ligatureReviewInline: $("ligatureReviewInline"),
     ligatureReviewSummary: $("ligatureReviewSummary"),
     ligatureReviewList: $("ligatureReviewList"),
-    closeLigatureReview: $("closeLigatureReview"),
-    doneLigatureReview: $("doneLigatureReview"),
+    closeLigatureReviewInline: $("closeLigatureReviewInline"),
     rebuildParagraphs: $("rebuildParagraphs"),
     downloadLayoutDiagnostics: $("downloadLayoutDiagnostics"),
     paragraphStatus: $("paragraphStatus"),
@@ -3003,6 +3003,10 @@
     return { fixedCount, ambiguousCount };
   }
 
+  function ligatureCandidateKey(candidate, pageIndex) {
+    return `${pageIndex}|${candidate.index}|${candidate.original}|${candidate.joined}`;
+  }
+
   function collectUncertainLigatures() {
     const list = globalThis.BookOcrEpubPolish?.listSplitLigatureCandidates;
     if (!list) return [];
@@ -3010,55 +3014,106 @@
     state.pages.forEach((page, pageIndex) => {
       const text = page.text || "";
       list(text).forEach(candidate => {
+        const key = ligatureCandidateKey(candidate, pageIndex);
+        if (state.ignoredLigatureCandidates?.has(key)) return;
         const start = Math.max(0, candidate.index - 55);
         const end = Math.min(text.length, candidate.index + candidate.original.length + 55);
-        found.push({ ...candidate, pageIndex, fileName: page.fileName || `Page ${pageIndex + 1}`, context: text.slice(start, end).replace(/\s+/g, " ").trim() });
+        found.push({ ...candidate, key, pageIndex, fileName: page.fileName || `Page ${pageIndex + 1}`, context: text.slice(start, end).replace(/\s+/g, " ").trim() });
       });
     });
     return found;
   }
 
+  function updateLigatureReviewButton() {
+    const remaining = collectUncertainLigatures().length;
+    if (!els.reviewLigatures) return;
+    els.reviewLigatures.classList.toggle("hidden", remaining === 0);
+    els.reviewLigatures.textContent = `Review uncertain (${remaining})`;
+    if (remaining === 0 && els.ligatureReviewInline) {
+      els.ligatureReviewInline.classList.add("hidden");
+      els.reviewLigatures.setAttribute("aria-expanded", "false");
+    }
+  }
+
   function openLigatureReview() {
     syncCurrentEditor();
-    const candidates = collectUncertainLigatures();
-    setStatus(candidates.length ? `Opening ${candidates.length} uncertain split-ligature candidate${candidates.length===1?"":"s"} for review…` : "No uncertain split-ligature candidates remain.");
-    els.ligatureReviewSummary.textContent = candidates.length ? `${candidates.length} uncertain candidate${candidates.length===1?"":"s"}. Nothing changes unless you press Repair.` : "No uncertain split-ligature candidates remain.";
-    els.ligatureReviewList.innerHTML = "";
-    candidates.forEach((c, idx) => {
-      const item = document.createElement("div"); item.className = "ligature-review-item";
-      const safeContext = escapeHtml(c.context);
-      const markedContext = safeContext.replace(escapeHtml(c.original), `<span class="ligature-candidate">${escapeHtml(c.original)}</span>`);
-      item.innerHTML = `<strong>${escapeHtml(c.fileName)}</strong><p class="ligature-context">${markedContext}</p><p class="hint">Candidate: <b>${escapeHtml(c.original)}</b> → <b>${escapeHtml(c.joined)}</b> · ${escapeHtml(c.family || "ligature")} family</p><div class="actions"><button class="button ghost keep" type="button">Keep as-is</button><button class="button secondary repair" type="button">Repair</button></div>`;
-      item.querySelector(".keep").addEventListener("click", () => item.remove());
-      item.querySelector(".repair").addEventListener("click", () => {
-        const page = state.pages[c.pageIndex];
-        const pos = (page.text || "").indexOf(c.original);
-        if (pos >= 0) {
-          page.text = page.text.slice(0,pos) + c.joined + page.text.slice(pos + c.original.length);
-          saveCheckpoint(); renderReview();
-          item.remove();
-          setStatus(`Repaired uncertain split-ligature candidate “${c.original}” → “${c.joined}”.`);
-        }
-      });
-      els.ligatureReviewList.appendChild(item);
-    });
-    const dialog = els.ligatureReviewDialog;
-    if (!dialog) {
-      alert("The ligature review panel did not load. Refresh the app and try again.");
+
+    const panel = els.ligatureReviewInline;
+    if (!panel || !els.ligatureReviewList || !els.ligatureReviewSummary) {
+      setStatus("Ligature review panel is unavailable. Refresh the app and try again.");
       return;
     }
-    try {
-      if (typeof dialog.showModal === "function") {
-        if (!dialog.open) dialog.showModal();
-      } else {
-        dialog.setAttribute("open", "");
-      }
-    } catch (error) {
-      console.warn("showModal failed; using inline dialog fallback", error);
-      dialog.setAttribute("open", "");
-    }
-    dialog.classList.add("forced-open");
-    requestAnimationFrame(() => dialog.scrollIntoView({ behavior: "smooth", block: "start" }));
+
+    const candidates = collectUncertainLigatures();
+    els.ligatureReviewSummary.textContent = candidates.length
+      ? `${candidates.length} uncertain candidate${candidates.length===1?"":"s"}. Nothing changes unless you press Repair. Keep as-is dismisses that candidate for this session.`
+      : "No uncertain split-ligature candidates remain.";
+    els.ligatureReviewList.innerHTML = "";
+
+    candidates.forEach((c) => {
+      const item = document.createElement("div");
+      item.className = "ligature-review-item";
+      const safeContext = escapeHtml(c.context);
+      const markedContext = safeContext.replace(
+        escapeHtml(c.original),
+        `<span class="ligature-candidate">${escapeHtml(c.original)}</span>`
+      );
+
+      item.innerHTML = `<strong>${escapeHtml(c.fileName)}</strong>
+        <p class="ligature-context">${markedContext}</p>
+        <p class="hint">Candidate: <b>${escapeHtml(c.original)}</b> → <b>${escapeHtml(c.joined)}</b> · ${escapeHtml(c.family || "ligature")} family</p>
+        <div class="actions">
+          <button class="button ghost keep" type="button">Keep as-is</button>
+          <button class="button secondary repair" type="button">Repair</button>
+        </div>`;
+
+      item.querySelector(".keep").addEventListener("click", () => {
+        state.ignoredLigatureCandidates.add(c.key);
+        item.remove();
+        updateLigatureReviewButton();
+        const remaining = collectUncertainLigatures().length;
+        els.ligatureReviewSummary.textContent = remaining
+          ? `${remaining} uncertain candidate${remaining===1?"":"s"} remaining.`
+          : "All uncertain candidates reviewed.";
+        setStatus(`Kept “${c.original}” as-is.`);
+      });
+
+      item.querySelector(".repair").addEventListener("click", () => {
+        const page = state.pages[c.pageIndex];
+        const text = page?.text || "";
+        const exactAtIndex = text.slice(c.index, c.index + c.original.length) === c.original;
+        const pos = exactAtIndex ? c.index : text.indexOf(c.original);
+        if (pos >= 0) {
+          page.text = text.slice(0, pos) + c.joined + text.slice(pos + c.original.length);
+          saveCheckpoint();
+          renderReview();
+          item.remove();
+          updateLigatureReviewButton();
+          const remaining = collectUncertainLigatures().length;
+          els.ligatureReviewSummary.textContent = remaining
+            ? `${remaining} uncertain candidate${remaining===1?"":"s"} remaining.`
+            : "All uncertain candidates reviewed.";
+          setStatus(`Repaired uncertain split-ligature candidate “${c.original}” → “${c.joined}”.`);
+        } else {
+          setStatus(`Could not locate “${c.original}” again; rerun split-ligature inspection.`);
+        }
+      });
+
+      els.ligatureReviewList.appendChild(item);
+    });
+
+    panel.classList.remove("hidden");
+    els.reviewLigatures?.setAttribute("aria-expanded", "true");
+    setStatus(candidates.length
+      ? `Reviewing ${candidates.length} uncertain split-ligature candidate${candidates.length===1?"":"s"}.`
+      : "No uncertain split-ligature candidates remain.");
+
+    requestAnimationFrame(() => panel.scrollIntoView({ behavior: "smooth", block: "nearest" }));
+  }
+
+  function closeLigatureReviewInline() {
+    els.ligatureReviewInline?.classList.add("hidden");
+    els.reviewLigatures?.setAttribute("aria-expanded", "false");
   }
 
   function runSplitLigaturePolish() {
@@ -3098,7 +3153,7 @@
     const fixedLabel = `${fixedCount} high-confidence split ligature${fixedCount === 1 ? "" : "s"} repaired`;
     const ambiguousLabel = `${ambiguousCount} uncertain candidate${ambiguousCount === 1 ? "" : "s"} left unchanged`;
     els.ligatureStatus.textContent = `${fixedCount} fixed · ${ambiguousCount} review`;
-    if (els.reviewLigatures) { els.reviewLigatures.classList.toggle("hidden", ambiguousCount === 0); els.reviewLigatures.textContent = `Review uncertain (${ambiguousCount})`; }
+    updateLigatureReviewButton();
     setStatus(`${fixedLabel}; ${ambiguousLabel}. No OCR was run.`);
     return { fixedCount, ambiguousCount };
   }
@@ -3426,9 +3481,11 @@ ${coverSpine}${spine.join("\n")}
   els.autoItalicScan?.addEventListener("click", autoScanItalics);
   els.downloadItalicDiagnostics?.addEventListener("click", downloadItalicDiagnostics);
   els.repairLigatures.addEventListener("click", runSplitLigaturePolish);
-  els.reviewLigatures?.addEventListener("click", openLigatureReview);
-  els.closeLigatureReview?.addEventListener("click", () => els.ligatureReviewDialog.close());
-  els.doneLigatureReview?.addEventListener("click", () => els.ligatureReviewDialog.close());
+  els.reviewLigatures?.addEventListener("click", () => {
+    if (els.ligatureReviewInline?.classList.contains("hidden")) openLigatureReview();
+    else closeLigatureReviewInline();
+  });
+  els.closeLigatureReviewInline?.addEventListener("click", closeLigatureReviewInline);
   els.rebuildParagraphs?.addEventListener("click", () => rebuildParagraphsFromSavedGeometry({ confirmOverwrite: true }));
   els.downloadLayoutDiagnostics?.addEventListener("click", downloadLayoutDiagnostics);
   els.scanDropcaps.addEventListener("click", scanDropcaps);

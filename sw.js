@@ -1,4 +1,4 @@
-const CACHE_NAME = "book-ocr-studio-shell-v2-7-1-hotfix2";
+const CACHE_NAME = "book-ocr-studio-shell-v2-7-1-inline-review";
 const APP_SHELL = [
   "./styles.css?v=2.7.1-hotfix2",
   "./epub-polish.js?v=2.7.1-hotfix2",
