@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.5.0-epub-structure";
+  const BUILD_VERSION = "2.5.0-paragraph-reconstruction-2";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -106,6 +106,8 @@
     downloadEpub: $("downloadEpub"),
     repairLigatures: $("repairLigatures"),
     ligatureStatus: $("ligatureStatus"),
+    rebuildParagraphs: $("rebuildParagraphs"),
+    paragraphStatus: $("paragraphStatus"),
     epubInput: $("epubInput"),
     epubImportStatus: $("epubImportStatus"),
     dropcapSection: $("dropcapSection"),
@@ -178,6 +180,8 @@
           chapterCandidate: !!p.chapterCandidate,
           chapterStart: !!p.chapterStart,
           chapterTitle: p.chapterTitle || "",
+          layoutLines: Array.isArray(p.layoutLines) ? p.layoutLines : [],
+          layoutMeta: p.layoutMeta || null,
         })),
       };
       localStorage.setItem(CHECKPOINT_KEY, JSON.stringify(payload));
@@ -315,6 +319,8 @@
         chapterCandidate: !!page.chapterCandidate,
         chapterStart: page.chapterStart != null ? !!page.chapterStart : !!page.chapterCandidate,
         chapterTitle: page.chapterTitle || "",
+        layoutLines: Array.isArray(page.layoutLines) ? page.layoutLines : [],
+        layoutMeta: page.layoutMeta || null,
       };
     }).filter(Boolean);
 
@@ -424,34 +430,159 @@
       .sort((a,b) => (a.box.cy-b.box.cy) || (a.box.x-b.box.x));
   }
 
-  function paddleItemsToText(items, { messageMode=false } = {}) {
+  function mergeSameRowLines(items) {
     const lines = normalizePaddleItems(items);
-    if (!lines.length) return "";
-    const heights = lines.map(x => x.box.h).filter(h => h > 2);
-    const typicalH = median(heights) || 28;
-    const lefts = lines.map(x => x.box.x).filter(Number.isFinite);
-    const bodyLeft = median(lefts) || 0;
-    const out=[];
-    let prev=null;
+    if (!lines.length) return [];
+    const typicalH = median(lines.map(x => x.box.h).filter(h => h > 2)) || 28;
+    const merged=[];
     for (const line of lines) {
-      if (prev) {
-        const verticalGap = line.box.y - (prev.box.y + prev.box.h);
-        const sameVisualRow = Math.abs(line.box.cy-prev.box.cy) <= typicalH * 0.48;
-        if (sameVisualRow) {
-          out[out.length-1] = `${out[out.length-1]} ${line.text}`.replace(/\s{2,}/g," ").trim();
-          prev=line;
-          continue;
-        }
-        const blankThreshold = messageMode ? typicalH * 0.58 : typicalH * 0.88;
-        const visiblyIndented = !messageMode && line.box.x > bodyLeft + typicalH * 0.72;
-        const previousLooksComplete = /[.!?][”"')\]]?$/.test(prev.text.trim());
-        const paragraphIndent = visiblyIndented && previousLooksComplete;
-        if (verticalGap > blankThreshold || paragraphIndent) out.push("");
+      const prev = merged[merged.length - 1];
+      if (prev && Math.abs(line.box.cy - prev.box.cy) <= typicalH * 0.48) {
+        const right = Math.max(prev.box.x + prev.box.w, line.box.x + line.box.w);
+        const bottom = Math.max(prev.box.y + prev.box.h, line.box.y + line.box.h);
+        prev.text = `${prev.text} ${line.text}`.replace(/\s{2,}/g, " ").trim();
+        prev.box.w = right - prev.box.x;
+        prev.box.h = bottom - prev.box.y;
+        prev.box.cx = prev.box.x + prev.box.w / 2;
+        prev.box.cy = prev.box.y + prev.box.h / 2;
+        prev.score = Math.min(prev.score, line.score);
+      } else {
+        merged.push({ text: line.text, score: line.score, box: { ...line.box } });
       }
-      out.push(line.text);
-      prev=line;
     }
-    return out.join("\n").replace(/\n{3,}/g,"\n\n").trim();
+    return merged;
+  }
+
+  function dominantBodyLeft(lines, typicalH, pageWidth) {
+    const candidates = lines.filter(line => {
+      const t = line.text.trim();
+      if (t.length < 8) return false;
+      if (/^(?:chapter\b|prologue\b|epilogue\b|interlude\b)/i.test(t)) return false;
+      if (/^(?:\*{3,}|[-–—]{3,}|[•·◆◇❖✦⁂]+)$/.test(t)) return false;
+      return line.box.w >= pageWidth * 0.22;
+    });
+    const pool = candidates.length >= 4 ? candidates : lines;
+    const tolerance = Math.max(8, typicalH * 0.45);
+    const clusters=[];
+    [...pool].sort((a,b)=>a.box.x-b.box.x).forEach(line => {
+      let cluster = clusters.find(c => Math.abs(c.center - line.box.x) <= tolerance);
+      if (!cluster) {
+        cluster = { xs: [], weight: 0, center: line.box.x };
+        clusters.push(cluster);
+      }
+      cluster.xs.push(line.box.x);
+      cluster.weight += Math.min(120, Math.max(12, line.text.length));
+      cluster.center = median(cluster.xs);
+    });
+    if (!clusters.length) return Math.min(...lines.map(line => line.box.x));
+    clusters.sort((a,b) => b.weight - a.weight || a.center - b.center);
+    return clusters[0].center;
+  }
+
+  function isSceneMarkerText(text) {
+    return /^(?:\*{3,}|[-–—]{3,}|[•·◆◇❖✦⁂]+)$/.test(String(text || "").trim());
+  }
+
+  function isCenteredShortLine(line, pageWidth, pageCenter) {
+    const text = line.text.trim();
+    if (!text || text.length > 55 || line.box.w > pageWidth * 0.68) return false;
+    return Math.abs(line.box.cx - pageCenter) <= pageWidth * 0.09;
+  }
+
+  function joinParagraphLines(parts) {
+    let out = "";
+    for (const raw of parts) {
+      const text = String(raw || "").trim();
+      if (!text) continue;
+      if (!out) { out = text; continue; }
+      if (/[A-Za-z]{2,}-$/.test(out) && /^[a-z]/.test(text)) {
+        out = out.slice(0, -1) + text;
+      } else {
+        out += ` ${text}`;
+      }
+    }
+    return out.replace(/\s{2,}/g, " ").trim();
+  }
+
+  function reconstructParagraphsFromLayout(layoutLines, { messageMode=false } = {}) {
+    const lines = Array.isArray(layoutLines) ? layoutLines.filter(line => line?.text && line?.box) : [];
+    if (!lines.length) return { text: "", paragraphs: [], meta: null };
+
+    const typicalH = median(lines.map(line => Number(line.box.h)).filter(h => h > 2)) || 28;
+    const minX = Math.min(...lines.map(line => line.box.x));
+    const maxRight = Math.max(...lines.map(line => line.box.x + line.box.w));
+    const pageWidth = Math.max(1, maxRight - Math.min(0, minX));
+    const pageCenter = (Math.min(0, minX) + maxRight) / 2;
+    const bodyLeft = dominantBodyLeft(lines, typicalH, pageWidth);
+    const indentThreshold = Math.max(12, typicalH * 0.58);
+    const strongIndentThreshold = Math.max(18, typicalH * 0.82);
+    const gapThreshold = messageMode ? typicalH * 0.58 : typicalH * 0.92;
+
+    const paragraphs=[];
+    let current=[];
+    let currentMeta=null;
+    const flush = () => {
+      if (!current.length) return;
+      const text = joinParagraphLines(current);
+      if (text) paragraphs.push({ text, ...currentMeta });
+      current=[];
+      currentMeta=null;
+    };
+
+    lines.forEach((line, index) => {
+      const prev = index ? lines[index - 1] : null;
+      const text = line.text.trim();
+      const scene = isSceneMarkerText(text);
+      const centered = isCenteredShortLine(line, pageWidth, pageCenter);
+      const indent = line.box.x - bodyLeft;
+      const indented = indent >= indentThreshold;
+      const stronglyIndented = indent >= strongIndentThreshold;
+      const verticalGap = prev ? line.box.y - (prev.box.y + prev.box.h) : 0;
+      const largeGap = !!prev && verticalGap > gapThreshold;
+      const chapterish = /^(?:chapter\b|prologue\b|epilogue\b|interlude\b|\d{1,3}$)/i.test(text);
+
+      // A visible first-line indent is primary paragraph evidence. Do not make
+      // it depend on OCR punctuation from the preceding line.
+      const startsParagraph = !current.length || largeGap || scene || chapterish || centered || stronglyIndented || (indented && text.length > 1);
+
+      if (startsParagraph && current.length) flush();
+      if (!current.length) {
+        currentMeta = {
+          firstLineX: line.box.x,
+          startsIndented: indented && !centered,
+          scene,
+          centered,
+          y: line.box.y,
+        };
+      }
+      current.push(text);
+
+      // Standalone visual furniture should never absorb the prose beneath it.
+      if (scene || chapterish || centered) flush();
+    });
+    flush();
+
+    const text = paragraphs.map(p => p.text).join("\n\n");
+    return {
+      text,
+      paragraphs,
+      meta: {
+        bodyLeft,
+        typicalH,
+        indentThreshold,
+        pageWidth,
+        firstStartsIndented: paragraphs[0]?.startsIndented ?? false,
+        firstIsFurniture: !!(paragraphs[0]?.scene || paragraphs[0]?.centered),
+        lastIsFurniture: !!(paragraphs.at(-1)?.scene || paragraphs.at(-1)?.centered),
+      }
+    };
+  }
+
+  function paddleItemsToText(items, { messageMode=false } = {}) {
+    const layoutLines = mergeSameRowLines(items);
+    if (!layoutLines.length) return { text: "", layoutLines: [], layoutMeta: null };
+    const rebuilt = reconstructParagraphsFromLayout(layoutLines, { messageMode });
+    return { text: rebuilt.text, layoutLines, layoutMeta: rebuilt.meta };
   }
 
   async function paddleRecognizeCanvas(canvas, { messageMode=false } = {}) {
@@ -464,7 +595,8 @@
       textDetUnclipRatio: messageMode ? 1.7 : 1.5,
       textRecScoreThresh: 0.35
     });
-    return { text: paddleItemsToText(result?.items, { messageMode }), result };
+    const structured = paddleItemsToText(result?.items, { messageMode });
+    return { text: structured.text, layoutLines: structured.layoutLines, layoutMeta: structured.layoutMeta, result };
   }
 
   function loadImageFromFile(file) {
@@ -663,41 +795,7 @@
     return normalized
       .split(/\n{2,}/)
       .map(block => block.split("\n").map(line => line.trim()).filter(Boolean).join(" ").trim())
-      .map(paragraph => paragraph.replace(/([A-Za-z]{2,})-\s+([a-z]{2,})\b/g, "$1$2"))
       .filter(Boolean);
-  }
-
-  function looksLikePageContinuation(previous, next) {
-    const a = String(previous || "").trim();
-    const b = String(next || "").trim();
-    if (!a || !b) return false;
-    if (/^(?:chapter\b|prologue\b|epilogue\b|interlude\b|\d{1,3}$)/i.test(b)) return false;
-    if (/^(?:[*•◆◇❦⁂]|-{3,}|_{3,})/.test(b)) return false;
-    if (/^[“"']?[A-Z][A-Z\s.'&-]{2,24}$/.test(b)) return false;
-    // A sentence plainly unfinished at the screenshot boundary should remain the
-    // same EPUB paragraph. Lower-case continuations are also strong evidence.
-    if (!/[.!?][”"')\]]?$/.test(a)) return true;
-    return /^[a-z]/.test(b);
-  }
-
-  function exportSectionParagraphs(section) {
-    const paragraphs = [];
-    for (let pageIndex = section.start; pageIndex < section.end; pageIndex++) {
-      let pageText = state.pages[pageIndex]?.text || "";
-      if (pageIndex === section.start && state.pages[pageIndex]?.chapterStart) {
-        pageText = stripExportedChapterHeading(pageText, section.title);
-      }
-      const pageParagraphs = exportParagraphs(pageText);
-      if (paragraphs.length && pageParagraphs.length && looksLikePageContinuation(paragraphs.at(-1).text, pageParagraphs[0])) {
-        const first = pageParagraphs.shift();
-        const previous = paragraphs.at(-1);
-        previous.text = /-$/u.test(previous.text)
-          ? `${previous.text.slice(0, -1)}${first}`
-          : `${previous.text} ${first}`;
-      }
-      pageParagraphs.forEach((text, paragraphIndex) => paragraphs.push({ text, pageIndex, paragraphIndex }));
-    }
-    return paragraphs;
   }
 
   function pageImageUrl(file) {
@@ -1309,12 +1407,14 @@
     const canvas = makeCroppedCanvas(img);
     setStatus(`PaddleOCR is re-reading message page ${index + 1}…`);
 
-    const { text, result } = await paddleRecognizeCanvas(canvas, { messageMode: true });
+    const { text, layoutLines, layoutMeta, result } = await paddleRecognizeCanvas(canvas, { messageMode: true });
     const finalText = cleanBodyText(text);
     if (!finalText) throw new Error("PaddleOCR did not find readable text on this page.");
 
     state.pages[index].text = finalText;
     state.pages[index].chapterCandidate = chapterHeuristic(finalText);
+    state.pages[index].layoutLines = layoutLines || [];
+    state.pages[index].layoutMeta = layoutMeta || null;
     saveCheckpoint();
 
     const count = result?.items?.length || 0;
@@ -1355,7 +1455,9 @@
         chapterStart: rememberedChapter ? rememberedChapter.chapterStart : isChapter,
         chapterTitle: rememberedChapter && rememberedChapter.chapterTitle
           ? rememberedChapter.chapterTitle
-          : detectChapterTitle(text, index + 1)
+          : detectChapterTitle(text, index + 1),
+        layoutLines: paddleResult.layoutLines || [],
+        layoutMeta: paddleResult.layoutMeta || null,
       };
 
       if (index < state.pages.length) state.pages[index] = pageData;
@@ -1364,6 +1466,7 @@
       state.currentPageIndex = index;
       saveCheckpoint();
       if (!batch) renderReview();
+      refreshParagraphRebuildUi();
 
       canvas.width = 1;
       canvas.height = 1;
@@ -1383,6 +1486,48 @@
       els.processBtn.disabled = !state.files.length || state.pages.length >= state.files.length;
       updateNavigationControls();
     }
+  }
+
+
+  function refreshParagraphRebuildUi() {
+    if (!els.rebuildParagraphs) return;
+    const available = state.pages.filter(page => Array.isArray(page.layoutLines) && page.layoutLines.length).length;
+    els.rebuildParagraphs.disabled = state.processing || available === 0;
+    if (els.paragraphStatus) {
+      els.paragraphStatus.textContent = available
+        ? `${available}/${state.pages.length} pages have layout data`
+        : "Needs OCR from this build";
+    }
+  }
+
+  function rebuildParagraphsFromSavedGeometry({ confirmOverwrite=true } = {}) {
+    const eligible = state.pages.filter(page => Array.isArray(page.layoutLines) && page.layoutLines.length);
+    if (!eligible.length) {
+      setStatus("No saved line geometry is available yet. Pages OCRed with this build will save it automatically.");
+      refreshParagraphRebuildUi();
+      return 0;
+    }
+    if (confirmOverwrite && !confirm(
+      `Rebuild paragraph structure on ${eligible.length} page${eligible.length === 1 ? "" : "s"}?\n\n` +
+      "This uses the saved PaddleOCR line geometry and replaces the current page text on those pages. Run it before manual text edits, or export a copy first."
+    )) return 0;
+
+    let rebuiltCount = 0;
+    state.pages.forEach(page => {
+      if (!Array.isArray(page.layoutLines) || !page.layoutLines.length) return;
+      const rebuilt = reconstructParagraphsFromLayout(page.layoutLines, { messageMode: false });
+      if (!rebuilt.text) return;
+      page.text = cleanBodyText(rebuilt.text);
+      page.layoutMeta = rebuilt.meta;
+      page.chapterCandidate = chapterHeuristic(page.text);
+      if (!page.chapterTitle) page.chapterTitle = detectChapterTitle(page.text, rebuiltCount + 1);
+      rebuiltCount++;
+    });
+    saveCheckpoint();
+    renderReview();
+    refreshParagraphRebuildUi();
+    setStatus(`Paragraph structure rebuilt on ${rebuiltCount} page${rebuiltCount === 1 ? "" : "s"} from saved OCR geometry. No OCR rerun was needed.`);
+    return rebuiltCount;
   }
 
 
@@ -1415,6 +1560,7 @@
     state.reviewMode = "chapters";
     saveCheckpoint();
     renderReview();
+    refreshParagraphRebuildUi();
     const chapters = reviewIndices().length;
     setStatus(`Batch OCR complete: ${state.pages.length} pages processed. Showing ${chapters} detected chapter start page${chapters === 1 ? "" : "s"} for review.`);
   }
@@ -2136,6 +2282,35 @@
     downloadBlob(new Blob([text], { type: "text/plain;charset=utf-8" }), `${title}.txt`);
   }
 
+
+  function sectionParagraphs(section) {
+    const out=[];
+    for (let pageIndex = section.start; pageIndex < section.end; pageIndex++) {
+      const page = state.pages[pageIndex];
+      let pageText = page?.text || "";
+      if (pageIndex === section.start && page?.chapterStart) {
+        pageText = stripExportedChapterHeading(pageText, section.title);
+      }
+      const paragraphs = exportParagraphs(pageText);
+      if (!paragraphs.length) continue;
+
+      const canJoinAcrossPage = pageIndex > section.start
+        && out.length
+        && !page?.chapterStart
+        && page?.layoutMeta
+        && page.layoutMeta.firstStartsIndented === false
+        && page.layoutMeta.firstIsFurniture === false
+        && state.pages[pageIndex - 1]?.layoutMeta?.lastIsFurniture !== true;
+
+      if (canJoinAcrossPage) {
+        out[out.length - 1].text = joinParagraphLines([out[out.length - 1].text, paragraphs[0]]);
+        paragraphs.shift();
+      }
+      paragraphs.forEach((text, paragraphIndex) => out.push({ text, pageIndex, paragraphIndex }));
+    }
+    return out;
+  }
+
   async function buildEpub() {
     if (!window.JSZip) throw new Error("JSZip did not load.");
     if (state.importedEpub) {
@@ -2171,11 +2346,9 @@
     sections.forEach((section, sectionIndex) => {
       const fileName = `chapter-${String(sectionIndex + 1).padStart(3, "0")}.xhtml`;
       const itemId = `chapter-${sectionIndex + 1}`;
-      const bodyParagraphs = exportSectionParagraphs(section).map(({ text, pageIndex, paragraphIndex }) => {
-        const sceneBreak = /^(?:[*•◆◇❦⁂](?:\s*[*•◆◇❦⁂]){0,4}|-{3,}|_{3,})$/.test(text);
-        if (sceneBreak) return `<p class="scene-break" id="p-${pageIndex + 1}-${paragraphIndex + 1}">${escapeXml(text)}</p>`;
-        return `<p id="p-${pageIndex + 1}-${paragraphIndex + 1}">${escapeXml(text)}</p>`;
-      });
+      const bodyParagraphs = sectionParagraphs(section).map(({ text, pageIndex, paragraphIndex }) =>
+        `<p id="p-${pageIndex + 1}-${paragraphIndex + 1}">${escapeXml(text)}</p>`
+      );
 
       zip.file(`EPUB/${fileName}`, `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
@@ -2210,7 +2383,7 @@
 </body>
 </html>`);
 
-    zip.file("EPUB/style.css", `body{font-family:serif;line-height:1.5;margin:5%;}p{display:block;margin:0;text-indent:1.2em;white-space:normal;}h1{font-size:1.5em;margin:0 0 1.25em;}h1+p,p.scene-break+p{ text-indent:0; }.scene-break{text-indent:0;text-align:center;margin:1em 0;}`);
+    zip.file("EPUB/style.css", `body{font-family:serif;line-height:1.5;margin:5%;}p{display:block;margin:0 0 1em;white-space:normal;}h1{font-size:1.5em;margin:0 0 1.25em;}`);
 
     let coverManifest = "";
     let coverMeta = "";
@@ -2330,6 +2503,7 @@ ${coverSpine}${spine.join("\n")}
     els.dropcapSection.classList.toggle("hidden", restored === 0);
     renderThumbs();
     renderReview();
+    refreshParagraphRebuildUi();
     try {
       await updatePreview();
     } catch (err) {
@@ -2356,6 +2530,7 @@ ${coverSpine}${spine.join("\n")}
     els.dropcapSection.classList.add("hidden");
     renderThumbs();
     renderReview();
+    refreshParagraphRebuildUi();
     updatePreview();
     setStatus("Add screenshots to begin.");
   });
@@ -2400,6 +2575,7 @@ ${coverSpine}${spine.join("\n")}
   els.downloadTxt.addEventListener("click", downloadTxt);
   els.downloadEpub.addEventListener("click", downloadEpub);
   els.repairLigatures.addEventListener("click", runSplitLigaturePolish);
+  els.rebuildParagraphs?.addEventListener("click", () => rebuildParagraphsFromSavedGeometry({ confirmOverwrite: true }));
   els.scanDropcaps.addEventListener("click", scanDropcaps);
   els.acceptHighDropcaps.addEventListener("click", () => {
     state.dropcapCandidates

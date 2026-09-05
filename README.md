@@ -1,16 +1,5 @@
 # Book OCR Studio 2.5.0
 
-## New in 2.5.0
-- Reconstructs EPUB paragraphs from PaddleOCR page geometry instead of treating every OCR line as structural.
-- Uses visual vertical spacing plus conservative first-line indentation evidence to preserve real paragraph breaks.
-- Joins ordinary wrapped OCR lines inside a paragraph.
-- Joins paragraphs that clearly continue across screenshot/page boundaries, including de-hyphenation at the boundary.
-- Preserves scene-break markers as centered semantic EPUB paragraphs.
-- Exports cleaner semantic `<p>` markup with book-like paragraph indentation rather than one-em-per-paragraph spacing.
-- Keeps chapter markers, Dropcap Rescue, Message-page OCR, and Split Ligature Repair intact.
-
-# Book OCR Studio 2.4.1
-
 ## New in 2.4.1
 - Tunes only Split Ligature Repair recall by adding nine confirmed ordinary English forms that the existing local allowlist omitted: `filthy`, `figured`, `firstborn`, `fists`, `fixated`, `figure`, `fitness`, `flushed`, and `fiercely`.
 - Keeps the same conservative candidate matcher, exact-word validation, capitalization guard, and same-line-only spacing rule.
@@ -61,3 +50,12 @@ PaddleOCR build with a fresh-reprocess control.
 - Keeps the one-page-at-a-time workflow, Message-page OCR, and EPUB/TXT export.
 
 Use the new restart button after selecting the same screenshot batch, then process page 1 and continue through the book with PaddleOCR.
+
+
+Book OCR Studio 2.5.0 — Paragraph Reconstruction 2.0
+- Uses dominant body-left geometry and first-line indentation to reconstruct paragraphs.
+- Indentation no longer requires preceding sentence punctuation.
+- Saves PaddleOCR line geometry in the local checkpoint for no-re-OCR paragraph rebuilding.
+- Adds Rebuild paragraphs control; use before manual text edits because it replaces page text.
+- Uses saved geometry to join likely paragraph continuations across screenshot/page boundaries.
+- Preserves existing Dropcap Rescue, message-page OCR, split-ligature polish, and chapter review behavior.

@@ -15,3 +15,12 @@ New behavior:
 - Message-page Paddle OCR remains available during review
 
 After GitHub Pages deploys, fully close and reopen the Home Screen app once so the new JavaScript is loaded.
+
+
+Book OCR Studio 2.5.0 — Paragraph Reconstruction 2.0
+- Uses dominant body-left geometry and first-line indentation to reconstruct paragraphs.
+- Indentation no longer requires preceding sentence punctuation.
+- Saves PaddleOCR line geometry in the local checkpoint for no-re-OCR paragraph rebuilding.
+- Adds Rebuild paragraphs control; use before manual text edits because it replaces page text.
+- Uses saved geometry to join likely paragraph continuations across screenshot/page boundaries.
+- Preserves existing Dropcap Rescue, message-page OCR, split-ligature polish, and chapter review behavior.

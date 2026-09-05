@@ -17,7 +17,7 @@
 <body>
   <header class="topbar">
     <div>
-      <p class="eyebrow">LOCAL BOOK TOOL · 2.5.0 · EPUB Polish</p>
+      <p class="eyebrow">LOCAL BOOK TOOL · 2.5.0 · Paragraph Reconstruction 2.0</p>
       <h1>Book OCR Studio</h1>
       <p class="subhead">Crop screenshots, OCR them one page at a time, batch OCR the whole book, review chapter starts or any page, and export TXT or EPUB.</p>
     </div>
@@ -164,6 +164,14 @@
 
     <section class="card hidden" id="exportSection">
       <h2>7. Export</h2>
+      <div class="subcard">
+        <h3>Paragraph Reconstruction</h3>
+        <p class="hint">PaddleOCR now saves line positions and uses first-line indentation as primary paragraph evidence. Rebuild from saved geometry later without re-running OCR. Rebuilding replaces current page text, so do it before manual text edits.</p>
+        <div class="actions">
+          <button id="rebuildParagraphs" class="button secondary" type="button" disabled>Rebuild paragraphs</button>
+          <span id="paragraphStatus" class="progress-pill">Needs OCR from this build</span>
+        </div>
+      </div>
       <div class="subcard">
         <h3>EPUB Polish</h3>
         <p class="hint">Repair high-confidence OCR spaces inside fi, fl, ff, ffi, and ffl words. This uses existing text only and leaves uncertain candidates unchanged.</p>
