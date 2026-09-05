@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.6.1-cleanup-persistence-auto-italics";
+  const BUILD_VERSION = "2.6.2-italic-diagnostics";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -109,6 +109,7 @@
     downloadEpub: $("downloadEpub"),
     safePolish: $("safePolish"),
     autoItalicScan: $("autoItalicScan"),
+    downloadItalicDiagnostics: $("downloadItalicDiagnostics"),
     italicStatus: $("italicStatus"),
     polishStatus: $("polishStatus"),
     repairLigatures: $("repairLigatures"),
@@ -2550,6 +2551,46 @@
     }
   }
 
+
+  function downloadItalicDiagnostics() {
+    const lines = [];
+    state.pages.forEach((page, pageIndex) => {
+      (page.layoutLines || []).forEach((line, lineIndex) => {
+        if (!line.italicMeta) return;
+        lines.push({
+          pageIndex,
+          pageNumber: pageIndex + 1,
+          fileName: page.fileName || state.files[pageIndex]?.name || "",
+          lineIndex,
+          text: line.text || "",
+          box: line.box || null,
+          markedItalic: !!line.italicAuto,
+          ...line.italicMeta,
+        });
+      });
+    });
+    if (!lines.length) {
+      setStatus("Run Auto italic scan first so Studio has italic scores to export.");
+      return;
+    }
+    const ranked = [...lines].sort((a,b) => (b.gain || 0) - (a.gain || 0));
+    const payload = {
+      format: "book-ocr-studio-italic-diagnostics-v1",
+      buildVersion: BUILD_VERSION,
+      exportedAt: new Date().toISOString(),
+      summary: {
+        pages: state.pages.length,
+        scoredLines: lines.length,
+        markedLines: lines.filter(x => x.markedItalic).length,
+      },
+      topCandidatesByGain: ranked.slice(0, 100),
+      lines,
+    };
+    const safeTitle = cleanFilename(els.bookTitle?.value || "book");
+    downloadBlob(new Blob([JSON.stringify(payload, null, 2)], {type:"application/json"}), `${safeTitle}-italic-diagnostics.json`);
+    setStatus(`Downloaded italic diagnostics for ${lines.length} scored OCR lines. Send me this JSON with the screenshots so we can calibrate against known italics.`);
+  }
+
   function applySafePolishToProject() {
     const polish = globalThis.BookOcrEpubPolish?.safePolishText;
     if (typeof polish !== "function") {
@@ -2949,6 +2990,7 @@ ${coverSpine}${spine.join("\n")}
   els.downloadEpub.addEventListener("click", downloadEpub);
   els.safePolish?.addEventListener("click", applySafePolishToProject);
   els.autoItalicScan?.addEventListener("click", autoScanItalics);
+  els.downloadItalicDiagnostics?.addEventListener("click", downloadItalicDiagnostics);
   els.repairLigatures.addEventListener("click", runSplitLigaturePolish);
   els.rebuildParagraphs?.addEventListener("click", () => rebuildParagraphsFromSavedGeometry({ confirmOverwrite: true }));
   els.downloadLayoutDiagnostics?.addEventListener("click", downloadLayoutDiagnostics);

@@ -29,3 +29,6 @@ Book OCR Studio 2.5.1 — Book-Level Paragraph Profile
 - Preserves existing Dropcap Rescue, message-page OCR, split-ligature polish, and chapter review behavior.
 
 v2.6.1: Safe cleanup now survives paragraph rebuilds. Added a conservative automatic italic-line scan from source screenshots, with manual italic marking retained for mixed inline emphasis.
+
+
+v2.6.2: Added exportable italic diagnostics with per-line slant/gain scores for calibration against known italic source text.

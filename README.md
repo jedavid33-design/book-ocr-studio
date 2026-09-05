@@ -67,3 +67,6 @@ Book OCR Studio 2.5.1 — Book-Level Paragraph Profile
 - Safe Text Cleanup is automatically re-applied after Paragraph Reconstruction, so cleanup is not lost if Rebuild Paragraphs is run afterward.
 - Added conservative Auto Italic Scan for screenshot projects. It analyzes source-image slant within saved OCR line boxes and marks only high-confidence fully italic lines; mixed inline italics remain manual fallback.
 - Ellipsis normalization now treats existing Unicode ellipses and spaced/compact three-dot OCR forms consistently.
+
+
+v2.6.2: Added exportable italic diagnostics with per-line slant/gain scores for calibration against known italic source text.
