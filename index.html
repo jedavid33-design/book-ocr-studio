@@ -12,12 +12,12 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=2.5.5" />
+  <link rel="stylesheet" href="styles.css?v=2.6.0" />
 </head>
 <body>
   <header class="topbar">
     <div>
-      <p class="eyebrow">LOCAL BOOK TOOL · 2.5.5 · Layout Plumbing + Cache Fix</p>
+      <p class="eyebrow">LOCAL BOOK TOOL · 2.6.0 · Formatting Rescue + Safe Polish</p>
       <h1>Book OCR Studio</h1>
       <p class="subhead">Crop screenshots, OCR them one page at a time, batch OCR the whole book, review chapter starts or any page, and export TXT or EPUB.</p>
     </div>
@@ -141,6 +141,8 @@
       <div class="nav-row">
         <button id="prevPageBtn" class="button ghost" type="button" disabled>Previous page</button>
         <button id="pageDropcapBtn" class="button secondary" type="button" disabled>Dropcap Rescue</button>
+        <button id="markItalicBtn" class="button secondary" type="button" disabled>Mark selection italic</button>
+        <button id="clearItalicBtn" class="button ghost" type="button" disabled>Remove italic marks</button>
         <button id="messageOcrBtn" class="button secondary" type="button" disabled>Message-page OCR · Paddle</button>
         <button id="nextPageBtn" class="button primary" type="button" disabled>Next page</button>
       </div>
@@ -171,6 +173,14 @@
           <button id="rebuildParagraphs" class="button secondary" type="button" disabled>Rebuild paragraphs</button>
           <button id="downloadLayoutDiagnostics" class="button secondary" type="button" disabled>Download layout diagnostics</button>
           <span id="paragraphStatus" class="progress-pill">Needs OCR from this build</span>
+        </div>
+      </div>
+      <div class="subcard">
+        <h3>Formatting Rescue</h3>
+        <p class="hint">Safe cleanup normalizes OCR ellipses and decorative scene dividers without rewriting prose. For italics, select verified text in the page editor and mark it; EPUB export preserves it as real emphasis.</p>
+        <div class="actions">
+          <button id="safePolish" class="button secondary" type="button">Safe text cleanup</button>
+          <span id="polishStatus" class="progress-pill">Not run</span>
         </div>
       </div>
       <div class="subcard">
@@ -223,8 +233,8 @@
   </dialog>
 
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
-  <script src="epub-polish.js?v=2.5.5"></script>
-  <script src="script-loader.js?v=2.5.5"></script>
+  <script src="epub-polish.js?v=2.6.0"></script>
+  <script src="script-loader.js?v=2.6.0"></script>
   <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {

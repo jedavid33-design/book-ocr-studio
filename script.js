@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.5.5-layout-profile-plumbing-fix";
+  const BUILD_VERSION = "2.6.0-formatting-rescue-safe-polish";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -102,9 +102,13 @@
     nextPageBtn: $("nextPageBtn"),
     messageOcrBtn: $("messageOcrBtn"),
     pageDropcapBtn: $("pageDropcapBtn"),
+    markItalicBtn: $("markItalicBtn"),
+    clearItalicBtn: $("clearItalicBtn"),
     exportSection: $("exportSection"),
     downloadTxt: $("downloadTxt"),
     downloadEpub: $("downloadEpub"),
+    safePolish: $("safePolish"),
+    polishStatus: $("polishStatus"),
     repairLigatures: $("repairLigatures"),
     ligatureStatus: $("ligatureStatus"),
     rebuildParagraphs: $("rebuildParagraphs"),
@@ -485,7 +489,7 @@
   }
 
   function isSceneMarkerText(text) {
-    return /^(?:\*{3,}|[-–—]{3,}|[•·◆◇❖✦⁂]+)$/.test(String(text || "").trim());
+    return /^(?:\*{3,}|\*\s+\*\s+\*|[-–—]{3,}|[•·◆◇❖✦⁂❦☙❧]+|[①②③④⑤⑥⑦⑧⑨⑩]+)$/u.test(String(text || "").trim());
   }
 
   function isCenteredShortLine(line, pageWidth, pageCenter) {
@@ -626,7 +630,8 @@
     let currentMeta=null;
     const flush = () => {
       if (!current.length) return;
-      const text = joinParagraphLines(current);
+      let text = joinParagraphLines(current);
+      if (currentMeta?.scene && text) text = "* * *";
       if (text) paragraphs.push({ text, ...currentMeta });
       current=[];
       currentMeta=null;
@@ -903,6 +908,26 @@
       .filter(Boolean);
   }
 
+  function stripItalicMarkers(text) {
+    return String(text || "").replace(/\[\[\/?i\]\]/gi, "");
+  }
+
+  function paragraphToEpubHtml(text) {
+    const raw = String(text || "");
+    if (raw.trim() === "* * *") return '<hr class="scene-break"/>';
+    let out = "";
+    let cursor = 0;
+    const marker = /\[\[i\]\]([\s\S]*?)\[\[\/i\]\]/gi;
+    let match;
+    while ((match = marker.exec(raw))) {
+      out += escapeXml(raw.slice(cursor, match.index));
+      out += `<em>${escapeXml(match[1])}</em>`;
+      cursor = match.index + match[0].length;
+    }
+    out += escapeXml(raw.slice(cursor));
+    return `<p>${out}</p>`;
+  }
+
   function pageImageUrl(file) {
     return URL.createObjectURL(file);
   }
@@ -928,6 +953,48 @@
       : `Showing all ${state.pages.length} processed pages.`);
   }
 
+  function currentReviewTextarea() {
+    return els.reviewList?.querySelector(".review-body textarea") || null;
+  }
+
+  function markSelectedItalic() {
+    const textarea = currentReviewTextarea();
+    if (!textarea) return;
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+      setStatus("Select the exact italic text in the page editor first.");
+      return;
+    }
+    const selected = textarea.value.slice(start, end);
+    if (!selected.trim()) {
+      setStatus("Select visible text before marking italics.");
+      return;
+    }
+    const replacement = `[[i]]${selected}[[/i]]`;
+    textarea.setRangeText(replacement, start, end, "select");
+    const page = state.pages[state.currentPageIndex];
+    if (page) page.text = textarea.value;
+    saveCheckpoint();
+    setStatus(`Marked the selected text as italic on page ${state.currentPageIndex + 1}. EPUB export will preserve it as emphasis.`);
+  }
+
+  function clearItalicMarksOnPage() {
+    const textarea = currentReviewTextarea();
+    if (!textarea) return;
+    const before = textarea.value;
+    const after = before.replace(/\[\[\/?i\]\]/gi, "");
+    if (after === before) {
+      setStatus(`Page ${state.currentPageIndex + 1} has no italic marks to remove.`);
+      return;
+    }
+    textarea.value = after;
+    const page = state.pages[state.currentPageIndex];
+    if (page) page.text = after;
+    saveCheckpoint();
+    setStatus(`Removed manual italic marks from page ${state.currentPageIndex + 1}.`);
+  }
+
   function updateNavigationControls() {
     const processed = state.pages.length;
     const total = state.files.length;
@@ -941,6 +1008,8 @@
     els.prevPageBtn.disabled = state.processing || !hasCurrent || pos <= 0;
     els.messageOcrBtn.disabled = state.processing || !hasCurrent;
     els.pageDropcapBtn.disabled = state.processing || !hasCurrent;
+    if (els.markItalicBtn) els.markItalicBtn.disabled = state.processing || !hasCurrent;
+    if (els.clearItalicBtn) els.clearItalicBtn.disabled = state.processing || !hasCurrent;
     els.nextPageBtn.disabled = state.processing || !hasCurrent || pos < 0 || pos >= indices.length - 1;
     els.prevPageBtn.textContent = state.reviewMode === "chapters" ? "Previous chapter" : "Previous page";
     els.nextPageBtn.textContent = state.reviewMode === "chapters" ? "Next chapter" : "Next page";
@@ -2371,6 +2440,31 @@
     return true;
   }
 
+  function applySafePolishToProject() {
+    const polish = globalThis.BookOcrEpubPolish?.safePolishText;
+    if (typeof polish !== "function") {
+      setStatus("Safe polish helper did not load. Refresh and try again.");
+      return;
+    }
+    syncCurrentEditor();
+    let fixedCount = 0;
+    let ellipsisCount = 0;
+    let sceneCount = 0;
+    let quoteCount = 0;
+    for (const page of state.pages) {
+      const result = polish(page.text || "");
+      page.text = result.text;
+      fixedCount += result.fixedCount || 0;
+      ellipsisCount += result.ellipsisCount || 0;
+      sceneCount += result.sceneCount || 0;
+      quoteCount += result.quoteCount || 0;
+    }
+    saveCheckpoint();
+    renderReview();
+    if (els.polishStatus) els.polishStatus.textContent = `${fixedCount} safe fix${fixedCount === 1 ? "" : "es"}`;
+    setStatus(`Safe text cleanup applied ${ellipsisCount} ellipsis normalization${ellipsisCount === 1 ? "" : "s"}, ${sceneCount} scene-divider normalization${sceneCount === 1 ? "" : "s"}, and ${quoteCount} obvious dialogue-quote repair${quoteCount === 1 ? "" : "s"}. No spelling or prose rewrites were performed.`);
+  }
+
   function repairTextNodesInParagraph(paragraph, repair) {
     const walker = paragraph.ownerDocument.createTreeWalker(paragraph, 4);
     let fixedCount = 0;
@@ -2442,7 +2536,7 @@
     const paragraphs = state.pages
       .flatMap(page => exportParagraphs(page.text))
       .filter(Boolean);
-    const text = paragraphs.join("\n\n");
+    const text = paragraphs.map(stripItalicMarkers).join("\n\n");
     const title = cleanFilename(els.bookTitle.value || "book");
     downloadBlob(new Blob([text], { type: "text/plain;charset=utf-8" }), `${title}.txt`);
   }
@@ -2511,9 +2605,11 @@
     sections.forEach((section, sectionIndex) => {
       const fileName = `chapter-${String(sectionIndex + 1).padStart(3, "0")}.xhtml`;
       const itemId = `chapter-${sectionIndex + 1}`;
-      const bodyParagraphs = sectionParagraphs(section).map(({ text, pageIndex, paragraphIndex }) =>
-        `<p id="p-${pageIndex + 1}-${paragraphIndex + 1}">${escapeXml(text)}</p>`
-      );
+      const bodyParagraphs = sectionParagraphs(section).map(({ text, pageIndex, paragraphIndex }) => {
+        if (String(text || "").trim() === "* * *") return `<hr id="p-${pageIndex + 1}-${paragraphIndex + 1}" class="scene-break"/>`;
+        const html = paragraphToEpubHtml(text);
+        return html.replace("<p>", `<p id="p-${pageIndex + 1}-${paragraphIndex + 1}">`);
+      });
 
       zip.file(`EPUB/${fileName}`, `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
@@ -2548,7 +2644,7 @@
 </body>
 </html>`);
 
-    zip.file("EPUB/style.css", `body{font-family:serif;line-height:1.5;margin:5%;}p{display:block;margin:0 0 1em;white-space:normal;}h1{font-size:1.5em;margin:0 0 1.25em;}`);
+    zip.file("EPUB/style.css", `body{font-family:serif;line-height:1.5;margin:5%;}p{display:block;margin:0 0 1em;white-space:normal;}h1{font-size:1.5em;margin:0 0 1.25em;}em{font-style:italic}.scene-break{border:0;text-align:center;margin:1.5em 0}.scene-break:after{content:"* * *";}`);
 
     let coverManifest = "";
     let coverMeta = "";
@@ -2711,6 +2807,8 @@ ${coverSpine}${spine.join("\n")}
   els.prevPageBtn.addEventListener("click", goToPreviousPage);
   els.nextPageBtn.addEventListener("click", goToNextPage);
   els.pageDropcapBtn.addEventListener("click", openPageDropcapReview);
+  els.markItalicBtn?.addEventListener("click", markSelectedItalic);
+  els.clearItalicBtn?.addEventListener("click", clearItalicMarksOnPage);
   els.closePageDropcap.addEventListener("click", closePageDropcapReview);
   els.cancelPageDropcap.addEventListener("click", closePageDropcapReview);
   els.applyPageDropcap.addEventListener("click", applyPageDropcapReview);
@@ -2739,6 +2837,7 @@ ${coverSpine}${spine.join("\n")}
 
   els.downloadTxt.addEventListener("click", downloadTxt);
   els.downloadEpub.addEventListener("click", downloadEpub);
+  els.safePolish?.addEventListener("click", applySafePolishToProject);
   els.repairLigatures.addEventListener("click", runSplitLigaturePolish);
   els.rebuildParagraphs?.addEventListener("click", () => rebuildParagraphsFromSavedGeometry({ confirmOverwrite: true }));
   els.downloadLayoutDiagnostics?.addEventListener("click", downloadLayoutDiagnostics);

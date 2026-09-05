@@ -46,7 +46,65 @@ traffic waffle waffled waffles waffling
     return { text, fixedCount, ambiguousCount, familyCounts };
   }
 
-  const api = Object.freeze({ repairSplitLigatures });
+  const SCENE_MARKER = /^(?:\*{3,}|[-–—]{3,}|[•·◆◇❖✦⁂❦☙❧]+|[①②③④⑤⑥⑦⑧⑨⑩]+)$/u;
+
+  function normalizeEllipses(input) {
+    let fixedCount = 0;
+    const text = String(input ?? "").replace(/\.(?:\s*\.){2,}/g, (match) => {
+      const normalized = "…";
+      if (match !== normalized) fixedCount += 1;
+      return normalized;
+    });
+    return { text, fixedCount };
+  }
+
+  function normalizeSceneMarkers(input) {
+    let fixedCount = 0;
+    const blocks = String(input ?? "").split(/(\n{2,})/);
+    const text = blocks.map(block => {
+      const trimmed = block.trim();
+      if (trimmed && SCENE_MARKER.test(trimmed)) {
+        if (trimmed !== "* * *") fixedCount += 1;
+        return "* * *";
+      }
+      return block;
+    }).join("");
+    return { text, fixedCount };
+  }
+
+
+  function repairObviousDialogueClosers(input) {
+    let fixedCount = 0;
+    const blocks = String(input ?? "").split(/(\n{2,})/);
+    const text = blocks.map(block => {
+      const trimmed = block.trim();
+      if (!trimmed || !trimmed.startsWith('"')) return block;
+      const quoteCount = (trimmed.match(/"/g) || []).length;
+      if (quoteCount % 2 !== 1 || !/[.!?]'$/.test(trimmed)) return block;
+      const repaired = trimmed.replace(/([.!?])'$/, '$1"');
+      if (repaired === trimmed) return block;
+      fixedCount += 1;
+      const leading = block.match(/^\s*/)?.[0] || "";
+      const trailing = block.match(/\s*$/)?.[0] || "";
+      return leading + repaired + trailing;
+    }).join("");
+    return { text, fixedCount };
+  }
+
+  function safePolishText(input) {
+    const ellipsis = normalizeEllipses(input);
+    const scenes = normalizeSceneMarkers(ellipsis.text);
+    const quotes = repairObviousDialogueClosers(scenes.text);
+    return {
+      text: quotes.text,
+      fixedCount: ellipsis.fixedCount + scenes.fixedCount + quotes.fixedCount,
+      ellipsisCount: ellipsis.fixedCount,
+      sceneCount: scenes.fixedCount,
+      quoteCount: quotes.fixedCount,
+    };
+  }
+
+  const api = Object.freeze({ repairSplitLigatures, normalizeEllipses, normalizeSceneMarkers, repairObviousDialogueClosers, safePolishText });
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   if (typeof globalThis !== "undefined") globalThis.BookOcrEpubPolish = api;
 })();
