@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.6.0-formatting-rescue-safe-polish";
+  const BUILD_VERSION = "2.6.1-cleanup-persistence-auto-italics";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -108,6 +108,8 @@
     downloadTxt: $("downloadTxt"),
     downloadEpub: $("downloadEpub"),
     safePolish: $("safePolish"),
+    autoItalicScan: $("autoItalicScan"),
+    italicStatus: $("italicStatus"),
     polishStatus: $("polishStatus"),
     repairLigatures: $("repairLigatures"),
     ligatureStatus: $("ligatureStatus"),
@@ -663,7 +665,7 @@
           y: line.box.y,
         };
       }
-      current.push(text);
+      current.push(line.italicAuto ? `[[i]]${text}[[/i]]` : text);
 
       // Standalone visual furniture should never absorb the prose beneath it.
       if (scene || chapterish || centered) flush();
@@ -1744,6 +1746,11 @@
       const rebuilt = reconstructParagraphsFromLayout(page.layoutLines, { messageMode: false, bookProfile });
       if (!rebuilt.text) return;
       page.text = cleanBodyText(rebuilt.text);
+      // Rebuild is allowed to replace paragraph structure, but it should not
+      // erase safe formatting cleanup the user already ran. Re-apply the same
+      // conservative cleanup after reconstruction so button order is harmless.
+      const safePolish = globalThis.BookOcrEpubPolish?.safePolishText;
+      if (typeof safePolish === "function") page.text = safePolish(page.text).text;
       page.layoutMeta = rebuilt.meta;
       page.chapterCandidate = chapterHeuristic(page.text);
       if (!page.chapterTitle) page.chapterTitle = detectChapterTitle(page.text, rebuiltCount + 1);
@@ -2440,6 +2447,109 @@
     return true;
   }
 
+  function italicSlantScore(canvas, box) {
+    if (!canvas || !box) return { italic: false, slant: 0, gain: 0 };
+    const padX = 2, padY = 1;
+    const x0 = Math.max(0, Math.floor(box.x - padX));
+    const y0 = Math.max(0, Math.floor(box.y - padY));
+    const w = Math.min(canvas.width - x0, Math.max(8, Math.ceil(box.w + padX * 2)));
+    const h = Math.min(canvas.height - y0, Math.max(8, Math.ceil(box.h + padY * 2)));
+    if (w < 20 || h < 10) return { italic: false, slant: 0, gain: 0 };
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    const data = ctx.getImageData(x0, y0, w, h).data;
+    const gray = new Uint8Array(w * h);
+    let sum = 0;
+    for (let i = 0, j = 0; i < data.length; i += 4, j++) {
+      const g = Math.round(data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114);
+      gray[j] = g; sum += g;
+    }
+    const mean = sum / gray.length;
+    const threshold = Math.max(70, Math.min(205, mean - 38));
+    const rows = [];
+    let darkCount = 0;
+    for (let y = 0; y < h; y++) {
+      const xs = [];
+      for (let x = 0; x < w; x++) {
+        if (gray[y * w + x] < threshold) { xs.push(x); darkCount++; }
+      }
+      rows.push(xs);
+    }
+    if (darkCount < Math.max(40, w * h * 0.01)) return { italic: false, slant: 0, gain: 0 };
+    const mid = (h - 1) / 2;
+    const candidates = [-0.32,-0.28,-0.24,-0.20,-0.16,-0.12,-0.08,-0.04,0,0.04,0.08,0.12,0.16,0.20,0.24,0.28,0.32];
+    const scoreFor = (slant) => {
+      let overlap = 0, possible = 0;
+      let prev = null;
+      for (let y = 0; y < h; y++) {
+        if (!rows[y].length) continue;
+        const shift = Math.round(slant * (y - mid));
+        const cur = new Set(rows[y].map(x => x - shift));
+        if (prev) {
+          possible += Math.min(prev.size, cur.size);
+          for (const x of cur) if (prev.has(x) || prev.has(x - 1) || prev.has(x + 1)) overlap++;
+        }
+        prev = cur;
+      }
+      return possible ? overlap / possible : 0;
+    };
+    let bestSlant = 0, bestScore = -1;
+    let zeroScore = 0;
+    for (const slant of candidates) {
+      const score = scoreFor(slant);
+      if (slant === 0) zeroScore = score;
+      if (score > bestScore) { bestScore = score; bestSlant = slant; }
+    }
+    const gain = bestScore - zeroScore;
+    // Conservative by design: this is meant to catch obviously slanted full
+    // OCR lines, not guess at ordinary prose or mixed roman/italic lines.
+    const italic = Math.abs(bestSlant) >= 0.12 && gain >= 0.018 && bestScore >= 0.38;
+    return { italic, slant: bestSlant, gain, score: bestScore, zeroScore };
+  }
+
+  async function autoScanItalics() {
+    if (!state.pages.length || !state.files.length) {
+      setStatus("Load and OCR screenshot pages before running the automatic italic scan.");
+      return;
+    }
+    syncCurrentEditor();
+    els.autoItalicScan.disabled = true;
+    let marked = 0, scanned = 0;
+    try {
+      for (let index = 0; index < state.pages.length; index++) {
+        const page = state.pages[index];
+        if (!Array.isArray(page.layoutLines) || !page.layoutLines.length) continue;
+        const file = page.file || state.files[index];
+        if (!file) continue;
+        setStatus(`Automatic italic scan: page ${index + 1} of ${state.pages.length}…`);
+        const img = await loadImageFromFile(file);
+        const canvas = makeCroppedCanvas(img);
+        for (const line of page.layoutLines) {
+          scanned++;
+          line.italicAuto = false;
+          line.italicMeta = null;
+          const text = String(line.text || "").trim();
+          if (text.length < 8 || isSceneMarkerText(text)) continue;
+          const result = italicSlantScore(canvas, line.box);
+          line.italicMeta = result;
+          if (result.italic) { line.italicAuto = true; marked++; }
+        }
+        canvas.width = 1; canvas.height = 1;
+      }
+      // Apply the marks through the same paragraph reconstruction path, then
+      // re-apply safe cleanup so emphasis and cleanup coexist.
+      rebuildParagraphsFromSavedGeometry({ confirmOverwrite: false });
+      saveCheckpoint();
+      if (els.italicStatus) els.italicStatus.textContent = `${marked} line${marked === 1 ? "" : "s"} marked`;
+      setStatus(`Automatic italic scan checked ${scanned} OCR lines and marked ${marked} high-confidence fully italic line${marked === 1 ? "" : "s"}. Mixed inline italics remain available for manual marking.`);
+    } catch (err) {
+      console.error(err);
+      setStatus(`Automatic italic scan failed: ${err.message || err}`);
+    } finally {
+      els.autoItalicScan.disabled = false;
+      renderReview();
+    }
+  }
+
   function applySafePolishToProject() {
     const polish = globalThis.BookOcrEpubPolish?.safePolishText;
     if (typeof polish !== "function") {
@@ -2838,6 +2948,7 @@ ${coverSpine}${spine.join("\n")}
   els.downloadTxt.addEventListener("click", downloadTxt);
   els.downloadEpub.addEventListener("click", downloadEpub);
   els.safePolish?.addEventListener("click", applySafePolishToProject);
+  els.autoItalicScan?.addEventListener("click", autoScanItalics);
   els.repairLigatures.addEventListener("click", runSplitLigaturePolish);
   els.rebuildParagraphs?.addEventListener("click", () => rebuildParagraphsFromSavedGeometry({ confirmOverwrite: true }));
   els.downloadLayoutDiagnostics?.addEventListener("click", downloadLayoutDiagnostics);

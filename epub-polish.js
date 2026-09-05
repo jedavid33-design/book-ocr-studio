@@ -50,7 +50,7 @@ traffic waffle waffled waffles waffling
 
   function normalizeEllipses(input) {
     let fixedCount = 0;
-    const text = String(input ?? "").replace(/\.(?:\s*\.){2,}/g, (match) => {
+    const text = String(input ?? "").replace(/(?:…|\.(?:[ \t]*\.){2,})/g, (match) => {
       const normalized = "…";
       if (match !== normalized) fixedCount += 1;
       return normalized;

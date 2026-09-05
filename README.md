@@ -62,3 +62,8 @@ Book OCR Studio 2.5.1 — Book-Level Paragraph Profile
 - Adds Rebuild paragraphs control; use before manual text edits because it replaces page text.
 - Uses saved geometry to join likely paragraph continuations across screenshot/page boundaries.
 - Preserves existing Dropcap Rescue, message-page OCR, split-ligature polish, and chapter review behavior.
+
+## v2.6.1
+- Safe Text Cleanup is automatically re-applied after Paragraph Reconstruction, so cleanup is not lost if Rebuild Paragraphs is run afterward.
+- Added conservative Auto Italic Scan for screenshot projects. It analyzes source-image slant within saved OCR line boxes and marks only high-confidence fully italic lines; mixed inline italics remain manual fallback.
+- Ellipsis normalization now treats existing Unicode ellipses and spaced/compact three-dot OCR forms consistently.
