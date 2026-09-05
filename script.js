@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.6.3-italic-detection-2";
+  const BUILD_VERSION = "2.6.4-italic-precision-diagnostics";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -2542,6 +2542,27 @@
     return out;
   }
 
+  function groupItalicRuns(scored) {
+    const runs = [];
+    let i = 0;
+    while (i < scored.length) {
+      if (!scored[i].candidate) { i++; continue; }
+      const sign = Math.sign(scored[i].slant || 0);
+      let j = i + 1;
+      while (j < scored.length && scored[j].candidate && Math.sign(scored[j].slant || 0) === sign) j++;
+      const words = scored.slice(i, j);
+      const avgGain = words.reduce((a,w)=>a+(w.gain||0),0) / words.length;
+      const avgAbsSlant = words.reduce((a,w)=>a+Math.abs(w.slant||0),0) / words.length;
+      // Precision-first: auto-mark only coherent multi-word runs. Single-word
+      // emphasis stays manual until diagnostics prove a safe solo threshold.
+      const accepted = words.length >= 2 && avgGain >= 0.0090 && avgAbsSlant >= 0.24;
+      runs.push({ startWord:i, endWord:j-1, wordCount:words.length, sign, avgGain, avgAbsSlant, accepted });
+      if (accepted) for (let k=i;k<j;k++) scored[k].italic = true;
+      i = j;
+    }
+    return runs;
+  }
+
   async function autoScanItalics() {
     if (!state.pages.length || !state.files.length) {
       setStatus("Load and OCR screenshot pages before running the automatic italic scan.");
@@ -2556,7 +2577,7 @@
         if (!Array.isArray(page.layoutLines) || !page.layoutLines.length) continue;
         const file = page.file || state.files[index];
         if (!file) continue;
-        setStatus(`Automatic italic scan 2.0: page ${index + 1} of ${state.pages.length}…`);
+        setStatus(`Automatic italic scan 2.1 precision mode: page ${index + 1} of ${state.pages.length}…`);
         const img = await loadImageFromFile(file);
         const canvas = makeCroppedCanvas(img);
         for (const line of page.layoutLines) {
@@ -2565,46 +2586,41 @@
           line.italicText = null;
           line.italicMeta = null;
           line.italicWordMeta = [];
+          line.italicRunMeta = [];
           const text = String(line.text || "").trim();
           if (text.length < 2 || isSceneMarkerText(text)) continue;
 
-          // Keep a line score for diagnostics/backward compatibility.
           const lineResult = italicSlantScore(canvas, line.box);
           line.italicMeta = lineResult;
 
           const words = estimateWordBoxes(line);
-          const scored = words.map(w => {
+          const prelim = words.map(w => {
             const r = italicSlantScore(canvas, w.box);
             scannedWords++;
-            // Diagnostics showed real italics can have gains around .007 while
-            // ordinary full lines often peak below that. Require both visible
-            // slant and gain, and be stricter for very short tokens.
-            const minGain = w.text.replace(/[^A-Za-z]/g, "").length <= 3 ? 0.0085 : 0.0060;
-            const italic = Math.abs(r.slant) >= 0.20 && r.gain >= minGain && r.score >= 0.90;
-            return { ...w, ...r, italic };
+            const letters = w.text.replace(/[^A-Za-z]/g, "").length;
+            // Candidate threshold is deliberately stricter than 2.0. Final
+            // acceptance additionally requires an adjacent, same-direction run.
+            const minGain = letters <= 3 ? 0.0115 : 0.0080;
+            const candidate = letters >= 2 && Math.abs(r.slant) >= 0.24 && r.gain >= minGain && r.score >= 0.95;
+            return { ...w, ...r, letters, candidate, italic:false };
           });
 
-          // Isolated one-word hits are noisy. Preserve them only when very
-          // strong; otherwise require a neighboring italic word. This still
-          // permits genuine single-word emphasis when the visual signal is big.
-          for (let i=0;i<scored.length;i++) {
-            if (!scored[i].italic) continue;
-            const neighbor = !!scored[i-1]?.italic || !!scored[i+1]?.italic;
-            const strongSolo = Math.abs(scored[i].slant) >= 0.28 && scored[i].gain >= 0.0095;
-            if (!neighbor && !strongSolo) scored[i].italic = false;
-          }
-          line.italicWordMeta = scored.map(({text,start,end,italic,slant,gain,score,zeroScore}) => ({text,start,end,italic,slant,gain,score,zeroScore}));
-          line.italicText = buildItalicText(text, scored);
-          markedWords += scored.filter(x=>x.italic).length;
-          let prev = false;
-          for (const x of scored) { if (x.italic && !prev) markedRuns++; prev=x.italic; }
+          const runs = groupItalicRuns(prelim);
+          line.italicRunMeta = runs;
+          line.italicWordMeta = prelim.map(({text,start,end,letters,candidate,italic,slant,gain,score,zeroScore}) => ({text,start,end,letters,candidate,italic,slant,gain,score,zeroScore}));
+          line.italicText = buildItalicText(text, prelim);
+          const acceptedRuns = runs.filter(r=>r.accepted).length;
+          const acceptedWords = prelim.filter(x=>x.italic).length;
+          markedRuns += acceptedRuns;
+          markedWords += acceptedWords;
+          line.italicAuto = acceptedRuns > 0;
         }
         canvas.width = 1; canvas.height = 1;
       }
       rebuildParagraphsFromSavedGeometry({ confirmOverwrite: false });
       saveCheckpoint();
       if (els.italicStatus) els.italicStatus.textContent = `${markedRuns} run${markedRuns === 1 ? "" : "s"} · ${markedWords} words`;
-      setStatus(`Automatic italic scan 2.0 checked ${scannedWords} words across ${scannedLines} OCR lines and marked ${markedRuns} high-confidence italic run${markedRuns === 1 ? "" : "s"} (${markedWords} words). Manual marking remains available for anything intentionally missed.`);
+      setStatus(`Automatic italic scan 2.1 checked ${scannedWords} words across ${scannedLines} OCR lines and marked ${markedRuns} precision-first run${markedRuns === 1 ? "" : "s"} (${markedWords} words). Single-word emphasis is intentionally left for manual rescue for now.`);
     } catch (err) {
       console.error(err);
       setStatus(`Automatic italic scan failed: ${err.message || err}`);
@@ -2614,45 +2630,69 @@
     }
   }
 
-
   function downloadItalicDiagnostics() {
     const lines = [];
+    const words = [];
+    const runs = [];
     state.pages.forEach((page, pageIndex) => {
       (page.layoutLines || []).forEach((line, lineIndex) => {
-        if (!line.italicMeta) return;
-        lines.push({
+        if (!line.italicMeta && !line.italicWordMeta?.length) return;
+        const base = {
           pageIndex,
           pageNumber: pageIndex + 1,
           fileName: page.fileName || state.files[pageIndex]?.name || "",
           lineIndex,
           text: line.text || "",
           box: line.box || null,
-          markedItalic: !!line.italicAuto,
-          ...line.italicMeta,
-        });
+        };
+        lines.push({ ...base, markedItalic: !!line.italicAuto, ...(line.italicMeta || {}) });
+        (line.italicWordMeta || []).forEach((word, wordIndex) => words.push({ ...base, wordIndex, ...word }));
+        (line.italicRunMeta || []).forEach((run, runIndex) => runs.push({ ...base, runIndex, ...run }));
       });
     });
-    if (!lines.length) {
+    if (!words.length && !lines.length) {
       setStatus("Run Auto italic scan first so Studio has italic scores to export.");
       return;
     }
-    const ranked = [...lines].sort((a,b) => (b.gain || 0) - (a.gain || 0));
+    const rankedLines = [...lines].sort((a,b) => (b.gain || 0) - (a.gain || 0));
+    const rankedWords = [...words].sort((a,b) => (b.gain || 0) - (a.gain || 0));
     const payload = {
-      format: "book-ocr-studio-italic-diagnostics-v1",
+      format: "book-ocr-studio-italic-diagnostics-v2",
       buildVersion: BUILD_VERSION,
       exportedAt: new Date().toISOString(),
       summary: {
         pages: state.pages.length,
         scoredLines: lines.length,
-        markedLines: lines.filter(x => x.markedItalic).length,
+        scoredWords: words.length,
+        candidateWords: words.filter(x => x.candidate).length,
+        markedWords: words.filter(x => x.italic).length,
+        candidateRuns: runs.length,
+        markedRuns: runs.filter(x => x.accepted).length,
       },
-      topCandidatesByGain: ranked.slice(0, 100),
+      thresholds: {
+        wordMinAbsSlant: 0.24,
+        wordMinGainNormal: 0.0080,
+        wordMinGainShort: 0.0115,
+        wordMinScore: 0.95,
+        runMinWords: 2,
+        runMinAverageGain: 0.0090,
+        runMinAverageAbsSlant: 0.24,
+        sameSlantDirectionRequired: true,
+        automaticSingleWordItalics: false,
+      },
+      topLineCandidatesByGain: rankedLines.slice(0, 100),
+      topWordCandidatesByGain: rankedWords.slice(0, 250),
+      acceptedRuns: runs.filter(x => x.accepted),
+      rejectedRuns: runs.filter(x => !x.accepted),
       lines,
+      words,
+      runs,
     };
     const safeTitle = cleanFilename(els.bookTitle?.value || "book");
     downloadBlob(new Blob([JSON.stringify(payload, null, 2)], {type:"application/json"}), `${safeTitle}-italic-diagnostics.json`);
-    setStatus(`Downloaded italic diagnostics for ${lines.length} scored OCR lines. Send me this JSON with the screenshots so we can calibrate against known italics.`);
+    setStatus(`Downloaded word-level italic diagnostics: ${words.length} words, ${runs.length} candidate runs, ${runs.filter(x=>x.accepted).length} accepted. This file now reflects the same decisions the EPUB exporter uses.`);
   }
+
 
   function applySafePolishToProject() {
     const polish = globalThis.BookOcrEpubPolish?.safePolishText;

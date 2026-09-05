@@ -12,12 +12,12 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=2.6.3" />
+  <link rel="stylesheet" href="styles.css?v=2.6.4" />
 </head>
 <body>
   <header class="topbar">
     <div>
-      <p class="eyebrow">LOCAL BOOK TOOL · 2.6.3 · Italic Detection 2.0</p>
+      <p class="eyebrow">LOCAL BOOK TOOL · 2.6.4 · Italic Precision + Diagnostics</p>
       <h1>Book OCR Studio</h1>
       <p class="subhead">Crop screenshots, OCR them one page at a time, batch OCR the whole book, review chapter starts or any page, and export TXT or EPUB.</p>
     </div>
@@ -177,11 +177,11 @@
       </div>
       <div class="subcard">
         <h3>Formatting Rescue</h3>
-        <p class="hint">Safe cleanup normalizes OCR ellipses and decorative scene dividers without rewriting prose, and now survives paragraph rebuilds. Auto Italic Scan scores source-image slant against each OCR line. Italic diagnostics exports every score so known italic lines can be compared directly with neighboring roman lines instead of tuning thresholds blindly.</p>
+        <p class="hint">Safe cleanup normalizes OCR ellipses and decorative scene dividers without rewriting prose, and now survives paragraph rebuilds. Auto Italic Scan is precision-first: it only auto-marks coherent multi-word runs and leaves single-word emphasis manual for now. Word-level diagnostics exports the exact candidates, grouped runs, thresholds, and final decisions used by EPUB export.</p>
         <div class="actions">
           <button id="safePolish" class="button secondary" type="button">Safe text cleanup</button>
           <button id="autoItalicScan" class="button secondary" type="button">Auto italic scan</button>
-          <button id="downloadItalicDiagnostics" class="button secondary" type="button">Download italic detection 2.0 diagnostics</button>
+          <button id="downloadItalicDiagnostics" class="button secondary" type="button">Download word-level italic diagnostics</button>
           <span id="polishStatus" class="progress-pill">Not run</span>
           <span id="italicStatus" class="progress-pill">Italics not scanned</span>
         </div>
@@ -236,8 +236,8 @@
   </dialog>
 
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
-  <script src="epub-polish.js?v=2.6.3"></script>
-  <script src="script-loader.js?v=2.6.3"></script>
+  <script src="epub-polish.js?v=2.6.4"></script>
+  <script src="script-loader.js?v=2.6.4"></script>
   <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
