@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.5.1-book-layout-profile";
+  const BUILD_VERSION = "2.5.2-layout-diagnostics";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -107,6 +107,7 @@
     repairLigatures: $("repairLigatures"),
     ligatureStatus: $("ligatureStatus"),
     rebuildParagraphs: $("rebuildParagraphs"),
+    downloadLayoutDiagnostics: $("downloadLayoutDiagnostics"),
     paragraphStatus: $("paragraphStatus"),
     epubInput: $("epubInput"),
     epubImportStatus: $("epubImportStatus"),
@@ -1556,11 +1557,54 @@
     if (!els.rebuildParagraphs) return;
     const available = state.pages.filter(page => Array.isArray(page.layoutLines) && page.layoutLines.length).length;
     els.rebuildParagraphs.disabled = state.processing || available === 0;
+    if (els.downloadLayoutDiagnostics) els.downloadLayoutDiagnostics.disabled = state.processing || available === 0;
     if (els.paragraphStatus) {
       els.paragraphStatus.textContent = available
         ? `${available}/${state.pages.length} pages have layout data`
         : "Needs OCR from this build";
     }
+  }
+
+
+  function downloadLayoutDiagnostics() {
+    const eligible = state.pages.filter(page => Array.isArray(page.layoutLines) && page.layoutLines.length);
+    if (!eligible.length) {
+      setStatus("No saved line geometry is available to export yet.");
+      return;
+    }
+    const bookProfile = buildBookLayoutProfile(eligible);
+    const payload = {
+      format: "book-ocr-studio-layout-diagnostics-v1",
+      buildVersion: BUILD_VERSION,
+      exportedAt: new Date().toISOString(),
+      book: {
+        title: els.bookTitle?.value || "",
+        author: els.bookAuthor?.value || "",
+        pageCount: state.pages.length,
+        geometryPageCount: eligible.length,
+      },
+      bookProfile,
+      pages: state.pages.map((page, index) => ({
+        index,
+        fileName: page.fileName || state.files[index]?.name || "",
+        text: page.text || "",
+        chapterStart: !!page.chapterStart,
+        chapterTitle: page.chapterTitle || "",
+        layoutMeta: page.layoutMeta || null,
+        layoutLines: Array.isArray(page.layoutLines) ? page.layoutLines : [],
+      })),
+    };
+    const safeTitle = safeFilename(els.bookTitle?.value || "book");
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${safeTitle}-layout-diagnostics.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    setStatus(`Downloaded layout diagnostics for ${eligible.length} page${eligible.length === 1 ? "" : "s"}.`);
   }
 
   function rebuildParagraphsFromSavedGeometry({ confirmOverwrite=true } = {}) {
@@ -2647,6 +2691,7 @@ ${coverSpine}${spine.join("\n")}
   els.downloadEpub.addEventListener("click", downloadEpub);
   els.repairLigatures.addEventListener("click", runSplitLigaturePolish);
   els.rebuildParagraphs?.addEventListener("click", () => rebuildParagraphsFromSavedGeometry({ confirmOverwrite: true }));
+  els.downloadLayoutDiagnostics?.addEventListener("click", downloadLayoutDiagnostics);
   els.scanDropcaps.addEventListener("click", scanDropcaps);
   els.acceptHighDropcaps.addEventListener("click", () => {
     state.dropcapCandidates

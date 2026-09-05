@@ -17,7 +17,7 @@
 <body>
   <header class="topbar">
     <div>
-      <p class="eyebrow">LOCAL BOOK TOOL · 2.5.1 · Book-Level Paragraph Profile</p>
+      <p class="eyebrow">LOCAL BOOK TOOL · 2.5.2 · Layout Diagnostics</p>
       <h1>Book OCR Studio</h1>
       <p class="subhead">Crop screenshots, OCR them one page at a time, batch OCR the whole book, review chapter starts or any page, and export TXT or EPUB.</p>
     </div>
@@ -169,6 +169,7 @@
         <p class="hint">PaddleOCR now saves line positions and uses first-line indentation as primary paragraph evidence. Rebuild from saved geometry later without re-running OCR. Rebuilding replaces current page text, so do it before manual text edits.</p>
         <div class="actions">
           <button id="rebuildParagraphs" class="button secondary" type="button" disabled>Rebuild paragraphs</button>
+          <button id="downloadLayoutDiagnostics" class="button secondary" type="button" disabled>Download layout diagnostics</button>
           <span id="paragraphStatus" class="progress-pill">Needs OCR from this build</span>
         </div>
       </div>
