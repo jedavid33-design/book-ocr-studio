@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.5.3-layout-diagnostics-download-fix";
+  const BUILD_VERSION = "2.5.4-two-lane-indent-fix";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -537,17 +537,53 @@
       .sort((a,b) => a.center - b.center);
     if (!clusters.length) return null;
 
-    // The body lane is the strongest recurring left edge. The paragraph-indent
-    // lane is the strongest recurring lane a modest distance to its right.
-    const body = clusters.slice().sort((a,b) => b.weight - a.weight || b.count - a.count)[0];
-    const minIndentDelta = Math.max(10, typicalH * 0.30);
-    const maxIndentDelta = Math.max(42, typicalH * 2.4);
-    const indentCandidates = clusters.filter(c => {
-      const delta = c.center - body.center;
-      return delta >= minIndentDelta && delta <= maxIndentDelta && c.count >= 3;
-    });
-    const indent = indentCandidates.sort((a,b) => b.weight - a.weight || b.count - a.count)[0] || null;
-    const indentDelta = indent ? indent.center - body.center : Math.max(14, typicalH * 0.58);
+    // Paragraph-first OCR lines can easily outnumber continuation lines, so
+    // frequency alone cannot tell us which recurring lane is the body margin.
+    // Look for two *strong* recurring lanes separated by a realistic first-line
+    // indent. When found, the left lane is the continuation/body margin and the
+    // right lane is the paragraph-start margin, regardless of which is larger.
+    const minIndentDelta = Math.max(12, typicalH * 0.65);
+    const maxIndentDelta = Math.max(52, typicalH * 1.9);
+    const minStrongCount = Math.max(8, Math.floor(allLines.length * 0.035));
+    const strong = clusters.filter(c => c.count >= minStrongCount);
+
+    let body = null;
+    let indent = null;
+    let bestPairScore = -Infinity;
+    for (let i = 0; i < strong.length; i++) {
+      for (let j = i + 1; j < strong.length; j++) {
+        const left = strong[i].center <= strong[j].center ? strong[i] : strong[j];
+        const right = left === strong[i] ? strong[j] : strong[i];
+        const delta = right.center - left.center;
+        if (delta < minIndentDelta || delta > maxIndentDelta) continue;
+        // Prefer pairs supported by lots of lines and separated by roughly one
+        // text-height, which is typical of ebook first-line indentation.
+        const support = left.count + right.count;
+        const idealDelta = typicalH * 1.15;
+        const distancePenalty = Math.abs(delta - idealDelta) / Math.max(1, typicalH);
+        const score = support - distancePenalty * 18;
+        if (score > bestPairScore) {
+          bestPairScore = score;
+          body = left;
+          indent = right;
+        }
+      }
+    }
+
+    // Fallback for layouts that do not expose a convincing two-lane pattern.
+    // Use the leftmost well-supported recurring text lane as the body margin;
+    // only adopt a right-hand indent lane when it has meaningful support.
+    if (!body) {
+      const recurring = clusters.filter(c => c.count >= Math.max(3, Math.floor(allLines.length * 0.01)));
+      body = (recurring.length ? recurring : clusters).slice().sort((a,b) => a.center - b.center)[0];
+      const indentCandidates = clusters.filter(c => {
+        const delta = c.center - body.center;
+        return delta >= minIndentDelta && delta <= maxIndentDelta && c.count >= Math.max(4, Math.floor(body.count * 0.08));
+      });
+      indent = indentCandidates.sort((a,b) => b.count - a.count || b.weight - a.weight)[0] || null;
+    }
+
+    const indentDelta = indent ? indent.center - body.center : Math.max(14, typicalH * 0.95);
 
     return {
       bodyLeft: body.center,
@@ -558,6 +594,7 @@
       learnedFromLines: allLines.length,
       bodyCount: body.count,
       indentCount: indent?.count || 0,
+      lanePairLearned: !!indent,
     };
   }
 
