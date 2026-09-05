@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.6.4-italic-precision-diagnostics";
+  const BUILD_VERSION = "2.6.5-italic-relative-precision";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -2542,7 +2542,14 @@
     return out;
   }
 
-  function groupItalicRuns(scored) {
+  function median(values) {
+    const a = values.filter(Number.isFinite).slice().sort((x,y)=>x-y);
+    if (!a.length) return 0;
+    const m = Math.floor(a.length/2);
+    return a.length % 2 ? a[m] : (a[m-1]+a[m])/2;
+  }
+
+  function groupItalicRuns(scored, lineResult, lineText) {
     const runs = [];
     let i = 0;
     while (i < scored.length) {
@@ -2553,10 +2560,29 @@
       const words = scored.slice(i, j);
       const avgGain = words.reduce((a,w)=>a+(w.gain||0),0) / words.length;
       const avgAbsSlant = words.reduce((a,w)=>a+Math.abs(w.slant||0),0) / words.length;
-      // Precision-first: auto-mark only coherent multi-word runs. Single-word
-      // emphasis stays manual until diagnostics prove a safe solo threshold.
-      const accepted = words.length >= 2 && avgGain >= 0.0090 && avgAbsSlant >= 0.24;
-      runs.push({ startWord:i, endWord:j-1, wordCount:words.length, sign, avgGain, avgAbsSlant, accepted });
+
+      // Compare the candidate to nearby roman-looking words on this same line.
+      // Absolute slant alone was noisy: two ordinary neighbors could agree by
+      // accident. A real inline italic run should stand out from its context.
+      const neighbors = scored.filter((_,k)=>k<i || k>=j).filter(w=>w.letters>=2);
+      const neighborAbsSlant = median(neighbors.map(w=>Math.abs(w.slant||0)));
+      const neighborGain = median(neighbors.map(w=>w.gain||0));
+      const slantLift = avgAbsSlant - neighborAbsSlant;
+      const gainLift = avgGain - neighborGain;
+      const relativeEvidence = neighbors.length >= 2 && slantLift >= 0.12 && gainLift >= 0.0040;
+
+      // Full-line italics need a separate route because there may be no roman
+      // neighbors to compare against. Keep it very strict and exclude headings.
+      const alphaWords = scored.filter(w=>w.letters>=2).length;
+      const allCaps = /^[^a-z]*[A-Z][^a-z]*$/.test(String(lineText||''));
+      const fullLineEvidence = alphaWords >= 3 && words.length >= Math.max(3, alphaWords-1) &&
+        !allCaps && Math.abs(lineResult?.slant||0) >= 0.28 && (lineResult?.gain||0) >= 0.0055;
+
+      const accepted = words.length >= 2 && avgGain >= 0.0090 && avgAbsSlant >= 0.24 &&
+        (relativeEvidence || fullLineEvidence);
+      runs.push({ startWord:i, endWord:j-1, wordCount:words.length, sign, avgGain, avgAbsSlant,
+        neighborWordCount:neighbors.length, neighborAbsSlant, neighborGain, slantLift, gainLift,
+        relativeEvidence, fullLineEvidence, accepted });
       if (accepted) for (let k=i;k<j;k++) scored[k].italic = true;
       i = j;
     }
@@ -2577,7 +2603,7 @@
         if (!Array.isArray(page.layoutLines) || !page.layoutLines.length) continue;
         const file = page.file || state.files[index];
         if (!file) continue;
-        setStatus(`Automatic italic scan 2.1 precision mode: page ${index + 1} of ${state.pages.length}…`);
+        setStatus(`Automatic italic scan 2.2 relative precision: page ${index + 1} of ${state.pages.length}…`);
         const img = await loadImageFromFile(file);
         const canvas = makeCroppedCanvas(img);
         for (const line of page.layoutLines) {
@@ -2605,7 +2631,7 @@
             return { ...w, ...r, letters, candidate, italic:false };
           });
 
-          const runs = groupItalicRuns(prelim);
+          const runs = groupItalicRuns(prelim, lineResult, text);
           line.italicRunMeta = runs;
           line.italicWordMeta = prelim.map(({text,start,end,letters,candidate,italic,slant,gain,score,zeroScore}) => ({text,start,end,letters,candidate,italic,slant,gain,score,zeroScore}));
           line.italicText = buildItalicText(text, prelim);
@@ -2620,7 +2646,7 @@
       rebuildParagraphsFromSavedGeometry({ confirmOverwrite: false });
       saveCheckpoint();
       if (els.italicStatus) els.italicStatus.textContent = `${markedRuns} run${markedRuns === 1 ? "" : "s"} · ${markedWords} words`;
-      setStatus(`Automatic italic scan 2.1 checked ${scannedWords} words across ${scannedLines} OCR lines and marked ${markedRuns} precision-first run${markedRuns === 1 ? "" : "s"} (${markedWords} words). Single-word emphasis is intentionally left for manual rescue for now.`);
+      setStatus(`Automatic italic scan 2.2 checked ${scannedWords} words across ${scannedLines} OCR lines and marked ${markedRuns} precision-first run${markedRuns === 1 ? "" : "s"} (${markedWords} words). Single-word emphasis is intentionally left for manual rescue for now.`);
     } catch (err) {
       console.error(err);
       setStatus(`Automatic italic scan failed: ${err.message || err}`);
@@ -2657,7 +2683,7 @@
     const rankedLines = [...lines].sort((a,b) => (b.gain || 0) - (a.gain || 0));
     const rankedWords = [...words].sort((a,b) => (b.gain || 0) - (a.gain || 0));
     const payload = {
-      format: "book-ocr-studio-italic-diagnostics-v2",
+      format: "book-ocr-studio-italic-diagnostics-v3",
       buildVersion: BUILD_VERSION,
       exportedAt: new Date().toISOString(),
       summary: {
@@ -2678,6 +2704,10 @@
         runMinAverageGain: 0.0090,
         runMinAverageAbsSlant: 0.24,
         sameSlantDirectionRequired: true,
+        relativeToLineSlantLift: 0.12,
+        relativeToLineGainLift: 0.0040,
+        fullLineMinAbsSlant: 0.28,
+        fullLineMinGain: 0.0055,
         automaticSingleWordItalics: false,
       },
       topLineCandidatesByGain: rankedLines.slice(0, 100),
