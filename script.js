@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.6.6-italic-hybrid-classifier";
+  const BUILD_VERSION = "2.6.7-italic-conservative-final";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -2603,8 +2603,8 @@
         surroundingSlantLift >= 0.16 && surroundingGainLift >= 0.0060;
       const runCoverage = scored.length ? words.length / scored.length : 0;
 
-      const accepted = words.length >= 2 && runCoverage <= 0.75 &&
-        avgGain >= 0.0120 && avgAbsSlant >= 0.30 &&
+      const accepted = words.length >= 3 && runCoverage <= 0.60 &&
+        avgGain >= 0.0140 && avgAbsSlant >= 0.32 &&
         relativeEvidence && surroundingEvidence;
       runs.push({ startWord:i, endWord:j-1, wordCount:words.length, sign, avgGain, avgAbsSlant,
         neighborWordCount:neighbors.length, neighborAbsSlant, neighborGain, slantLift, gainLift,
@@ -2632,7 +2632,7 @@
         if (!Array.isArray(page.layoutLines) || !page.layoutLines.length) continue;
         const file = page.file || state.files[index];
         if (!file) continue;
-        setStatus(`Automatic italic scan 2.3 hybrid classifier: page ${index + 1} of ${state.pages.length}…`);
+        setStatus(`Automatic italic scan 2.4 conservative hybrid: page ${index + 1} of ${state.pages.length}…`);
         const img = await loadImageFromFile(file);
         const canvas = makeCroppedCanvas(img);
         const lineScores = page.layoutLines.map(line => italicSlantScore(canvas, line.box));
@@ -2685,7 +2685,7 @@
       rebuildParagraphsFromSavedGeometry({ confirmOverwrite: false });
       saveCheckpoint();
       if (els.italicStatus) els.italicStatus.textContent = `${markedRuns} run${markedRuns === 1 ? "" : "s"} · ${markedWords} words`;
-      setStatus(`Automatic italic scan 2.3 checked ${scannedWords} words across ${scannedLines} OCR lines and marked ${markedRuns} hybrid run${markedRuns === 1 ? "" : "s"} (${markedWords} words). Full-line italics use line typography; inline runs must beat both same-line and surrounding-line baselines.`);
+      setStatus(`Automatic italic scan 2.4 checked ${scannedWords} words across ${scannedLines} OCR lines and marked ${markedRuns} hybrid run${markedRuns === 1 ? "" : "s"} (${markedWords} words). Full-line italics use line typography; inline runs must beat both same-line and surrounding-line baselines.`);
     } catch (err) {
       console.error(err);
       setStatus(`Automatic italic scan failed: ${err.message || err}`);
@@ -2722,7 +2722,7 @@
     const rankedLines = [...lines].sort((a,b) => (b.gain || 0) - (a.gain || 0));
     const rankedWords = [...words].sort((a,b) => (b.gain || 0) - (a.gain || 0));
     const payload = {
-      format: "book-ocr-studio-italic-diagnostics-v4",
+      format: "book-ocr-studio-italic-diagnostics-v5",
       buildVersion: BUILD_VERSION,
       exportedAt: new Date().toISOString(),
       summary: {
@@ -2739,15 +2739,15 @@
         wordMinGainNormal: 0.0080,
         wordMinGainShort: 0.0115,
         wordMinScore: 0.95,
-        runMinWords: 2,
-        runMinAverageGain: 0.0120,
-        runMinAverageAbsSlant: 0.30,
+        runMinWords: 3,
+        runMinAverageGain: 0.0140,
+        runMinAverageAbsSlant: 0.32,
         sameSlantDirectionRequired: true,
         relativeToLineSlantLift: 0.16,
         relativeToLineGainLift: 0.0060,
         surroundingLineSlantLift: 0.16,
         surroundingLineGainLift: 0.0060,
-        inlineRunMaxCoverage: 0.75,
+        inlineRunMaxCoverage: 0.60,
         fullLineMinAbsSlant: 0.30,
         fullLineMinGain: 0.0062,
         automaticSingleWordItalics: false,
