@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.1-dropcap-ligature-review";
+  const BUILD_VERSION = "2.7.1-dropcap-ligature-review-hotfix2";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -1877,6 +1877,21 @@
     return { prefix: match[1], word: match[2], start: match[1].length, end: match[0].length };
   }
 
+  function repairOpeningDialogueQuote(text, info, proposedWord) {
+    let value = String(text || "");
+    if (!proposedWord || !/^This$/i.test(proposedWord) || /[“"]/.test(info?.prefix || "")) return value;
+    // OCR can miss the opening quote beside a decorative dropcap but still
+    // capture the closing quote immediately before a dialogue tag:
+    //   his is the training room, " I tell Milo.
+    // Reconstruct that as "This is the training room," I tell Milo.
+    const re = /^(This\b[^.!?\n]{0,180}),\s*([“"])\s*(I\s+(?:tell|told|say|said|ask|asked|add|added|reply|replied|answer|answered)\b)/i;
+    const m = value.match(re);
+    if (!m) return value;
+    const quote = m[2] === "“" ? "“" : "\"";
+    const close = quote === "“" ? "”" : "\"";
+    return value.replace(re, `${quote}$1,${close} $3`);
+  }
+
   function excerpt(text, limit = 150) {
     const flat = String(text || "").replace(/\s+/g, " ").trim();
     return flat.length > limit ? `${flat.slice(0, limit).trim()}…` : flat;
@@ -2161,6 +2176,7 @@
       (expectedInitial && !/^[A-Za-z]$/u.test(fragment.value))
     );
     if (mayRemoveFragment) proposedText = removeDetachedToken(proposedText, fragment, info.start + proposedWord.length);
+    proposedText = repairOpeningDialogueQuote(proposedText, info, proposedWord);
     if (opening.fullText && opening.startOffset > 0) {
       proposedText = `${opening.fullText.slice(0, opening.startOffset)}${proposedText}`;
     }
@@ -3005,6 +3021,7 @@
   function openLigatureReview() {
     syncCurrentEditor();
     const candidates = collectUncertainLigatures();
+    setStatus(candidates.length ? `Opening ${candidates.length} uncertain split-ligature candidate${candidates.length===1?"":"s"} for review…` : "No uncertain split-ligature candidates remain.");
     els.ligatureReviewSummary.textContent = candidates.length ? `${candidates.length} uncertain candidate${candidates.length===1?"":"s"}. Nothing changes unless you press Repair.` : "No uncertain split-ligature candidates remain.";
     els.ligatureReviewList.innerHTML = "";
     candidates.forEach((c, idx) => {
@@ -3025,7 +3042,23 @@
       });
       els.ligatureReviewList.appendChild(item);
     });
-    els.ligatureReviewDialog.showModal();
+    const dialog = els.ligatureReviewDialog;
+    if (!dialog) {
+      alert("The ligature review panel did not load. Refresh the app and try again.");
+      return;
+    }
+    try {
+      if (typeof dialog.showModal === "function") {
+        if (!dialog.open) dialog.showModal();
+      } else {
+        dialog.setAttribute("open", "");
+      }
+    } catch (error) {
+      console.warn("showModal failed; using inline dialog fallback", error);
+      dialog.setAttribute("open", "");
+    }
+    dialog.classList.add("forced-open");
+    requestAnimationFrame(() => dialog.scrollIntoView({ behavior: "smooth", block: "start" }));
   }
 
   function runSplitLigaturePolish() {
