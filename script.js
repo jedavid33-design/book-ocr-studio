@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.1-native-review-loaderfix";
+  const BUILD_VERSION = "2.7.1-native-review-render-fix";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -3000,6 +3000,15 @@
       node = walker.nextNode();
     }
     return { fixedCount, ambiguousCount };
+  }
+
+  function escapeHtml(value) {
+    return String(value ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
   }
 
   function ligatureCandidateKey(candidate, pageIndex) {
