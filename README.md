@@ -1,3 +1,14 @@
+# Book OCR Studio 2.5.0
+
+## New in 2.5.0
+- Reconstructs EPUB paragraphs from PaddleOCR page geometry instead of treating every OCR line as structural.
+- Uses visual vertical spacing plus conservative first-line indentation evidence to preserve real paragraph breaks.
+- Joins ordinary wrapped OCR lines inside a paragraph.
+- Joins paragraphs that clearly continue across screenshot/page boundaries, including de-hyphenation at the boundary.
+- Preserves scene-break markers as centered semantic EPUB paragraphs.
+- Exports cleaner semantic `<p>` markup with book-like paragraph indentation rather than one-em-per-paragraph spacing.
+- Keeps chapter markers, Dropcap Rescue, Message-page OCR, and Split Ligature Repair intact.
+
 # Book OCR Studio 2.4.1
 
 ## New in 2.4.1

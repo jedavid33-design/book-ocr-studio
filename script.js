@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.4.1-split-ligature-recall";
+  const BUILD_VERSION = "2.5.0-epub-structure";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -429,6 +429,8 @@
     if (!lines.length) return "";
     const heights = lines.map(x => x.box.h).filter(h => h > 2);
     const typicalH = median(heights) || 28;
+    const lefts = lines.map(x => x.box.x).filter(Number.isFinite);
+    const bodyLeft = median(lefts) || 0;
     const out=[];
     let prev=null;
     for (const line of lines) {
@@ -436,13 +438,15 @@
         const verticalGap = line.box.y - (prev.box.y + prev.box.h);
         const sameVisualRow = Math.abs(line.box.cy-prev.box.cy) <= typicalH * 0.48;
         if (sameVisualRow) {
-          // Rare same-row fragments: append in reading order.
           out[out.length-1] = `${out[out.length-1]} ${line.text}`.replace(/\s{2,}/g," ").trim();
           prev=line;
           continue;
         }
-        const blankThreshold = messageMode ? typicalH * 0.58 : typicalH * 0.95;
-        if (verticalGap > blankThreshold) out.push("");
+        const blankThreshold = messageMode ? typicalH * 0.58 : typicalH * 0.88;
+        const visiblyIndented = !messageMode && line.box.x > bodyLeft + typicalH * 0.72;
+        const previousLooksComplete = /[.!?][”"')\]]?$/.test(prev.text.trim());
+        const paragraphIndent = visiblyIndented && previousLooksComplete;
+        if (verticalGap > blankThreshold || paragraphIndent) out.push("");
       }
       out.push(line.text);
       prev=line;
@@ -659,7 +663,41 @@
     return normalized
       .split(/\n{2,}/)
       .map(block => block.split("\n").map(line => line.trim()).filter(Boolean).join(" ").trim())
+      .map(paragraph => paragraph.replace(/([A-Za-z]{2,})-\s+([a-z]{2,})\b/g, "$1$2"))
       .filter(Boolean);
+  }
+
+  function looksLikePageContinuation(previous, next) {
+    const a = String(previous || "").trim();
+    const b = String(next || "").trim();
+    if (!a || !b) return false;
+    if (/^(?:chapter\b|prologue\b|epilogue\b|interlude\b|\d{1,3}$)/i.test(b)) return false;
+    if (/^(?:[*•◆◇❦⁂]|-{3,}|_{3,})/.test(b)) return false;
+    if (/^[“"']?[A-Z][A-Z\s.'&-]{2,24}$/.test(b)) return false;
+    // A sentence plainly unfinished at the screenshot boundary should remain the
+    // same EPUB paragraph. Lower-case continuations are also strong evidence.
+    if (!/[.!?][”"')\]]?$/.test(a)) return true;
+    return /^[a-z]/.test(b);
+  }
+
+  function exportSectionParagraphs(section) {
+    const paragraphs = [];
+    for (let pageIndex = section.start; pageIndex < section.end; pageIndex++) {
+      let pageText = state.pages[pageIndex]?.text || "";
+      if (pageIndex === section.start && state.pages[pageIndex]?.chapterStart) {
+        pageText = stripExportedChapterHeading(pageText, section.title);
+      }
+      const pageParagraphs = exportParagraphs(pageText);
+      if (paragraphs.length && pageParagraphs.length && looksLikePageContinuation(paragraphs.at(-1).text, pageParagraphs[0])) {
+        const first = pageParagraphs.shift();
+        const previous = paragraphs.at(-1);
+        previous.text = /-$/u.test(previous.text)
+          ? `${previous.text.slice(0, -1)}${first}`
+          : `${previous.text} ${first}`;
+      }
+      pageParagraphs.forEach((text, paragraphIndex) => paragraphs.push({ text, pageIndex, paragraphIndex }));
+    }
+    return paragraphs;
   }
 
   function pageImageUrl(file) {
@@ -2133,17 +2171,11 @@
     sections.forEach((section, sectionIndex) => {
       const fileName = `chapter-${String(sectionIndex + 1).padStart(3, "0")}.xhtml`;
       const itemId = `chapter-${sectionIndex + 1}`;
-      const bodyParagraphs = [];
-
-      for (let pageIndex = section.start; pageIndex < section.end; pageIndex++) {
-        let pageText = state.pages[pageIndex]?.text || "";
-        if (pageIndex === section.start && state.pages[pageIndex]?.chapterStart) {
-          pageText = stripExportedChapterHeading(pageText, section.title);
-        }
-        exportParagraphs(pageText).forEach((paragraph, paragraphIndex) => {
-          bodyParagraphs.push(`<p id="p-${pageIndex + 1}-${paragraphIndex + 1}">${escapeXml(paragraph)}</p>`);
-        });
-      }
+      const bodyParagraphs = exportSectionParagraphs(section).map(({ text, pageIndex, paragraphIndex }) => {
+        const sceneBreak = /^(?:[*•◆◇❦⁂](?:\s*[*•◆◇❦⁂]){0,4}|-{3,}|_{3,})$/.test(text);
+        if (sceneBreak) return `<p class="scene-break" id="p-${pageIndex + 1}-${paragraphIndex + 1}">${escapeXml(text)}</p>`;
+        return `<p id="p-${pageIndex + 1}-${paragraphIndex + 1}">${escapeXml(text)}</p>`;
+      });
 
       zip.file(`EPUB/${fileName}`, `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
@@ -2178,7 +2210,7 @@
 </body>
 </html>`);
 
-    zip.file("EPUB/style.css", `body{font-family:serif;line-height:1.5;margin:5%;}p{display:block;margin:0 0 1em;white-space:normal;}h1{font-size:1.5em;margin:0 0 1.25em;}`);
+    zip.file("EPUB/style.css", `body{font-family:serif;line-height:1.5;margin:5%;}p{display:block;margin:0;text-indent:1.2em;white-space:normal;}h1{font-size:1.5em;margin:0 0 1.25em;}h1+p,p.scene-break+p{ text-indent:0; }.scene-break{text-indent:0;text-align:center;margin:1em 0;}`);
 
     let coverManifest = "";
     let coverMeta = "";
