@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.1-native-review-render-fix";
+  const BUILD_VERSION = "2.7.2-final-polish-kindle-first";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -128,6 +128,12 @@
     runRegression: $("runRegression"),
     regressionStatus: $("regressionStatus"),
     regressionResults: $("regressionResults"),
+    finalPolish: $("finalPolish"),
+    finalPolishStatus: $("finalPolishStatus"),
+    finalPolishResults: $("finalPolishResults"),
+    finalPolishReview: $("finalPolishReview"),
+    finalPolishReviewToggle: $("finalPolishReviewToggle"),
+    finalPolishReviewList: $("finalPolishReviewList"),
     epubInput: $("epubInput"),
     epubImportStatus: $("epubImportStatus"),
     dropcapSection: $("dropcapSection"),
@@ -2918,6 +2924,165 @@
     return report;
   }
 
+
+  function finalPolishAudit() {
+    const issues = [];
+    const checks = [];
+    const addCheck = (name, status, detail) => checks.push({ name, status, detail });
+
+    let wrapHyphens = 0;
+    state.pages.forEach((page, pageIndex) => {
+      const lines = Array.isArray(page.layoutLines) ? page.layoutLines : [];
+      for (let i = 0; i < lines.length - 1; i++) {
+        const a = String(lines[i]?.text || "").trim();
+        const b = String(lines[i+1]?.text || "").trim();
+        const m = a.match(/([A-Za-z]{2,})-$/);
+        const n = b.match(/^([a-z][A-Za-z'-]*)/);
+        if (m && n) {
+          wrapHyphens++;
+          issues.push({
+            type: "Wrap hyphen",
+            pageIndex,
+            fileName: page.fileName || `Page ${pageIndex + 1}`,
+            current: `${m[1]}- ${n[1]}`,
+            suggestion: `${m[1]}${n[1]}`,
+            detail: "Source geometry shows a hyphen at the end of one OCR line followed by lowercase text. Review before joining because legitimate hyphenated words can wrap too."
+          });
+        }
+      }
+    });
+    addCheck("Wrap-hyphen audit", wrapHyphens ? "warn" : "pass",
+      wrapHyphens ? `${wrapHyphens} geometry-backed candidate${wrapHyphens===1?"":"s"} left for review.` : "No geometry-backed wrap-hyphen candidates found.");
+
+    let quoteFlags = 0;
+    state.pages.forEach((page, pageIndex) => {
+      exportParagraphs(page.text || "").forEach((para, paraIndex) => {
+        const plain = stripItalicMarkers(para);
+        const straight = (plain.match(/"/g) || []).length;
+        if (straight % 2 === 1) {
+          quoteFlags++;
+          issues.push({
+            type: "Quote balance",
+            pageIndex,
+            fileName: page.fileName || `Page ${pageIndex + 1}`,
+            current: plain.slice(0, 220),
+            detail: `Paragraph ${paraIndex + 1} contains an odd number of straight quotation marks. This can be valid across multi-paragraph dialogue, so it is review-only.`
+          });
+        }
+      });
+    });
+    addCheck("Quote audit", quoteFlags ? "warn" : "pass",
+      quoteFlags ? `${quoteFlags} paragraph${quoteFlags===1?"":"s"} deserve a quick quote check; no quote was guessed.` : "No obvious odd straight-quote counts found.");
+
+    let fragments = 0;
+    state.pages.forEach((page, pageIndex) => {
+      const paras = exportParagraphs(page.text || "");
+      paras.forEach((para, paraIndex) => {
+        const plain = stripItalicMarkers(para).trim();
+        if (plain && plain !== "* * *" && plain.length <= 24 &&
+            !/^(?:CHAPTER\b|PROLOGUE\b|EPILOGUE\b)/i.test(plain) &&
+            !/^[A-Z][A-Z .'-]{2,}$/.test(plain) &&
+            !/[.!?…"”']$/.test(plain)) {
+          fragments++;
+          issues.push({
+            type: "Short paragraph",
+            pageIndex,
+            fileName: page.fileName || `Page ${pageIndex + 1}`,
+            current: plain,
+            detail: `Paragraph ${paraIndex + 1} is only ${plain.length} characters and has no terminal punctuation. Review whether it belongs with a neighbor.`
+          });
+        }
+      });
+    });
+    addCheck("Paragraph-fragment audit", fragments ? "warn" : "pass",
+      fragments ? `${fragments} short fragment${fragments===1?"":"s"} left for review.` : "No suspicious tiny paragraph fragments found.");
+
+    const chapters = state.pages.filter(p => p.chapterStart).length;
+    addCheck("Chapter structure", chapters ? "pass" : "warn",
+      chapters ? `${chapters} chapter start${chapters===1?"":"s"} marked for EPUB navigation.` : "No chapter starts are marked.");
+
+    const ligatures = collectUncertainLigatures().length;
+    addCheck("Outstanding ligature review", ligatures ? "warn" : "pass",
+      ligatures ? `${ligatures} uncertain split-ligature candidate${ligatures===1?"":"s"} still await review.` : "No uncertain split-ligature candidates remain.");
+
+    const dropcaps = (state.dropcapCandidates || []).filter(c => c.status === "pending").length;
+    addCheck("Outstanding dropcap review", dropcaps ? "warn" : "pass",
+      dropcaps ? `${dropcaps} dropcap candidate${dropcaps===1?"":"s"} still await review.` : "No pending Dropcap Rescue candidates.");
+
+    return { issues, checks };
+  }
+
+  function renderFinalPolishReport(report) {
+    if (!els.finalPolishResults) return;
+    els.finalPolishResults.innerHTML = "";
+    report.checks.forEach(check => {
+      const row = document.createElement("div");
+      row.className = `regression-row ${check.status}`;
+      row.innerHTML = `<strong>${escapeHtml(check.name)}</strong><span>${escapeHtml(check.detail)}</span>`;
+      els.finalPolishResults.appendChild(row);
+    });
+    els.finalPolishResults.classList.remove("hidden");
+
+    if (els.finalPolishReview && els.finalPolishReviewList && els.finalPolishReviewToggle) {
+      els.finalPolishReviewList.innerHTML = "";
+      report.issues.forEach(issue => {
+        const item = document.createElement("div");
+        item.className = "ligature-review-item";
+        item.innerHTML = `<strong>${escapeHtml(issue.type)} · ${escapeHtml(issue.fileName)}</strong>
+          ${issue.current ? `<p class="ligature-context">${escapeHtml(issue.current)}</p>` : ""}
+          ${issue.suggestion ? `<p class="hint">Possible join: <b>${escapeHtml(issue.suggestion)}</b></p>` : ""}
+          <p class="hint">${escapeHtml(issue.detail)}</p>`;
+        els.finalPolishReviewList.appendChild(item);
+      });
+      els.finalPolishReview.classList.toggle("hidden", report.issues.length === 0);
+      els.finalPolishReviewToggle.textContent = `Review uncertain (${report.issues.length})`;
+    }
+  }
+
+  function runFinalPolish() {
+    if (!state.pages.length || state.processing) {
+      setStatus("Process or import a book before running Final Polish.");
+      return;
+    }
+    syncCurrentEditor();
+    const polish = globalThis.BookOcrEpubPolish?.finalPolishText;
+    if (typeof polish !== "function") {
+      setStatus("Final Polish helper did not load. Refresh and try again.");
+      return;
+    }
+
+    let fixedCount = 0, punctuationSpacing = 0, quoteSpacing = 0, dashSpacing = 0;
+    for (const page of state.pages) {
+      const result = polish(page.text || "");
+      page.text = result.text;
+      fixedCount += result.fixedCount || 0;
+      punctuationSpacing += result.punctuationSpacing || 0;
+      quoteSpacing += result.quoteSpacing || 0;
+      dashSpacing += result.dashSpacing || 0;
+    }
+    saveCheckpoint();
+    renderReview();
+
+    const audit = finalPolishAudit();
+    const report = {
+      buildVersion: BUILD_VERSION,
+      runAt: new Date().toISOString(),
+      fixedCount,
+      punctuationSpacing,
+      quoteSpacing,
+      dashSpacing,
+      ...audit
+    };
+    renderFinalPolishReport(report);
+
+    const notes = audit.checks.filter(c => c.status === "warn").length;
+    if (els.finalPolishStatus) {
+      els.finalPolishStatus.textContent = `${fixedCount} safe fix${fixedCount===1?"":"es"} · ${audit.issues.length} review`;
+    }
+    setStatus(`Final Polish complete: ${fixedCount} safe Kindle-first cleanup fix${fixedCount===1?"":"es"} applied. ${audit.issues.length} uncertain item${audit.issues.length===1?"":"s"} left untouched for review${notes ? ` across ${notes} audit categor${notes===1?"y":"ies"}` : ""}.`);
+    return report;
+  }
+
   async function repairBookGuided() {
     if (!state.pages.length || state.processing) {
       setStatus("Process or import a book before running Guided Repair.");
@@ -3458,6 +3623,7 @@ ${coverSpine}${spine.join("\n")}
   els.downloadEpub.addEventListener("click", downloadEpub);
   els.repairBook?.addEventListener("click", repairBookGuided);
   els.runRegression?.addEventListener("click", runRegressionCheck);
+  els.finalPolish?.addEventListener("click", runFinalPolish);
   els.safePolish?.addEventListener("click", applySafePolishToProject);
   els.autoItalicScan?.addEventListener("click", autoScanItalics);
   els.downloadItalicDiagnostics?.addEventListener("click", downloadItalicDiagnostics);

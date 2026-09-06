@@ -123,7 +123,38 @@ traffic waffle waffled waffles waffling
     };
   }
 
-  const api = Object.freeze({ repairSplitLigatures, listSplitLigatureCandidates, normalizeEllipses, normalizeSceneMarkers, repairObviousDialogueClosers, safePolishText });
+
+  function finalPolishText(input) {
+    let text = String(input ?? "");
+    const counts = { punctuationSpacing: 0, quoteSpacing: 0, dashSpacing: 0 };
+
+    // Remove spaces that OCR sometimes inserts immediately before closing punctuation.
+    text = text.replace(/[ \t]+([,;:!?])/g, (m, punct) => {
+      counts.punctuationSpacing += 1;
+      return punct;
+    });
+
+    // Remove a space between a closing quote and punctuation: word" , -> word",
+    text = text.replace(/["”][ \t]+([,;:!?])/g, (m, punct) => {
+      counts.quoteSpacing += 1;
+      return m[0] + punct;
+    });
+
+    // Normalize whitespace around em dashes only when an em dash already exists.
+    text = text.replace(/[ \t]*—[ \t]*/g, (m) => {
+      if (m === "—") return m;
+      counts.dashSpacing += 1;
+      return "—";
+    });
+
+    return {
+      text,
+      fixedCount: counts.punctuationSpacing + counts.quoteSpacing + counts.dashSpacing,
+      ...counts,
+    };
+  }
+
+  const api = Object.freeze({ repairSplitLigatures, listSplitLigatureCandidates, normalizeEllipses, normalizeSceneMarkers, repairObviousDialogueClosers, safePolishText, finalPolishText });
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   if (typeof globalThis !== "undefined") globalThis.BookOcrEpubPolish = api;
 })();

@@ -1,4 +1,4 @@
-# Book OCR Studio 2.7.1
+# Book OCR Studio 2.7.2
 
 ## New in 2.7.1
 - Adds **Guided Repair**: one button runs paragraph rebuild, conservative Auto Italics, Safe Text Cleanup, split-ligature repair, then Dropcap Rescue. High-confidence dropcaps are accepted automatically; uncertain candidates remain for review.
@@ -79,3 +79,6 @@ v2.6.5: Added exportable italic detection 2.0 diagnostics with per-line slant/ga
 
 
 2.7.1: Dropcap Rescue now handles the fresh regression cases eese→Reese and quoted his→This while preserving opening punctuation; detached matching capitals are removed from their orphaned position when safe.
+
+
+2.7.2 Final Polish: adds a Kindle-first safe cleanup pass plus review-only audits for geometry-backed wrap hyphens, quote balance, suspicious short paragraph fragments, chapter structure, and outstanding ligature/dropcap review. Ambiguous text is not auto-changed.
