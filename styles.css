@@ -617,3 +617,25 @@ dialog::backdrop { background: rgba(30,25,20,.48); backdrop-filter: blur(5px); }
 }
 .final-polish-card h3 { margin-bottom: 4px; }
 .final-polish-card .regression-results { margin-top: 12px; }
+
+/* v2.7.3 actionable Repair + Final Polish review */
+.guided-repair-card #repairReview,
+.final-polish-card #finalPolishReview {
+  margin-top: 14px;
+}
+.final-polish-card .final-polish-row {
+  grid-template-columns: minmax(170px, 240px) minmax(0, 1fr);
+  gap: 14px;
+}
+.final-polish-card .final-polish-row strong {
+  overflow-wrap: normal;
+}
+.issue-actions {
+  margin-top: 10px;
+}
+@media (max-width: 720px) {
+  .final-polish-card .final-polish-row {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+}

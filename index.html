@@ -12,13 +12,13 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=2.7.2-final-polish" />
+  <link rel="stylesheet" href="styles.css?v=2.7.3-actionable-review" />
 </head>
 <body>
   <header class="topbar">
     <div>
-      <p class="eyebrow">LOCAL BOOK TOOL · 2.7.2 · Final Polish</p>
-      <div id="buildIdentifier" class="build-identifier">BUILD 2.7.2 · FINAL POLISH · KINDLE-FIRST</div>
+      <p class="eyebrow">LOCAL BOOK TOOL · 2.7.3 · Actionable Review</p>
+      <div id="buildIdentifier" class="build-identifier">BUILD 2.7.3 · ACTIONABLE REVIEW · KINDLE-FIRST</div>
       <h1>Book OCR Studio</h1>
       <p class="subhead">Crop screenshots, OCR them one page at a time, batch OCR the whole book, review chapter starts or any page, and export TXT or EPUB.</p>
     </div>
@@ -174,6 +174,13 @@
           <button id="repairBook" class="button primary" type="button">Repair Book</button>
           <span id="repairBookStatus" class="progress-pill">Ready</span>
         </div>
+        <details id="repairReview" class="ligature-inline-review hidden">
+          <summary id="repairReviewToggle">Review repairs (0)</summary>
+          <div class="ligature-inline-body">
+            <p class="hint">Only unresolved Repair Book items appear here. Fix applies the proposed repair; discard/keep leaves the OCR text unchanged.</p>
+            <div id="repairReviewList" class="review-list"></div>
+          </div>
+        </details>
       </div>
       <div class="subcard final-polish-card">
         <h3>✨ Final Polish</h3>
@@ -280,8 +287,8 @@
   </dialog>
 
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
-  <script src="epub-polish.js?v=2.7.2-final-polish"></script>
-  <script src="script-loader.js?v=2.7.2-final-polish"></script>
+  <script src="epub-polish.js?v=2.7.3-actionable-review"></script>
+  <script src="script-loader.js?v=2.7.3-actionable-review"></script>
   <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {

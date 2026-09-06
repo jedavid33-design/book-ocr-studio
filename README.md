@@ -82,3 +82,6 @@ v2.6.5: Added exportable italic detection 2.0 diagnostics with per-line slant/ga
 
 
 2.7.2 Final Polish: adds a Kindle-first safe cleanup pass plus review-only audits for geometry-backed wrap hyphens, quote balance, suspicious short paragraph fragments, chapter structure, and outstanding ligature/dropcap review. Ambiguous text is not auto-changed.
+
+
+2.7.3 Actionable Review: Repair Book now has one unresolved-repair drawer with Fix/Discard or Keep actions. Final Polish review items are actionable (join/keep wrap hyphens, merge/keep paragraph fragments, dismiss/edit quote checks), and high-confidence lowercase paragraph continuations merge automatically before quote auditing. Final Polish summary layout is widened for readability.

@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.2-final-polish-kindle-first";
+  const BUILD_VERSION = "2.7.3-actionable-review-kindle-first";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -24,6 +24,8 @@
     bookLayoutProfile: null,
     lastRegressionReport: null,
     ignoredLigatureCandidates: new Set(),
+    ignoredFinalPolishIssues: new Set(),
+    lastFinalPolishCounts: null,
   };
 
   let PaddleOCRClass = null;
@@ -125,6 +127,9 @@
     paragraphStatus: $("paragraphStatus"),
     repairBook: $("repairBook"),
     repairBookStatus: $("repairBookStatus"),
+    repairReview: $("repairReview"),
+    repairReviewToggle: $("repairReviewToggle"),
+    repairReviewList: $("repairReviewList"),
     runRegression: $("runRegression"),
     regressionStatus: $("regressionStatus"),
     regressionResults: $("regressionResults"),
@@ -2925,10 +2930,152 @@
   }
 
 
+
+  function pageBlocks(page) {
+    return normalizedPageText(page?.text || "").split(/\n{2,}/).map(s => s.trim()).filter(Boolean);
+  }
+
+  function writePageBlocks(page, blocks) {
+    page.text = blocks.filter(Boolean).join("\n\n");
+    page.chapterCandidate = chapterHeuristic(page.text);
+  }
+
+  function isStructuralBlock(text) {
+    const s = stripItalicMarkers(String(text || "")).trim();
+    return !s || s === "* * *" ||
+      /^(?:CHAPTER\b|PROLOGUE\b|EPILOGUE\b)/i.test(s) ||
+      /^[A-Z][A-Z .'-]{2,}$/.test(s);
+  }
+
+  function autoMergeStrongContinuations() {
+    let merged = 0;
+    state.pages.forEach(page => {
+      const blocks = pageBlocks(page);
+      let changed = false;
+      for (let i = 0; i < blocks.length - 1; ) {
+        const a = stripItalicMarkers(blocks[i]).trim();
+        const b = stripItalicMarkers(blocks[i + 1]).trim();
+        const aEndsOpen = /[A-Za-z0-9,;:]$/.test(a) && !/[.!?…]["”'’)]?$/.test(a);
+        const bContinues = /^[“"‘']?[a-z]/.test(b);
+        if (!isStructuralBlock(a) && !isStructuralBlock(b) && aEndsOpen && bContinues) {
+          blocks[i] = `${blocks[i].trim()} ${blocks[i + 1].trim()}`.replace(/\s+/g, " ");
+          blocks.splice(i + 1, 1);
+          merged++;
+          changed = true;
+          continue;
+        }
+        i++;
+      }
+      if (changed) writePageBlocks(page, blocks);
+    });
+    if (merged) {
+      saveCheckpoint();
+      renderReview();
+    }
+    return merged;
+  }
+
+  function finalIssueKey(issue) {
+    return [
+      issue.type || "",
+      issue.pageIndex ?? "",
+      issue.paraIndex ?? "",
+      issue.current || "",
+      issue.suggestion || ""
+    ].join("|");
+  }
+
+  function jumpToPage(pageIndex) {
+    if (!Number.isInteger(pageIndex) || !state.pages[pageIndex]) return;
+    state.reviewMode = "all";
+    state.currentPageIndex = pageIndex;
+    renderReview();
+    els.reviewSection?.scrollIntoView({ behavior: "smooth", block: "start" });
+    setStatus(`Opened page ${pageIndex + 1} for manual review.`);
+  }
+
+  function renderRepairReview() {
+    if (!els.repairReview || !els.repairReviewToggle || !els.repairReviewList) return;
+    const ligatures = collectUncertainLigatures();
+    const dropcaps = (state.dropcapCandidates || []).filter(c => c.status === "pending");
+    const total = ligatures.length + dropcaps.length;
+
+    els.repairReview.classList.toggle("hidden", total === 0);
+    els.repairReviewToggle.textContent = `Review repairs (${total})`;
+    els.repairReviewList.innerHTML = "";
+
+    dropcaps.forEach(candidate => {
+      const item = document.createElement("div");
+      item.className = "ligature-review-item";
+      item.innerHTML = `<strong>Dropcap · Page ${candidate.pageIndex + 1}</strong>
+        <p class="hint">${escapeHtml(candidate.reason || "Uncertain chapter-opening repair.")}</p>
+        <p class="ligature-context"><b>Before:</b> ${escapeHtml(excerpt(candidate.before || candidate.text || ""))}</p>
+        <p class="ligature-context"><b>Proposed:</b> ${escapeHtml(excerpt(candidate.proposed || ""))}</p>
+        <div class="actions">
+          <button class="button secondary fix" type="button">Fix</button>
+          <button class="button ghost discard" type="button">Discard</button>
+          <button class="button ghost page" type="button">Open page</button>
+        </div>`;
+      item.querySelector(".fix").addEventListener("click", () => {
+        applyDropcap(candidate, candidate.proposed);
+        saveCheckpoint();
+        renderRepairReview();
+        setStatus(`Applied Dropcap Rescue on page ${candidate.pageIndex + 1}.`);
+      });
+      item.querySelector(".discard").addEventListener("click", () => {
+        rejectDropcap(candidate);
+        saveCheckpoint();
+        renderRepairReview();
+        setStatus(`Discarded the Dropcap Rescue suggestion on page ${candidate.pageIndex + 1}.`);
+      });
+      item.querySelector(".page").addEventListener("click", () => jumpToPage(candidate.pageIndex));
+      els.repairReviewList.appendChild(item);
+    });
+
+    ligatures.forEach(c => {
+      const item = document.createElement("div");
+      item.className = "ligature-review-item";
+      item.innerHTML = `<strong>Split ligature · ${escapeHtml(c.fileName)}</strong>
+        <p class="ligature-context">${escapeHtml(c.context)}</p>
+        <p class="hint">Candidate: <b>${escapeHtml(c.original)}</b> → <b>${escapeHtml(c.joined)}</b></p>
+        <div class="actions">
+          <button class="button secondary fix" type="button">Fix</button>
+          <button class="button ghost keep" type="button">Keep as-is</button>
+          <button class="button ghost page" type="button">Open page</button>
+        </div>`;
+      item.querySelector(".fix").addEventListener("click", () => {
+        const page = state.pages[c.pageIndex];
+        const text = page?.text || "";
+        const exactAtIndex = text.slice(c.index, c.index + c.original.length) === c.original;
+        const pos = exactAtIndex ? c.index : text.indexOf(c.original);
+        if (pos >= 0) {
+          page.text = text.slice(0, pos) + c.joined + text.slice(pos + c.original.length);
+          saveCheckpoint();
+          renderReview();
+          renderLigatureReview();
+          renderRepairReview();
+          setStatus(`Repaired “${c.original}” → “${c.joined}”.`);
+        }
+      });
+      item.querySelector(".keep").addEventListener("click", () => {
+        state.ignoredLigatureCandidates.add(c.key);
+        renderLigatureReview();
+        renderRepairReview();
+        setStatus(`Kept “${c.original}” as-is.`);
+      });
+      item.querySelector(".page").addEventListener("click", () => jumpToPage(c.pageIndex));
+      els.repairReviewList.appendChild(item);
+    });
+  }
+
   function finalPolishAudit() {
     const issues = [];
     const checks = [];
     const addCheck = (name, status, detail) => checks.push({ name, status, detail });
+    const addIssue = (issue) => {
+      issue.key = finalIssueKey(issue);
+      if (!state.ignoredFinalPolishIssues.has(issue.key)) issues.push(issue);
+    };
 
     let wrapHyphens = 0;
     state.pages.forEach((page, pageIndex) => {
@@ -2939,20 +3086,28 @@
         const m = a.match(/([A-Za-z]{2,})-$/);
         const n = b.match(/^([a-z][A-Za-z'-]*)/);
         if (m && n) {
-          wrapHyphens++;
-          issues.push({
+          const current = `${m[1]}- ${n[1]}`;
+          const suggestion = `${m[1]}${n[1]}`;
+          const issue = {
             type: "Wrap hyphen",
             pageIndex,
-            fileName: page.fileName || `Page ${pageIndex + 1}`,
-            current: `${m[1]}- ${n[1]}`,
-            suggestion: `${m[1]}${n[1]}`,
-            detail: "Source geometry shows a hyphen at the end of one OCR line followed by lowercase text. Review before joining because legitimate hyphenated words can wrap too."
-          });
+            fileName: page.fileName || page.file?.name || `Page ${pageIndex + 1}`,
+            current,
+            suggestion,
+            left: m[1],
+            right: n[1],
+            detail: "Source geometry shows a line-end hyphen followed by lowercase text. Join if this is a wrapped word; keep it if the hyphen is intentional."
+          };
+          issue.key = finalIssueKey(issue);
+          if (!state.ignoredFinalPolishIssues.has(issue.key)) {
+            wrapHyphens++;
+            issues.push(issue);
+          }
         }
       }
     });
     addCheck("Wrap-hyphen audit", wrapHyphens ? "warn" : "pass",
-      wrapHyphens ? `${wrapHyphens} geometry-backed candidate${wrapHyphens===1?"":"s"} left for review.` : "No geometry-backed wrap-hyphen candidates found.");
+      wrapHyphens ? `${wrapHyphens} geometry-backed candidate${wrapHyphens===1?"":"s"} left for review.` : "No unresolved geometry-backed wrap-hyphen candidates found.");
 
     let quoteFlags = 0;
     state.pages.forEach((page, pageIndex) => {
@@ -2960,42 +3115,52 @@
         const plain = stripItalicMarkers(para);
         const straight = (plain.match(/"/g) || []).length;
         if (straight % 2 === 1) {
-          quoteFlags++;
-          issues.push({
+          const issue = {
             type: "Quote balance",
             pageIndex,
-            fileName: page.fileName || `Page ${pageIndex + 1}`,
-            current: plain.slice(0, 220),
-            detail: `Paragraph ${paraIndex + 1} contains an odd number of straight quotation marks. This can be valid across multi-paragraph dialogue, so it is review-only.`
-          });
+            paraIndex,
+            fileName: page.fileName || page.file?.name || `Page ${pageIndex + 1}`,
+            current: plain.slice(0, 260),
+            detail: `Paragraph ${paraIndex + 1} contains an odd number of straight quotation marks. This may be valid multi-paragraph dialogue, so no quote is guessed.`
+          };
+          issue.key = finalIssueKey(issue);
+          if (!state.ignoredFinalPolishIssues.has(issue.key)) {
+            quoteFlags++;
+            issues.push(issue);
+          }
         }
       });
     });
     addCheck("Quote audit", quoteFlags ? "warn" : "pass",
-      quoteFlags ? `${quoteFlags} paragraph${quoteFlags===1?"":"s"} deserve a quick quote check; no quote was guessed.` : "No obvious odd straight-quote counts found.");
+      quoteFlags ? `${quoteFlags} paragraph${quoteFlags===1?"":"s"} deserve a quick quote check; no quote was guessed.` : "No unresolved odd straight-quote counts found.");
 
     let fragments = 0;
     state.pages.forEach((page, pageIndex) => {
-      const paras = exportParagraphs(page.text || "");
+      const paras = pageBlocks(page);
       paras.forEach((para, paraIndex) => {
         const plain = stripItalicMarkers(para).trim();
         if (plain && plain !== "* * *" && plain.length <= 24 &&
             !/^(?:CHAPTER\b|PROLOGUE\b|EPILOGUE\b)/i.test(plain) &&
             !/^[A-Z][A-Z .'-]{2,}$/.test(plain) &&
             !/[.!?…"”']$/.test(plain)) {
-          fragments++;
-          issues.push({
+          const issue = {
             type: "Short paragraph",
             pageIndex,
-            fileName: page.fileName || `Page ${pageIndex + 1}`,
+            paraIndex,
+            fileName: page.fileName || page.file?.name || `Page ${pageIndex + 1}`,
             current: plain,
-            detail: `Paragraph ${paraIndex + 1} is only ${plain.length} characters and has no terminal punctuation. Review whether it belongs with a neighbor.`
-          });
+            detail: `Paragraph ${paraIndex + 1} is only ${plain.length} characters and has no terminal punctuation.`
+          };
+          issue.key = finalIssueKey(issue);
+          if (!state.ignoredFinalPolishIssues.has(issue.key)) {
+            fragments++;
+            issues.push(issue);
+          }
         }
       });
     });
     addCheck("Paragraph-fragment audit", fragments ? "warn" : "pass",
-      fragments ? `${fragments} short fragment${fragments===1?"":"s"} left for review.` : "No suspicious tiny paragraph fragments found.");
+      fragments ? `${fragments} short fragment${fragments===1?"":"s"} left for review.` : "No unresolved suspicious tiny paragraph fragments found.");
 
     const chapters = state.pages.filter(p => p.chapterStart).length;
     addCheck("Chapter structure", chapters ? "pass" : "warn",
@@ -3003,11 +3168,11 @@
 
     const ligatures = collectUncertainLigatures().length;
     addCheck("Outstanding ligature review", ligatures ? "warn" : "pass",
-      ligatures ? `${ligatures} uncertain split-ligature candidate${ligatures===1?"":"s"} still await review.` : "No uncertain split-ligature candidates remain.");
+      ligatures ? `${ligatures} uncertain split-ligature candidate${ligatures===1?"":"s"} still await Repair review.` : "No uncertain split-ligature candidates remain.");
 
     const dropcaps = (state.dropcapCandidates || []).filter(c => c.status === "pending").length;
     addCheck("Outstanding dropcap review", dropcaps ? "warn" : "pass",
-      dropcaps ? `${dropcaps} dropcap candidate${dropcaps===1?"":"s"} still await review.` : "No pending Dropcap Rescue candidates.");
+      dropcaps ? `${dropcaps} dropcap candidate${dropcaps===1?"":"s"} still await Repair review.` : "No pending Dropcap Rescue candidates.");
 
     return { issues, checks };
   }
@@ -3017,26 +3182,100 @@
     els.finalPolishResults.innerHTML = "";
     report.checks.forEach(check => {
       const row = document.createElement("div");
-      row.className = `regression-row ${check.status}`;
+      row.className = `regression-row final-polish-row ${check.status}`;
       row.innerHTML = `<strong>${escapeHtml(check.name)}</strong><span>${escapeHtml(check.detail)}</span>`;
       els.finalPolishResults.appendChild(row);
     });
     els.finalPolishResults.classList.remove("hidden");
 
-    if (els.finalPolishReview && els.finalPolishReviewList && els.finalPolishReviewToggle) {
-      els.finalPolishReviewList.innerHTML = "";
-      report.issues.forEach(issue => {
-        const item = document.createElement("div");
-        item.className = "ligature-review-item";
-        item.innerHTML = `<strong>${escapeHtml(issue.type)} · ${escapeHtml(issue.fileName)}</strong>
-          ${issue.current ? `<p class="ligature-context">${escapeHtml(issue.current)}</p>` : ""}
-          ${issue.suggestion ? `<p class="hint">Possible join: <b>${escapeHtml(issue.suggestion)}</b></p>` : ""}
-          <p class="hint">${escapeHtml(issue.detail)}</p>`;
-        els.finalPolishReviewList.appendChild(item);
-      });
-      els.finalPolishReview.classList.toggle("hidden", report.issues.length === 0);
-      els.finalPolishReviewToggle.textContent = `Review uncertain (${report.issues.length})`;
-    }
+    if (!els.finalPolishReview || !els.finalPolishReviewList || !els.finalPolishReviewToggle) return;
+    els.finalPolishReviewList.innerHTML = "";
+
+    report.issues.forEach(issue => {
+      const item = document.createElement("div");
+      item.className = "ligature-review-item";
+      item.innerHTML = `<strong>${escapeHtml(issue.type)} · ${escapeHtml(issue.fileName)}</strong>
+        ${issue.current ? `<p class="ligature-context">${escapeHtml(issue.current)}</p>` : ""}
+        ${issue.suggestion ? `<p class="hint">Suggested: <b>${escapeHtml(issue.suggestion)}</b></p>` : ""}
+        <p class="hint">${escapeHtml(issue.detail)}</p>
+        <div class="actions issue-actions"></div>`;
+
+      const actions = item.querySelector(".issue-actions");
+      const button = (label, cls, fn) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = `button ${cls}`;
+        b.textContent = label;
+        b.addEventListener("click", fn);
+        actions.appendChild(b);
+      };
+
+      if (issue.type === "Wrap hyphen") {
+        button("Join word", "secondary", () => {
+          const page = state.pages[issue.pageIndex];
+          if (!page) return;
+          const pattern = new RegExp(`${issue.left}-\\s+${issue.right}`.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace("\\\\s\\+", "\\s+"), "u");
+          const before = page.text;
+          page.text = before.replace(pattern, issue.suggestion);
+          if (page.text === before) {
+            page.text = before.replace(`${issue.left}- ${issue.right}`, issue.suggestion);
+          }
+          saveCheckpoint();
+          renderReview();
+          runFinalPolish();
+          setStatus(`Joined wrapped word “${issue.current}” → “${issue.suggestion}”.`);
+        });
+        button("Keep hyphen", "ghost", () => {
+          state.ignoredFinalPolishIssues.add(issue.key);
+          runFinalPolish();
+          setStatus(`Kept “${issue.current}” unchanged.`);
+        });
+      } else if (issue.type === "Quote balance") {
+        button("Looks correct", "ghost", () => {
+          state.ignoredFinalPolishIssues.add(issue.key);
+          runFinalPolish();
+          setStatus("Quote warning dismissed as correct.");
+        });
+        button("Edit page", "secondary", () => jumpToPage(issue.pageIndex));
+      } else if (issue.type === "Short paragraph") {
+        button("Merge previous", "secondary", () => {
+          const page = state.pages[issue.pageIndex];
+          const blocks = pageBlocks(page);
+          const i = issue.paraIndex;
+          if (page && i > 0 && blocks[i]) {
+            blocks[i - 1] = `${blocks[i - 1]} ${blocks[i]}`.replace(/\s+/g, " ");
+            blocks.splice(i, 1);
+            writePageBlocks(page, blocks);
+            saveCheckpoint();
+            renderReview();
+            runFinalPolish();
+          }
+        });
+        button("Merge next", "secondary", () => {
+          const page = state.pages[issue.pageIndex];
+          const blocks = pageBlocks(page);
+          const i = issue.paraIndex;
+          if (page && i >= 0 && i < blocks.length - 1) {
+            blocks[i] = `${blocks[i]} ${blocks[i + 1]}`.replace(/\s+/g, " ");
+            blocks.splice(i + 1, 1);
+            writePageBlocks(page, blocks);
+            saveCheckpoint();
+            renderReview();
+            runFinalPolish();
+          }
+        });
+        button("Keep separate", "ghost", () => {
+          state.ignoredFinalPolishIssues.add(issue.key);
+          runFinalPolish();
+        });
+        button("Edit page", "ghost", () => jumpToPage(issue.pageIndex));
+      }
+
+      els.finalPolishReviewList.appendChild(item);
+    });
+
+    els.finalPolishReview.classList.toggle("hidden", report.issues.length === 0);
+    els.finalPolishReviewToggle.textContent = `Review uncertain (${report.issues.length})`;
   }
 
   function runFinalPolish() {
@@ -3050,6 +3289,8 @@
       setStatus("Final Polish helper did not load. Refresh and try again.");
       return;
     }
+
+    const continuationMerges = autoMergeStrongContinuations();
 
     let fixedCount = 0, punctuationSpacing = 0, quoteSpacing = 0, dashSpacing = 0;
     for (const page of state.pages) {
@@ -3071,8 +3312,16 @@
       punctuationSpacing,
       quoteSpacing,
       dashSpacing,
+      continuationMerges,
       ...audit
     };
+    report.checks.unshift({
+      name: "Paragraph continuations",
+      status: "pass",
+      detail: continuationMerges
+        ? `${continuationMerges} high-confidence broken paragraph continuation${continuationMerges===1?" was":"s were"} merged automatically.`
+        : "No high-confidence broken paragraph continuations needed merging."
+    });
     renderFinalPolishReport(report);
 
     const notes = audit.checks.filter(c => c.status === "warn").length;
@@ -3113,9 +3362,11 @@
       saveCheckpoint();
       renderReview();
       renderDropcapResults();
+      renderRepairReview();
 
-      if (els.repairBookStatus) els.repairBookStatus.textContent = remaining ? `Done · ${remaining} review` : "Done";
-      setStatus(`Guided Repair complete: ${rebuiltCount} pages rebuilt, ${italics?.markedRuns || 0} italic run${italics?.markedRuns === 1 ? "" : "s"}, ${polishStats.fixedCount || 0} safe cleanup fix${polishStats.fixedCount === 1 ? "" : "es"}, ${ligatureStats.fixedCount || 0} split ligature${ligatureStats.fixedCount === 1 ? "" : "s"}, ${high.length} high-confidence dropcap${high.length === 1 ? "" : "s"} accepted${remaining ? `, and ${remaining} uncertain dropcap candidate${remaining===1?"":"s"} left for review` : ""}.`);
+      const repairReviewCount = collectUncertainLigatures().length + remaining;
+      if (els.repairBookStatus) els.repairBookStatus.textContent = repairReviewCount ? `Done · ${repairReviewCount} review` : "Done";
+      setStatus(`Guided Repair complete: ${rebuiltCount} pages rebuilt, ${italics?.markedRuns || 0} italic run${italics?.markedRuns === 1 ? "" : "s"}, ${polishStats.fixedCount || 0} safe cleanup fix${polishStats.fixedCount === 1 ? "" : "es"}, ${ligatureStats.fixedCount || 0} split ligature${ligatureStats.fixedCount === 1 ? "" : "s"}, ${high.length} high-confidence dropcap${high.length === 1 ? "" : "s"} accepted${repairReviewCount ? `, with ${repairReviewCount} unresolved repair item${repairReviewCount===1?"":"s"} in Review repairs` : ""}.`);
     } catch (err) {
       console.error(err);
       if (els.repairBookStatus) els.repairBookStatus.textContent = "Stopped";
