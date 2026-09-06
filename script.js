@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.3-actionable-review-kindle-first";
+  const BUILD_VERSION = "2.7.4-stage-reviews-kindle-first";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -3088,6 +3088,11 @@
         if (m && n) {
           const current = `${m[1]}- ${n[1]}`;
           const suggestion = `${m[1]}${n[1]}`;
+          const pageText = String(page.text || "");
+          const escapedLeft = m[1].replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          const escapedRight = n[1].replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          const sourcePattern = new RegExp(`${escapedLeft}-\\s+${escapedRight}`, "u");
+          const sourceMatch = sourcePattern.exec(pageText);
           const issue = {
             type: "Wrap hyphen",
             pageIndex,
@@ -3096,7 +3101,12 @@
             suggestion,
             left: m[1],
             right: n[1],
-            detail: "Source geometry shows a line-end hyphen followed by lowercase text. Join if this is a wrapped word; keep it if the hyphen is intentional."
+            sourceText: sourceMatch?.[0] || "",
+            sourceStart: sourceMatch?.index ?? -1,
+            sourceEnd: sourceMatch ? sourceMatch.index + sourceMatch[0].length : -1,
+            detail: sourceMatch
+              ? "Source geometry and page text agree on this line-wrap candidate. Join word changes only this exact occurrence."
+              : "Source geometry shows a likely line-wrap hyphen, but the exact text span could not be pinned down. Open the page to edit it manually."
           };
           issue.key = finalIssueKey(issue);
           if (!state.ignoredFinalPolishIssues.has(issue.key)) {
@@ -3214,22 +3224,35 @@
         button("Join word", "secondary", () => {
           const page = state.pages[issue.pageIndex];
           if (!page) return;
-          const pattern = new RegExp(`${issue.left}-\\s+${issue.right}`.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace("\\\\s\\+", "\\s+"), "u");
-          const before = page.text;
-          page.text = before.replace(pattern, issue.suggestion);
-          if (page.text === before) {
-            page.text = before.replace(`${issue.left}- ${issue.right}`, issue.suggestion);
+          const text = String(page.text || "");
+          let start = Number.isInteger(issue.sourceStart) ? issue.sourceStart : -1;
+          let end = Number.isInteger(issue.sourceEnd) ? issue.sourceEnd : -1;
+          let exact = start >= 0 && end > start ? text.slice(start, end) : "";
+
+          if (!issue.sourceText || exact !== issue.sourceText) {
+            start = issue.sourceText ? text.indexOf(issue.sourceText) : -1;
+            end = start >= 0 ? start + issue.sourceText.length : -1;
+            exact = start >= 0 ? text.slice(start, end) : "";
           }
+
+          if (start < 0 || !exact) {
+            setStatus(`Could not pin down “${issue.current}” in the page text. Open the page to edit it manually.`);
+            jumpToPage(issue.pageIndex);
+            return;
+          }
+
+          page.text = text.slice(0, start) + issue.suggestion + text.slice(end);
           saveCheckpoint();
           renderReview();
+          setStatus(`Joined “${exact}” → “${issue.suggestion}”.`);
           runFinalPolish();
-          setStatus(`Joined wrapped word “${issue.current}” → “${issue.suggestion}”.`);
         });
         button("Keep hyphen", "ghost", () => {
           state.ignoredFinalPolishIssues.add(issue.key);
           runFinalPolish();
           setStatus(`Kept “${issue.current}” unchanged.`);
         });
+        button("Edit page", "ghost", () => jumpToPage(issue.pageIndex));
       } else if (issue.type === "Quote balance") {
         button("Looks correct", "ghost", () => {
           state.ignoredFinalPolishIssues.add(issue.key);
@@ -3275,7 +3298,7 @@
     });
 
     els.finalPolishReview.classList.toggle("hidden", report.issues.length === 0);
-    els.finalPolishReviewToggle.textContent = `Review uncertain (${report.issues.length})`;
+    els.finalPolishReviewToggle.textContent = `Review polish (${report.issues.length})`;
   }
 
   function runFinalPolish() {

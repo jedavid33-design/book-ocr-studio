@@ -47,3 +47,6 @@ v2.6.5: Added exportable italic detection 2.0 diagnostics with per-line slant/ga
 
 
 2.7.3 Actionable Review: Repair Book now has one unresolved-repair drawer with Fix/Discard or Keep actions. Final Polish review items are actionable (join/keep wrap hyphens, merge/keep paragraph fragments, dismiss/edit quote checks), and high-confidence lowercase paragraph continuations merge automatically before quote auditing. Final Polish summary layout is widened for readability.
+
+
+2.7.4 Stage Reviews: unresolved OCR repairs stay under Repair Book; Final Polish shows only polish-stage review items. Wrap-hyphen Join word now stores and replaces the exact matched page-text span, with explicit success/failure feedback and an Edit page fallback.

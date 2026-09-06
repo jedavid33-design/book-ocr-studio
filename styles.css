@@ -639,3 +639,10 @@ dialog::backdrop { background: rgba(30,25,20,.48); backdrop-filter: blur(5px); }
     gap: 4px;
   }
 }
+
+/* v2.7.4 stage-owned reviews */
+#repairReview > summary,
+#finalPolishReview > summary {
+  cursor: pointer;
+  font-weight: 800;
+}

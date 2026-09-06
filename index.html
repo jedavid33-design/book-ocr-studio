@@ -12,13 +12,13 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=2.7.3-actionable-review" />
+  <link rel="stylesheet" href="styles.css?v=2.7.4-stage-reviews" />
 </head>
 <body>
   <header class="topbar">
     <div>
-      <p class="eyebrow">LOCAL BOOK TOOL · 2.7.3 · Actionable Review</p>
-      <div id="buildIdentifier" class="build-identifier">BUILD 2.7.3 · ACTIONABLE REVIEW · KINDLE-FIRST</div>
+      <p class="eyebrow">LOCAL BOOK TOOL · 2.7.4 · Stage Reviews</p>
+      <div id="buildIdentifier" class="build-identifier">BUILD 2.7.4 · STAGE REVIEWS · KINDLE-FIRST</div>
       <h1>Book OCR Studio</h1>
       <p class="subhead">Crop screenshots, OCR them one page at a time, batch OCR the whole book, review chapter starts or any page, and export TXT or EPUB.</p>
     </div>
@@ -191,7 +191,7 @@
         </div>
         <div id="finalPolishResults" class="regression-results hidden"></div>
         <details id="finalPolishReview" class="ligature-inline-review hidden">
-          <summary id="finalPolishReviewToggle">Review uncertain (0)</summary>
+          <summary id="finalPolishReviewToggle">Review polish (0)</summary>
           <div class="ligature-inline-body">
             <p class="hint">These are inspection flags only. Studio has not changed them.</p>
             <div id="finalPolishReviewList" class="review-list"></div>
@@ -287,8 +287,8 @@
   </dialog>
 
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
-  <script src="epub-polish.js?v=2.7.3-actionable-review"></script>
-  <script src="script-loader.js?v=2.7.3-actionable-review"></script>
+  <script src="epub-polish.js?v=2.7.4-stage-reviews"></script>
+  <script src="script-loader.js?v=2.7.4-stage-reviews"></script>
   <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
