@@ -1,7 +1,7 @@
-const CACHE_NAME = "book-ocr-studio-shell-v2-7-4-stage-reviews";
+const CACHE_NAME = "book-ocr-studio-shell-v2-7-5-inline-join";
 const APP_SHELL = [
-  "./styles.css?v=2.7.4-stage-reviews",
-  "./epub-polish.js?v=2.7.4-stage-reviews",
+  "./styles.css?v=2.7.5-inline-join",
+  "./epub-polish.js?v=2.7.5-inline-join",
   "./manifest.webmanifest",
   "./icon-192.png",
   "./icon-512.png",

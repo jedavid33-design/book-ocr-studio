@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.4-stage-reviews-kindle-first";
+  const BUILD_VERSION = "2.7.5-inline-join-fix-kindle-first";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -3224,28 +3224,58 @@
         button("Join word", "secondary", () => {
           const page = state.pages[issue.pageIndex];
           if (!page) return;
-          const text = String(page.text || "");
-          let start = Number.isInteger(issue.sourceStart) ? issue.sourceStart : -1;
-          let end = Number.isInteger(issue.sourceEnd) ? issue.sourceEnd : -1;
-          let exact = start >= 0 && end > start ? text.slice(start, end) : "";
 
-          if (!issue.sourceText || exact !== issue.sourceText) {
-            start = issue.sourceText ? text.indexOf(issue.sourceText) : -1;
-            end = start >= 0 ? start + issue.sourceText.length : -1;
-            exact = start >= 0 ? text.slice(start, end) : "";
+          const before = String(page.text || "");
+          const left = String(issue.left || "");
+          const right = String(issue.right || "");
+          const suggestion = String(issue.suggestion || `${left}${right}`);
+
+          const escapeRe = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          const patterns = [
+            new RegExp(`${escapeRe(left)}-\\s*${escapeRe(right)}`, "u"),
+            new RegExp(`${escapeRe(left)}\\s*-\\s*${escapeRe(right)}`, "u"),
+            new RegExp(`${escapeRe(left)}\\s+${escapeRe(right)}`, "u")
+          ];
+
+          let match = null;
+          for (const pattern of patterns) {
+            const found = pattern.exec(before);
+            if (found) {
+              match = found;
+              break;
+            }
           }
 
-          if (start < 0 || !exact) {
-            setStatus(`Could not pin down “${issue.current}” in the page text. Open the page to edit it manually.`);
-            jumpToPage(issue.pageIndex);
+          if (!match) {
+            const card = actions.closest(".ligature-review-item");
+            let note = card?.querySelector(".join-inline-status");
+            if (!note && card) {
+              note = document.createElement("p");
+              note.className = "hint join-inline-status";
+              card.appendChild(note);
+            }
+            if (note) {
+              note.textContent = `Couldn’t locate “${issue.current}” in the current text. Nothing changed.`;
+            }
+            setStatus(`Couldn’t locate “${issue.current}” in the current text. Nothing changed.`);
             return;
           }
 
-          page.text = text.slice(0, start) + issue.suggestion + text.slice(end);
+          const start = match.index;
+          const end = start + match[0].length;
+          page.text = before.slice(0, start) + suggestion + before.slice(end);
+
           saveCheckpoint();
           renderReview();
-          setStatus(`Joined “${exact}” → “${issue.suggestion}”.`);
-          runFinalPolish();
+
+          const joinedText = match[0];
+          setStatus(`Joined “${joinedText}” → “${suggestion}”.`);
+
+          state.ignoredFinalPolishIssues.add(issue.key);
+          const report = runFinalPolish();
+          if (report && els.finalPolishReview) {
+            els.finalPolishReview.open = true;
+          }
         });
         button("Keep hyphen", "ghost", () => {
           state.ignoredFinalPolishIssues.add(issue.key);
