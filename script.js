@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.5-inline-join-fix-kindle-first";
+  const BUILD_VERSION = "2.7.6-repaired-text-polish-kindle-first";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -3078,46 +3078,78 @@
     };
 
     let wrapHyphens = 0;
+    let alreadyResolvedWrapHyphens = 0;
     state.pages.forEach((page, pageIndex) => {
+      // Final Polish operates on repaired/reconstructed page text. Saved line
+      // geometry is supporting evidence only and must never resurrect a split
+      // that Repair Book has already healed.
+      const currentText = String(page.text || "");
       const lines = Array.isArray(page.layoutLines) ? page.layoutLines : [];
+
       for (let i = 0; i < lines.length - 1; i++) {
         const a = String(lines[i]?.text || "").trim();
         const b = String(lines[i+1]?.text || "").trim();
         const m = a.match(/([A-Za-z]{2,})-$/);
         const n = b.match(/^([a-z][A-Za-z'-]*)/);
-        if (m && n) {
-          const current = `${m[1]}- ${n[1]}`;
-          const suggestion = `${m[1]}${n[1]}`;
-          const pageText = String(page.text || "");
-          const escapedLeft = m[1].replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-          const escapedRight = n[1].replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-          const sourcePattern = new RegExp(`${escapedLeft}-\\s+${escapedRight}`, "u");
-          const sourceMatch = sourcePattern.exec(pageText);
-          const issue = {
-            type: "Wrap hyphen",
-            pageIndex,
-            fileName: page.fileName || page.file?.name || `Page ${pageIndex + 1}`,
-            current,
-            suggestion,
-            left: m[1],
-            right: n[1],
-            sourceText: sourceMatch?.[0] || "",
-            sourceStart: sourceMatch?.index ?? -1,
-            sourceEnd: sourceMatch ? sourceMatch.index + sourceMatch[0].length : -1,
-            detail: sourceMatch
-              ? "Source geometry and page text agree on this line-wrap candidate. Join word changes only this exact occurrence."
-              : "Source geometry shows a likely line-wrap hyphen, but the exact text span could not be pinned down. Open the page to edit it manually."
-          };
-          issue.key = finalIssueKey(issue);
-          if (!state.ignoredFinalPolishIssues.has(issue.key)) {
-            wrapHyphens++;
-            issues.push(issue);
+        if (!m || !n) continue;
+
+        const left = m[1];
+        const right = n[1];
+        const suggestion = `${left}${right}`;
+        const escapeRe = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+        // If Repair Book/reconstruction already produced the joined word in
+        // current text, this geometry artifact is resolved and is not review.
+        const joinedPattern = new RegExp(`\\b${escapeRe(suggestion)}\\b`, "u");
+        if (joinedPattern.test(currentText)) {
+          alreadyResolvedWrapHyphens++;
+          continue;
+        }
+
+        // Only surface a polish item when the repaired text itself still
+        // contains a recognizable unresolved form.
+        const unresolvedPatterns = [
+          new RegExp(`\\b${escapeRe(left)}-\\s*${escapeRe(right)}\\b`, "u"),
+          new RegExp(`\\b${escapeRe(left)}\\s*-\\s*${escapeRe(right)}\\b`, "u"),
+          new RegExp(`\\b${escapeRe(left)}\\s+${escapeRe(right)}\\b`, "u")
+        ];
+        let sourceMatch = null;
+        for (const pattern of unresolvedPatterns) {
+          const found = pattern.exec(currentText);
+          if (found) {
+            sourceMatch = found;
+            break;
           }
+        }
+
+        // Geometry alone is not enough to create a Final Polish warning.
+        if (!sourceMatch) continue;
+
+        const current = sourceMatch[0];
+        const issue = {
+          type: "Wrap hyphen",
+          pageIndex,
+          fileName: page.fileName || page.file?.name || `Page ${pageIndex + 1}`,
+          current,
+          suggestion,
+          left,
+          right,
+          sourceText: sourceMatch[0],
+          sourceStart: sourceMatch.index,
+          sourceEnd: sourceMatch.index + sourceMatch[0].length,
+          detail: "The repaired book text still contains this geometry-supported line-wrap candidate. Join word changes only this occurrence."
+        };
+        issue.key = finalIssueKey(issue);
+        if (!state.ignoredFinalPolishIssues.has(issue.key)) {
+          wrapHyphens++;
+          issues.push(issue);
         }
       }
     });
     addCheck("Wrap-hyphen audit", wrapHyphens ? "warn" : "pass",
-      wrapHyphens ? `${wrapHyphens} geometry-backed candidate${wrapHyphens===1?"":"s"} left for review.` : "No unresolved geometry-backed wrap-hyphen candidates found.");
+      wrapHyphens
+        ? `${wrapHyphens} unresolved candidate${wrapHyphens===1?"":"s"} remain in repaired text; ${alreadyResolvedWrapHyphens} source wrap${alreadyResolvedWrapHyphens===1?" was":"s were"} already healed upstream.`
+        : `No unresolved wrap-hyphens remain in repaired text${alreadyResolvedWrapHyphens ? `; ${alreadyResolvedWrapHyphens} source wrap${alreadyResolvedWrapHyphens===1?" was":"s were"} already healed upstream` : ""}.`);
 
     let quoteFlags = 0;
     state.pages.forEach((page, pageIndex) => {
