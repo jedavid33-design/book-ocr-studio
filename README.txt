@@ -92,3 +92,6 @@ v2.6.5: Added exportable italic detection 2.0 diagnostics with per-line slant/ga
 
 
 2.7.20 Exact Ligature Resolution: keeps Repair Book as the canonical readiness source, but removes the broad legacy ligature-decision migration that could hide distinct split-ligature candidates. Keep-as-is now fingerprints one exact occurrence using page + original/joined text + exact normalized surrounding context. v2.7.18 compatibility is accepted only when the old character index still matches; v2.7.19 context decisions are matched exactly.
+
+
+2.7.21 Ligature Evidence Filter: split-ligature review is now evidence-first. Ordinary word boundaries ending in ff/fi/fl (for example off the, off doing, off personal) are no longer surfaced as uncertain ligatures. Plausible dictionary joins remain auto-repaired; review is reserved for rare plausible joins blocked only by capitalization.

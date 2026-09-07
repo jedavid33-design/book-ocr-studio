@@ -56,10 +56,19 @@ traffic waffle waffled waffles waffling
       const original = m[0], left = m[1], right = m[2];
       const joined = left + right;
       const family = ["ffi", "ffl", "fi", "fl", "ff"].find(item => left.toLowerCase().endsWith(item)) || "";
-      const safe = hasSafeCapitalization(joined) && PLAUSIBLE_WORDS.has(joined.toLowerCase());
-      if (!safe) {
+      const plausibleJoin = PLAUSIBLE_WORDS.has(joined.toLowerCase());
+
+      // Evidence-first review: ordinary word boundaries such as
+      // "off the", "off doing", or "off personal" are not ligature damage
+      // merely because the left word ends in ff/fi/fl.
+      //
+      // Plausible, safely-capitalized joins are repaired automatically by
+      // repairSplitLigatures(). The review list is reserved for the rare
+      // plausible join blocked only by capitalization.
+      if (plausibleJoin && !hasSafeCapitalization(joined)) {
         out.push({ original, left, right, joined, family, index: m.index });
       }
+
       if (m[0].length === 0) re.lastIndex++;
     }
     return out;

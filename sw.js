@@ -1,7 +1,7 @@
-const CACHE_NAME = "book-ocr-studio-shell-v2-7-20-exact-ligature-resolution";
+const CACHE_NAME = "book-ocr-studio-shell-v2-7-21-ligature-evidence-filter";
 const APP_SHELL = [
-  "./styles.css?v=2.7.20-exact-ligature-resolution",
-  "./epub-polish.js?v=2.7.20-exact-ligature-resolution",
+  "./styles.css?v=2.7.21-ligature-evidence-filter",
+  "./epub-polish.js?v=2.7.21-ligature-evidence-filter",
   "./manifest.webmanifest",
   "./icon-192.png",
   "./icon-512.png",

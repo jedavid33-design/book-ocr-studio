@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.20-exact-ligature-resolution";
+  const BUILD_VERSION = "2.7.21-ligature-evidence-filter";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
