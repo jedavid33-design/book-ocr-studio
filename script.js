@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.8-guided-polish-kindle-first";
+  const BUILD_VERSION = "2.7.10-collapsible-review-kindle-first";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);

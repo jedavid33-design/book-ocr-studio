@@ -13,13 +13,12 @@
 <link href="manifest.webmanifest" rel="manifest"/>
 <link href="apple-touch-icon.png" rel="apple-touch-icon"/>
 <link href="icon-192.png" rel="icon" sizes="192x192" type="image/png"/>
-<link href="styles.css?v=2.7.8-guided-polish" rel="stylesheet"/>
+<link href="styles.css?v=2.7.10-collapsible-review" rel="stylesheet"/>
 </head>
 <body>
 <header class="topbar">
 <div>
-
-<div class="build-identifier" id="buildIdentifier">BUILD 2.7.8 · GUIDED + POLISH · KINDLE-FIRST</div>
+<div class="build-identifier" id="buildIdentifier">BUILD 2.7.10 · COLLAPSIBLE REVIEW · KINDLE-FIRST</div>
 <h1>Book OCR Studio</h1>
 <p class="subhead">Crop screenshots, OCR them one page at a time, batch OCR the whole book, review chapter starts or any page, and export TXT or EPUB.</p>
 </div>
@@ -114,7 +113,7 @@
 </div>
 <div class="status-box" id="statusBox" role="status">Add screenshots to begin.</div>
 </section>
-<section class="card hidden" id="reviewSection">
+<details class="card hidden review-collapsible" id="reviewSection" open=""><summary class="review-section-summary">5. Review</summary>
 <div class="section-head">
 <div>
 <h2>5. Review</h2>
@@ -137,8 +136,7 @@
 <button class="button secondary" disabled="" id="messageOcrBtn" type="button">Message-page OCR · Paddle</button>
 <button class="button primary" disabled="" id="nextPageBtn" type="button">Next page</button>
 </div>
-</section>
-
+</details>
 <section class="card hidden" id="guidedRepairSection"><h2>6. Guided Repair</h2><div class="subcard guided-repair-card">
 <h3>Guided Repair</h3>
 <p class="hint">One pass through the safe, proven repair pipeline. Studio rebuilds paragraph structure first, applies conservative italics while source geometry is still authoritative, then runs safe cleanup, split-ligature repair, and Dropcap Rescue. High-confidence dropcaps are accepted automatically; anything uncertain stays for review.</p>
@@ -232,8 +230,8 @@
 </div>
 </dialog>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
-<script src="epub-polish.js?v=2.7.8-guided-polish"></script>
-<script src="script-loader.js?v=2.7.8-guided-polish"></script>
+<script src="epub-polish.js?v=2.7.10-collapsible-review"></script>
+<script src="script-loader.js?v=2.7.10-collapsible-review"></script>
 <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
@@ -243,5 +241,5 @@
       });
     }
   </script>
-</body>
+<div hidden="" id="legacyCompatibilityControls"><button id="scanDropcaps" type="button"></button><button id="acceptHighDropcaps" type="button"></button><div id="dropcapResults"></div><div id="dropcapEmpty"></div><span id="dropcapSummary"></span><button id="repairLigatures" type="button"></button><span id="ligatureStatus"></span></div></body>
 </html>
