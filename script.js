@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.16-kindle-typography-toc";
+  const BUILD_VERSION = "2.7.17-metadata-filename";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -211,6 +211,8 @@
         cropBottom: Number(els.cropBottom.value) || 0,
         cropSides: Number(els.cropSides.value) || 0,
         currentPageIndex: state.currentPageIndex,
+        bookTitle: els.bookTitle?.value || "",
+        bookAuthor: els.bookAuthor?.value || "",
         bookLayoutProfile: state.bookLayoutProfile || null,
         pages: state.pages.map(p => ({
           fileName: p.file.name,
@@ -338,6 +340,8 @@
   }
 
   function applyCheckpoint(saved) {
+    if (typeof saved.bookTitle === "string" && saved.bookTitle.trim()) els.bookTitle.value = saved.bookTitle;
+    if (typeof saved.bookAuthor === "string" && saved.bookAuthor.trim()) els.bookAuthor.value = saved.bookAuthor;
     if (Number.isFinite(saved.cropTop)) els.cropTop.value = saved.cropTop;
     if (Number.isFinite(saved.cropBottom)) els.cropBottom.value = saved.cropBottom;
     if (Number.isFinite(saved.cropSides)) els.cropSides.value = saved.cropSides;
@@ -4002,7 +4006,7 @@ ${coverSpine}${spine.join("\n")}
       compressionOptions: { level: 6 }
     });
 
-    downloadBlob(blob, `${safeTitle}-2.0.epub`);
+    downloadBlob(blob, `${safeTitle}.epub`);
   }
 
   async function downloadEpub() {
@@ -4062,6 +4066,10 @@ ${coverSpine}${spine.join("\n")}
   }));
 
   syncCropPresetUi();
+
+  [els.bookTitle, els.bookAuthor].forEach(input => input?.addEventListener("input", () => {
+    if (state.files.length) saveCheckpoint();
+  }));
 
   els.coverInput.addEventListener("change", () => {
     const file = els.coverInput.files?.[0] || null;

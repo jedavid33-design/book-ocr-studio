@@ -1,7 +1,7 @@
-const CACHE_NAME = "book-ocr-studio-shell-v2-7-16-kindle-typography";
+const CACHE_NAME = "book-ocr-studio-shell-v2-7-17-metadata-filename";
 const APP_SHELL = [
-  "./styles.css?v=2.7.16-kindle-typography",
-  "./epub-polish.js?v=2.7.16-kindle-typography",
+  "./styles.css?v=2.7.17-metadata-filename",
+  "./epub-polish.js?v=2.7.17-metadata-filename",
   "./manifest.webmanifest",
   "./icon-192.png",
   "./icon-512.png",

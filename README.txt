@@ -80,3 +80,6 @@ v2.6.5: Added exportable italic detection 2.0 diagnostics with per-line slant/ga
 
 
 2.7.16 Kindle Typography + TOC: exported EPUB body paragraphs now use novel-style first-line indents with no extra paragraph spacing, while first chapter paragraphs and paragraphs after scene breaks remain flush-left. Pre-chapter OCR text stays in the spine but no longer gets a fabricated “Opening” TOC entry unless it actually resembles front matter, in which case it is labeled Front Matter.
+
+
+2.7.17 Metadata + Title Filename: screenshot-project title and author are saved in/recovered from the OCR checkpoint, and screenshot EPUB exports now use the sanitized Book Title directly as the .epub filename (for example, In Her Own League.epub).
