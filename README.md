@@ -121,3 +121,6 @@ v2.6.5: Added exportable italic detection 2.0 diagnostics with per-line slant/ga
 
 
 2.7.17 Metadata + Title Filename: screenshot-project title and author are saved in/recovered from the OCR checkpoint, and screenshot EPUB exports now use the sanitized Book Title directly as the .epub filename (for example, In Her Own League.epub).
+
+
+2.7.18 Atomic Repair State: repair actions now update both canonical page text and the open Review editor atomically so a later sync cannot overwrite a completed fix. Repair/Polish dismissals persist in checkpoints. Kindle Ready invalidates stale results after a repair and always recalculates from current repaired text. Rerunning Repair Book preserves already repaired paragraph text instead of rebuilding it again from original OCR geometry; Paragraph Reconstruction remains available explicitly under Advanced.

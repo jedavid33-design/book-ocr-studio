@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.17-metadata-filename";
+  const BUILD_VERSION = "2.7.18-atomic-repair-state";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -26,6 +26,7 @@
     ignoredLigatureCandidates: new Set(),
     ignoredFinalPolishIssues: new Set(),
     lastFinalPolishCounts: null,
+    repairBookHasRun: false,
   };
 
   let PaddleOCRClass = null;
@@ -214,6 +215,9 @@
         bookTitle: els.bookTitle?.value || "",
         bookAuthor: els.bookAuthor?.value || "",
         bookLayoutProfile: state.bookLayoutProfile || null,
+        repairBookHasRun: !!state.repairBookHasRun,
+        ignoredLigatureCandidates: Array.from(state.ignoredLigatureCandidates || []),
+        ignoredFinalPolishIssues: Array.from(state.ignoredFinalPolishIssues || []),
         pages: state.pages.map(p => ({
           fileName: p.file.name,
           text: p.text || "",
@@ -291,6 +295,7 @@
 
     state.pages = [];
     state.bookLayoutProfile = null;
+    state.repairBookHasRun = false;
     state.currentPageIndex = -1;
 
     els.progressWrap.classList.add("hidden");
@@ -350,6 +355,9 @@
     const byStem = new Map(state.files.map(f => [normalizedStem(f.name), f]));
     const savedPages = saved.pages || [];
     state.bookLayoutProfile = saved.bookLayoutProfile || null;
+    state.repairBookHasRun = !!saved.repairBookHasRun;
+    state.ignoredLigatureCandidates = new Set(Array.isArray(saved.ignoredLigatureCandidates) ? saved.ignoredLigatureCandidates : []);
+    state.ignoredFinalPolishIssues = new Set(Array.isArray(saved.ignoredFinalPolishIssues) ? saved.ignoredFinalPolishIssues : []);
 
     state.pages = savedPages.map((page, index) => {
       const file = byName.get(page.fileName)
@@ -869,6 +877,38 @@
     state.pages[state.currentPageIndex].text = editor.value;
     state.pages[state.currentPageIndex].chapterCandidate = chapterHeuristic(editor.value);
     saveCheckpoint();
+  }
+
+  function commitPageText(pageIndex, nextText) {
+    const page = state.pages[pageIndex];
+    if (!page) return false;
+    page.text = String(nextText ?? "");
+    page.chapterCandidate = chapterHeuristic(page.text);
+
+    // If the repaired page is currently open, update the editor too. Otherwise
+    // a later syncCurrentEditor() can write the stale textarea back over the fix.
+    if (state.currentPageIndex === pageIndex) {
+      const editor = els.reviewList?.querySelector("textarea");
+      if (editor) editor.value = page.text;
+    }
+    saveCheckpoint();
+    return true;
+  }
+
+  function refreshDownstreamRepairState({ refreshPolish = false } = {}) {
+    renderReview();
+    renderLigatureReview();
+    renderRepairReview();
+    if (refreshPolish) {
+      try {
+        const audit = finalPolishAudit();
+        renderFinalPolishReport({ fixedCount: 0, ...audit });
+      } catch (_) {}
+    }
+    // Kindle Ready is intentionally recalculated from current repaired text on
+    // demand. Clear an old badge/results so stale blockers never look current.
+    if (els.kindleReadyStatus) els.kindleReadyStatus.textContent = "Recheck needed";
+    if (els.kindleReadyResults) els.kindleReadyResults.classList.add("hidden");
   }
 
   function normalizedPageText(text) {
@@ -2352,8 +2392,7 @@
         page.text = page.text.replace(detached, "$1").replace(/\n{3,}/g, "\n\n");
       }
     }
-    page.chapterCandidate = chapterHeuristic(page.text);
-    saveCheckpoint();
+    commitPageText(candidate.pageIndex, page.text);
   }
 
   function applyDropcap(candidate, replacement) {
@@ -3077,13 +3116,13 @@
       item.querySelector(".fix").addEventListener("click", () => {
         applyDropcap(candidate, candidate.proposed);
         saveCheckpoint();
-        renderRepairReview();
-        setStatus(`Applied Dropcap Rescue on page ${candidate.pageIndex + 1}.`);
+        refreshDownstreamRepairState();
+        setStatus(`Applied Dropcap Rescue on page ${candidate.pageIndex + 1}. Kindle Ready will use the repaired text on its next check.`);
       });
       item.querySelector(".discard").addEventListener("click", () => {
         rejectDropcap(candidate);
         saveCheckpoint();
-        renderRepairReview();
+        refreshDownstreamRepairState();
         setStatus(`Discarded the Dropcap Rescue suggestion on page ${candidate.pageIndex + 1}.`);
       });
       item.querySelector(".page").addEventListener("click", () => jumpToPage(candidate.pageIndex));
@@ -3107,18 +3146,16 @@
         const exactAtIndex = text.slice(c.index, c.index + c.original.length) === c.original;
         const pos = exactAtIndex ? c.index : text.indexOf(c.original);
         if (pos >= 0) {
-          page.text = text.slice(0, pos) + c.joined + text.slice(pos + c.original.length);
-          saveCheckpoint();
-          renderReview();
-          renderLigatureReview();
-          renderRepairReview();
-          setStatus(`Repaired “${c.original}” → “${c.joined}”.`);
+          const nextText = text.slice(0, pos) + c.joined + text.slice(pos + c.original.length);
+          commitPageText(c.pageIndex, nextText);
+          refreshDownstreamRepairState();
+          setStatus(`Repaired “${c.original}” → “${c.joined}”. Kindle Ready will use the repaired text on its next check.`);
         }
       });
       item.querySelector(".keep").addEventListener("click", () => {
         state.ignoredLigatureCandidates.add(c.key);
-        renderLigatureReview();
-        renderRepairReview();
+        saveCheckpoint();
+        refreshDownstreamRepairState();
         setStatus(`Kept “${c.original}” as-is.`);
       });
       item.querySelector(".page").addEventListener("click", () => jumpToPage(c.pageIndex));
@@ -3345,15 +3382,14 @@
 
           const start = match.index;
           const end = start + match[0].length;
-          page.text = before.slice(0, start) + suggestion + before.slice(end);
-
-          saveCheckpoint();
-          renderReview();
+          const nextText = before.slice(0, start) + suggestion + before.slice(end);
+          commitPageText(issue.pageIndex, nextText);
 
           const joinedText = match[0];
           setStatus(`Joined “${joinedText}” → “${suggestion}”.`);
 
           state.ignoredFinalPolishIssues.add(issue.key);
+          saveCheckpoint();
           const report = runFinalPolish();
           if (report && els.finalPolishReview) {
             els.finalPolishReview.open = true;
@@ -3361,6 +3397,7 @@
         });
         button("Keep hyphen", "ghost", () => {
           state.ignoredFinalPolishIssues.add(issue.key);
+          saveCheckpoint();
           runFinalPolish();
           setStatus(`Kept “${issue.current}” unchanged.`);
         });
@@ -3368,6 +3405,7 @@
       } else if (issue.type === "Quote balance") {
         button("Looks correct", "ghost", () => {
           state.ignoredFinalPolishIssues.add(issue.key);
+          saveCheckpoint();
           runFinalPolish();
           setStatus("Quote warning dismissed as correct.");
         });
@@ -3401,6 +3439,7 @@
         });
         button("Keep separate", "ghost", () => {
           state.ignoredFinalPolishIssues.add(issue.key);
+          saveCheckpoint();
           runFinalPolish();
         });
         button("Edit page", "ghost", () => jumpToPage(issue.pageIndex));
@@ -3477,8 +3516,12 @@
     if (els.repairBookStatus) els.repairBookStatus.textContent = "Working…";
     try {
       syncCurrentEditor();
-      setStatus("Guided Repair 1/5 · Rebuilding paragraph structure…");
-      const rebuiltCount = rebuildParagraphsFromSavedGeometry({ confirmOverwrite: false });
+      setStatus(state.repairBookHasRun
+        ? "Guided Repair 1/5 · Preserving already repaired paragraph text…"
+        : "Guided Repair 1/5 · Rebuilding paragraph structure…");
+      const rebuiltCount = state.repairBookHasRun
+        ? 0
+        : rebuildParagraphsFromSavedGeometry({ confirmOverwrite: false });
 
       setStatus("Guided Repair 2/5 · Scanning conservative italics…");
       const italics = await autoScanItalics();
@@ -3494,6 +3537,7 @@
       const high = state.dropcapCandidates.filter(c => c.status === "pending" && c.confidence === "high");
       high.forEach(candidate => applyDropcap(candidate, candidate.proposed));
       const remaining = state.dropcapCandidates.filter(c => c.status === "pending").length;
+      state.repairBookHasRun = true;
       saveCheckpoint();
       renderReview();
       renderDropcapResults();
@@ -3619,8 +3663,9 @@
       item.querySelector(".keep").addEventListener("click", (event) => {
         event.preventDefault();
         state.ignoredLigatureCandidates.add(c.key);
+        saveCheckpoint();
+        refreshDownstreamRepairState();
         setStatus(`Kept “${c.original}” as-is.`);
-        renderLigatureReview();
       });
 
       item.querySelector(".repair").addEventListener("click", (event) => {
@@ -3630,11 +3675,10 @@
         const exactAtIndex = text.slice(c.index, c.index + c.original.length) === c.original;
         const pos = exactAtIndex ? c.index : text.indexOf(c.original);
         if (pos >= 0) {
-          page.text = text.slice(0, pos) + c.joined + text.slice(pos + c.original.length);
-          saveCheckpoint();
-          renderReview();
-          setStatus(`Repaired uncertain split-ligature candidate “${c.original}” → “${c.joined}”.`);
-          renderLigatureReview();
+          const nextText = text.slice(0, pos) + c.joined + text.slice(pos + c.original.length);
+          commitPageText(c.pageIndex, nextText);
+          refreshDownstreamRepairState();
+          setStatus(`Repaired uncertain split-ligature candidate “${c.original}” → “${c.joined}”. Kindle Ready will use the repaired text on its next check.`);
         } else {
           setStatus(`Could not locate “${c.original}” again; rerun split-ligature inspection.`);
         }
@@ -4087,6 +4131,9 @@ ${coverSpine}${spine.join("\n")}
   els.imageInput.addEventListener("change", async () => {
     state.importedEpub = null;
     state.dropcapCandidates = [];
+    state.repairBookHasRun = false;
+    state.ignoredLigatureCandidates = new Set();
+    state.ignoredFinalPolishIssues = new Set();
     state.files = Array.from(els.imageInput.files || []).sort(naturalSort);
     state.pages = [];
     state.currentPageIndex = -1;
@@ -4117,6 +4164,9 @@ ${coverSpine}${spine.join("\n")}
     state.files = [];
     state.pages = [];
     state.currentPageIndex = -1;
+    state.repairBookHasRun = false;
+    state.ignoredLigatureCandidates = new Set();
+    state.ignoredFinalPolishIssues = new Set();
     clearCheckpoint();
     els.fileCount.textContent = "0 pages loaded";
     els.processBtn.disabled = true;
