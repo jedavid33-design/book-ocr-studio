@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.25-chapter-guided-repair";
+  const BUILD_VERSION = "2.7.27-post-ocr-crop";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -93,6 +93,8 @@
     cropSides: $("cropSides"),
     previewCanvas: $("previewCanvas"),
     previewDims: $("previewDims"),
+    applyCropExisting: $("applyCropExisting"),
+    applyCropStatus: $("applyCropStatus"),
     processBtn: $("processBtn"),
     freshPaddleBtn: $("freshPaddleBtn"),
     progressWrap: $("progressWrap"),
@@ -235,6 +237,8 @@
           chapterStart: !!p.chapterStart,
           chapterTitle: p.chapterTitle || "",
           layoutLines: Array.isArray(p.layoutLines) ? p.layoutLines : [],
+          rawLayoutLines: Array.isArray(p.rawLayoutLines) ? p.rawLayoutLines : [],
+          ocrCrop: p.ocrCrop || null,
           layoutMeta: p.layoutMeta || null,
         })),
       };
@@ -383,6 +387,8 @@
         chapterStart: page.chapterStart != null ? !!page.chapterStart : !!page.chapterCandidate,
         chapterTitle: page.chapterTitle || "",
         layoutLines: Array.isArray(page.layoutLines) ? page.layoutLines : [],
+        rawLayoutLines: Array.isArray(page.rawLayoutLines) ? page.rawLayoutLines : [],
+        ocrCrop: page.ocrCrop || null,
         layoutMeta: page.layoutMeta || null,
       };
     }).filter(Boolean);
@@ -816,6 +822,109 @@
     ctx.fillRect(0, 0, w, h);
     ctx.drawImage(sourceCanvas, x, y, w, h, 0, 0, w, h);
     return canvas;
+  }
+
+  function cloneLayoutLine(line) {
+    return { ...line, box: line?.box ? { ...line.box } : line?.box };
+  }
+
+  function lineOriginalBox(line, sourceCrop) {
+    const box = line?.box;
+    if (!box) return null;
+    const sx = Number(sourceCrop?.sx || 0);
+    const sy = Number(sourceCrop?.sy || 0);
+    return {
+      x: Number(box.x || 0) + sx,
+      y: Number(box.y || 0) + sy,
+      w: Number(box.w || 0),
+      h: Number(box.h || 0)
+    };
+  }
+
+  function refilterLayoutLines(rawLines, sourceCrop, targetCrop) {
+    const right = targetCrop.sx + targetCrop.sw;
+    const bottom = targetCrop.sy + targetCrop.sh;
+    return (rawLines || []).flatMap(line => {
+      const b = lineOriginalBox(line, sourceCrop);
+      if (!b) return [];
+      const cx = b.x + b.w / 2;
+      const cy = b.y + b.h / 2;
+      // Keep a recognized line only when its center belongs to the newly
+      // selected book region. This cleanly removes Kindle/CloudLibrary chrome.
+      if (cx < targetCrop.sx || cx > right || cy < targetCrop.sy || cy > bottom) return [];
+      const next = cloneLayoutLine(line);
+      next.box = {
+        ...next.box,
+        x: b.x - targetCrop.sx,
+        y: b.y - targetCrop.sy,
+        w: b.w,
+        h: b.h,
+        cx: b.x - targetCrop.sx + b.w / 2,
+        cy: b.y - targetCrop.sy + b.h / 2
+      };
+      return [next];
+    });
+  }
+
+  async function applyCropToExistingOcr() {
+    if (!state.pages.length) {
+      setStatus("OCR pages first, then this can re-filter their saved geometry.");
+      return;
+    }
+    syncCurrentEditor();
+    const btn = els.applyCropExisting;
+    if (btn) btn.disabled = true;
+    if (els.applyCropStatus) els.applyCropStatus.textContent = "Working…";
+    let changed = 0, removed = 0, unavailable = 0;
+    try {
+      for (let pageIndex = 0; pageIndex < state.pages.length; pageIndex++) {
+        const page = state.pages[pageIndex];
+        const file = page.file || state.files[pageIndex];
+        if (!file || !Array.isArray(page.layoutLines) || !page.layoutLines.length) { unavailable++; continue; }
+        const img = await loadImageFromFile(file);
+        const targetCrop = getCropSettings(img);
+
+        // Old checkpoints did not store raw geometry separately. On the first
+        // post-OCR crop, preserve the currently saved geometry as the source.
+        // If no source crop was recorded, it came from the historical default
+        // uncropped canvas (0/0/0), which rescues existing projects like this one.
+        if (!Array.isArray(page.rawLayoutLines) || !page.rawLayoutLines.length) {
+          page.rawLayoutLines = page.layoutLines.map(cloneLayoutLine);
+        }
+        const sourceCrop = page.ocrCrop || { sx:0, sy:0, sw:img.width, sh:img.height };
+        const before = page.rawLayoutLines.length;
+        const filtered = refilterLayoutLines(page.rawLayoutLines, sourceCrop, targetCrop);
+        removed += Math.max(0, before - filtered.length);
+        page.layoutLines = filtered;
+        page.ocrCrop = { ...targetCrop };
+        changed++;
+      }
+
+      if (!changed) {
+        if (els.applyCropStatus) els.applyCropStatus.textContent = "No saved geometry";
+        setStatus("No saved OCR line geometry was available to re-filter. Re-OCR is required for those pages.");
+        return;
+      }
+
+      state.bookLayoutProfile = buildBookLayoutProfile(state.pages);
+      const rebuilt = rebuildParagraphsFromSavedGeometry({ confirmOverwrite:false });
+      state.repairBookHasRun = false;
+      state.dropcapCandidates = [];
+      state.lastDropcapAudit = null;
+      state.ignoredFinalPolishIssues = new Set();
+      saveCheckpoint();
+      renderReview();
+      renderRepairReview();
+      refreshParagraphRebuildUi();
+      if (els.applyCropStatus) els.applyCropStatus.textContent = `${changed} pages · ${removed} lines removed`;
+      setStatus(`Applied the current crop to saved OCR on ${changed} page${changed===1?"":"s"}, removed ${removed} out-of-crop OCR line${removed===1?"":"s"}, and rebuilt paragraph text without rerunning PaddleOCR.${unavailable ? ` ${unavailable} page${unavailable===1?"":"s"} had no reusable geometry.` : ""} Guided Repair is ready to rerun.`);
+    } catch (err) {
+      console.error(err);
+      if (els.applyCropStatus) els.applyCropStatus.textContent = "Stopped";
+      setStatus(`Could not reapply crop safely: ${err.message || err}`);
+    } finally {
+      if (btn) btn.disabled = false;
+    }
   }
 
   async function updatePreview() {
@@ -1760,6 +1869,8 @@
           ? rememberedChapter.chapterTitle
           : detectChapterTitle(text, index + 1),
         layoutLines: paddleResult.layoutLines || [],
+        rawLayoutLines: (paddleResult.layoutLines || []).map(line => ({ ...line, box: line.box ? { ...line.box } : line.box })),
+        ocrCrop: getCropSettings(img),
         layoutMeta: paddleResult.layoutMeta || null,
       };
 
@@ -2279,7 +2390,12 @@
         ? `A detached capital “${latinFragment}” appears beside this opening paragraph.`
         : `A detached capital “${latinFragment}” appears elsewhere in this chapter; please verify it.`;
     } else {
+      // New hard rule: a lowercase first prose word at a marked chapter start
+      // is itself enough evidence that a decorative initial may have been lost.
+      // Do not silently suppress it just because Studio cannot infer the letter.
       proposedWord = info.word;
+      confidence = "ambiguous";
+      reason = "This marked chapter opening begins with a lowercase word. The drop cap may be missing; review and edit the first word directly.";
     }
 
     let proposedText;
@@ -4412,6 +4528,7 @@ ${coverSpine}${spine.join("\n")}
   }));
 
   syncCropPresetUi();
+  els.applyCropExisting?.addEventListener("click", applyCropToExistingOcr);
 
   [els.bookTitle, els.bookAuthor].forEach(input => input?.addEventListener("input", () => {
     if (state.files.length) saveCheckpoint();

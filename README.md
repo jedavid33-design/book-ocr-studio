@@ -145,3 +145,9 @@ v2.6.5: Added exportable italic detection 2.0 diagnostics with per-line slant/ga
 
 
 2.7.25 Chapter Guided Repair: adds a compact Whole book / Chapter by chapter mode directly beside Repair Book. Chapter mode shows unobtrusive previous/next chapter controls, persists the current chapter, scopes safe cleanup, split-ligature repair, Dropcap Rescue, and Review repairs to only that chapter, and avoids whole-book paragraph/italic rebuilds so other repaired chapters remain untouched.
+
+
+2.7.26 Dropcap Lowercase Rule: any marked chapter opening whose first prose word begins lowercase is now always surfaced as a Dropcap Rescue review item. If a detached capital can be inferred, Studio proposes it; otherwise the inline Guided Repair editor shows the damaged opening unchanged for manual correction. This catches full-book cases such as s this..., eese..., o you..., ey there..., and hen... that were previously suppressed by dictionary-only heuristics.
+
+
+2.7.27 Post-OCR Crop: Crop preset now has a compact Apply crop to existing OCR action. It filters saved Paddle line geometry against the newly selected crop, removes out-of-crop UI/header/footer lines, shifts retained geometry into the new crop coordinate space, rebuilds paragraph text, invalidates stale Guided Repair/Final Polish state, and preserves raw geometry for future crop changes. New OCR pages record their source crop. Historical checkpoints without source-crop metadata are treated as uncropped, matching the prior default.
