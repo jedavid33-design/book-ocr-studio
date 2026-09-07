@@ -1,266 +1,240 @@
-<!doctype html>
+<!DOCTYPE html>
+
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="theme-color" content="#765f91" />
-  <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-  <meta name="apple-mobile-web-app-title" content="Book OCR" />
-  <meta name="mobile-web-app-capable" content="yes" />
-  <title>Book OCR Studio</title>
-  <link rel="manifest" href="manifest.webmanifest" />
-  <link rel="apple-touch-icon" href="apple-touch-icon.png" />
-  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=2.7.7-workflow" />
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1, viewport-fit=cover" name="viewport"/>
+<meta content="#765f91" name="theme-color"/>
+<meta content="yes" name="apple-mobile-web-app-capable"/>
+<meta content="default" name="apple-mobile-web-app-status-bar-style"/>
+<meta content="Book OCR" name="apple-mobile-web-app-title"/>
+<meta content="yes" name="mobile-web-app-capable"/>
+<title>Book OCR Studio</title>
+<link href="manifest.webmanifest" rel="manifest"/>
+<link href="apple-touch-icon.png" rel="apple-touch-icon"/>
+<link href="icon-192.png" rel="icon" sizes="192x192" type="image/png"/>
+<link href="styles.css?v=2.7.8-guided-polish" rel="stylesheet"/>
 </head>
 <body>
-  <header class="topbar">
-    <div>
-      <div id="buildIdentifier" class="build-identifier">BUILD 2.7.7 · WORKFLOW RESTRUCTURE · KINDLE-FIRST</div>
-      <h1>Book OCR Studio</h1>
-      <p class="subhead">Crop screenshots, OCR them one page at a time, batch OCR the whole book, review chapter starts or any page, and export TXT or EPUB.</p>
-    </div>
-  </header>
+<header class="topbar">
+<div>
 
-  <main class="app-shell">
-    <section class="card rescue-import-card">
-      <h2>Repair an existing EPUB — no OCR needed</h2>
-      <p class="hint">Import an untouched EPUB previously exported by Book OCR Studio. Dropcap Rescue scans and repairs its chapter openings as a post-OCR step. Your original EPUB remains unchanged.</p>
-      <label class="file-field">
-        <span>Book OCR Studio EPUB</span>
-        <input id="epubInput" type="file" accept="application/epub+zip,.epub" />
-      </label>
-      <div id="epubImportStatus" class="status-box subtle">No EPUB imported.</div>
-    </section>
-    <section class="card">
-      <h2>1. Book info</h2>
-      <div class="grid two">
-        <label>
-          <span>Title</span>
-          <input id="bookTitle" type="text" placeholder="Rewind It Back" />
-        </label>
-        <label>
-          <span>Author</span>
-          <input id="bookAuthor" type="text" placeholder="Author name" />
-        </label>
-      </div>
-      <label class="file-field">
-        <span>Book cover (optional, used for EPUB)</span>
-        <input id="coverInput" type="file" accept="image/*" />
-      </label>
-      <div id="coverPreviewWrap" class="cover-preview hidden">
-        <img id="coverPreview" alt="Selected cover preview" />
-      </div>
-    </section>
+<div class="build-identifier" id="buildIdentifier">BUILD 2.7.8 · GUIDED + POLISH · KINDLE-FIRST</div>
+<h1>Book OCR Studio</h1>
+<p class="subhead">Crop screenshots, OCR them one page at a time, batch OCR the whole book, review chapter starts or any page, and export TXT or EPUB.</p>
+</div>
+</header>
+<main class="app-shell">
+<section class="card rescue-import-card">
+<h2>Repair an existing EPUB — no OCR needed</h2>
+<p class="hint">Import an untouched EPUB previously exported by Book OCR Studio. Dropcap Rescue scans and repairs its chapter openings as a post-OCR step. Your original EPUB remains unchanged.</p>
+<label class="file-field">
+<span>Book OCR Studio EPUB</span>
+<input accept="application/epub+zip,.epub" id="epubInput" type="file"/>
+</label>
+<div class="status-box subtle" id="epubImportStatus">No EPUB imported.</div>
+</section>
+<section class="card">
+<h2>1. Book info</h2>
+<div class="grid two">
+<label>
+<span>Title</span>
+<input id="bookTitle" placeholder="Rewind It Back" type="text"/>
+</label>
+<label>
+<span>Author</span>
+<input id="bookAuthor" placeholder="Author name" type="text"/>
+</label>
+</div>
+<label class="file-field">
+<span>Book cover (optional, used for EPUB)</span>
+<input accept="image/*" id="coverInput" type="file"/>
+</label>
+<div class="cover-preview hidden" id="coverPreviewWrap">
+<img alt="Selected cover preview" id="coverPreview"/>
+</div>
+</section>
+<section class="card">
+<h2>2. Add screenshots</h2>
+<label class="dropzone" id="dropzone">
+<input accept="image/*" id="imageInput" multiple="" type="file"/>
+<strong>Choose book screenshots</strong>
+<span>Select the whole batch. Files are sorted naturally by filename.</span>
+</label>
+<div class="summary-row">
+<span id="fileCount">0 pages loaded</span>
+<button class="button ghost" id="clearImages" type="button">Clear pages</button>
+</div>
+<div aria-live="polite" class="thumb-strip" id="thumbStrip"></div>
+</section>
+<section class="card">
+<h2>3. Crop preset</h2>
+<div class="preset-row">
+<button class="chip active" data-preset="none" type="button">None</button>
+<button class="chip" data-preset="cloud" type="button">CloudLibrary footer</button>
+<button class="chip" data-preset="kindle" type="button">Kindle header</button>
+</div>
+<div class="grid three">
+<label>
+<span>Crop top (px)</span>
+<input id="cropTop" inputmode="numeric" min="0" type="number" value="0"/>
+</label>
+<label>
+<span>Crop bottom (px)</span>
+<input id="cropBottom" inputmode="numeric" min="0" type="number" value="0"/>
+</label>
+<label>
+<span>Crop left/right (px)</span>
+<input id="cropSides" inputmode="numeric" min="0" type="number" value="0"/>
+</label>
+</div>
+<p class="hint">Presets are based on your 1488 × 2266 screenshots: CloudLibrary removes 75 px from the bottom; Kindle removes 130 px from the top. You can adjust either value.</p>
+<div class="preview-panel">
+<div class="preview-head">
+<strong>Crop preview</strong>
+<span id="previewDims"></span>
+</div>
+<canvas id="previewCanvas"></canvas>
+</div>
+</section>
+<section class="card">
+<h2>4. OCR</h2>
+<p class="hint">Version 2.0 uses PaddleOCR (PP-OCRv5) in your browser. Tap <strong>Process all pages</strong> and PaddleOCR will work through the book sequentially, saving after every page. The first OCR run may take longer while the models load.</p>
+<div class="actions">
+<button class="button primary" disabled="" id="processBtn" type="button">Process all pages</button>
+<button class="button ghost" disabled="" id="freshPaddleBtn" type="button">Clear old OCR + restart with Paddle</button>
+</div>
+<p class="hint">The restart button removes saved OCR text from older versions but keeps your current screenshot selection and preserves saved chapter markers where possible.</p>
+<div class="progress-wrap hidden" id="progressWrap">
+<div class="progress-meta">
+<span id="progressLabel">Starting…</span>
+<span id="progressPercent">0%</span>
+</div>
+<progress id="progressBar" max="100" value="0"></progress>
+</div>
+<div class="status-box" id="statusBox" role="status">Add screenshots to begin.</div>
+</section>
+<section class="card hidden" id="reviewSection">
+<div class="section-head">
+<div>
+<h2>5. Review</h2>
+<p class="hint">After batch OCR, review every page or just the detected chapter starts. Edits save automatically.</p>
+<div class="preset-row">
+<button class="chip" id="reviewAllBtn" type="button">All pages</button>
+<button class="chip active" id="reviewChaptersBtn" type="button">Chapter starts only</button>
+</div>
+</div>
+<div class="review-tools compact">
+<span class="progress-pill" id="reviewProgress">0 of 0 processed</span>
+</div>
+</div>
+<div class="review-list" id="reviewList"></div>
+<div class="nav-row">
+<button class="button ghost" disabled="" id="prevPageBtn" type="button">Previous page</button>
+<button class="button secondary" disabled="" id="pageDropcapBtn" type="button">Dropcap Rescue</button>
+<button class="button secondary" disabled="" id="markItalicBtn" type="button">Mark selection italic</button>
+<button class="button ghost" disabled="" id="clearItalicBtn" type="button">Remove italic marks</button>
+<button class="button secondary" disabled="" id="messageOcrBtn" type="button">Message-page OCR · Paddle</button>
+<button class="button primary" disabled="" id="nextPageBtn" type="button">Next page</button>
+</div>
+</section>
 
-    <section class="card">
-      <h2>2. Add screenshots</h2>
-      <label class="dropzone" id="dropzone">
-        <input id="imageInput" type="file" accept="image/*" multiple />
-        <strong>Choose book screenshots</strong>
-        <span>Select the whole batch. Files are sorted naturally by filename.</span>
-      </label>
-      <div class="summary-row">
-        <span id="fileCount">0 pages loaded</span>
-        <button id="clearImages" class="button ghost" type="button">Clear pages</button>
-      </div>
-      <div id="thumbStrip" class="thumb-strip" aria-live="polite"></div>
-    </section>
-
-    <section class="card">
-      <h2>3. Crop preset</h2>
-      <div class="preset-row">
-        <button class="chip active" data-preset="none" type="button">None</button>
-        <button class="chip" data-preset="cloud" type="button">CloudLibrary footer</button>
-        <button class="chip" data-preset="kindle" type="button">Kindle header</button>
-      </div>
-
-      <div class="grid three">
-        <label>
-          <span>Crop top (px)</span>
-          <input id="cropTop" type="number" min="0" value="0" inputmode="numeric" />
-        </label>
-        <label>
-          <span>Crop bottom (px)</span>
-          <input id="cropBottom" type="number" min="0" value="0" inputmode="numeric" />
-        </label>
-        <label>
-          <span>Crop left/right (px)</span>
-          <input id="cropSides" type="number" min="0" value="0" inputmode="numeric" />
-        </label>
-      </div>
-
-      <p class="hint">Presets are based on your 1488 × 2266 screenshots: CloudLibrary removes 75 px from the bottom; Kindle removes 130 px from the top. You can adjust either value.</p>
-
-      <div class="preview-panel">
-        <div class="preview-head">
-          <strong>Crop preview</strong>
-          <span id="previewDims"></span>
-        </div>
-        <canvas id="previewCanvas"></canvas>
-      </div>
-    </section>
-
-    <section class="card">
-      <h2>4. OCR</h2>
-      <p class="hint">Version 2.0 uses PaddleOCR (PP-OCRv5) in your browser. Tap <strong>Process all pages</strong> and PaddleOCR will work through the book sequentially, saving after every page. The first OCR run may take longer while the models load.</p>
-
-      <div class="actions">
-        <button id="processBtn" class="button primary" type="button" disabled>Process all pages</button>
-        <button id="freshPaddleBtn" class="button ghost" type="button" disabled>Clear old OCR + restart with Paddle</button>
-      </div>
-      <p class="hint">The restart button removes saved OCR text from older versions but keeps your current screenshot selection and preserves saved chapter markers where possible.</p>
-
-      <div class="progress-wrap hidden" id="progressWrap">
-        <div class="progress-meta">
-          <span id="progressLabel">Starting…</span>
-          <span id="progressPercent">0%</span>
-        </div>
-        <progress id="progressBar" max="100" value="0"></progress>
-      </div>
-
-      <div id="statusBox" class="status-box" role="status">Add screenshots to begin.</div>
-    </section>
-
-    <section class="card hidden" id="reviewSection">
-      <div class="section-head">
-        <div>
-          <h2>5. Review</h2>
-          <p class="hint">After batch OCR, review every page or just the detected chapter starts. Edits save automatically.</p>
-          <div class="preset-row">
-            <button id="reviewAllBtn" class="chip" type="button">All pages</button>
-            <button id="reviewChaptersBtn" class="chip active" type="button">Chapter starts only</button>
-          </div>
-        </div>
-        <div class="review-tools compact">
-          <span id="reviewProgress" class="progress-pill">0 of 0 processed</span>
-        </div>
-      </div>
-      <div id="reviewList" class="review-list"></div>
-      <div class="nav-row">
-        <button id="prevPageBtn" class="button ghost" type="button" disabled>Previous page</button>
-        <button id="pageDropcapBtn" class="button secondary" type="button" disabled>Dropcap Rescue</button>
-        <button id="markItalicBtn" class="button secondary" type="button" disabled>Mark selection italic</button>
-        <button id="clearItalicBtn" class="button ghost" type="button" disabled>Remove italic marks</button>
-        <button id="messageOcrBtn" class="button secondary" type="button" disabled>Message-page OCR · Paddle</button>
-        <button id="nextPageBtn" class="button primary" type="button" disabled>Next page</button>
-      </div>
-    </section>
-
-    <section class="card hidden" id="guidedRepairSection">
-      <h2>6. Guided Repair</h2>
-      <div class="subcard guided-repair-card">
-        <h3>Guided Repair</h3>
-        <p class="hint">One pass through the safe, proven repair pipeline. Studio rebuilds paragraph structure first, applies conservative italics while source geometry is still authoritative, then runs safe cleanup, split-ligature repair, and Dropcap Rescue. High-confidence dropcaps are accepted automatically; anything uncertain stays for review.</p>
-        <div class="actions">
-          <button id="repairBook" class="button primary" type="button">Repair Book</button>
-          <span id="repairBookStatus" class="progress-pill">Ready</span>
-        </div>
-      <div class="subcard">
-        <h3>Split Ligatures</h3>
-        <p class="hint">Repair high-confidence OCR splits involving fi, fl, ff, ffi, and ffl. Uncertain candidates stay with Guided Repair for review.</p>
-        <div class="actions">
-          <button id="repairLigatures" class="button secondary" type="button">Repair split ligatures</button>
-          
-          <span id="ligatureStatus" class="progress-pill">Not run</span>
-        </div>
-    </section>
-
-    <section class="card hidden" id="advancedSection">
-      <h2>7. Advanced</h2>
-      <p class="hint advanced-label"><strong>Diagnostics and individual tools</strong> · Use these when testing a build or rerunning one stage manually.</p>
-      <div class="subcard regression-card">
-        <h3>Regression Check</h3>
-        <p class="hint">Inspection only. Checks paragraph sanity, text continuity, cleanup normalization, scene breaks, split ligatures, layout geometry, dropcaps, and italic sanity without changing the book. The original 20-page IMG_2701–IMG_2720 test set also gets its known layout-profile checks.</p>
-        <div class="actions">
-          <button id="runRegression" class="button secondary" type="button">Run Regression Check</button>
-          <span id="regressionStatus" class="progress-pill">Not run</span>
-        </div>
-      <div class="subcard">
-        <h3>Paragraph Reconstruction</h3>
-        <p class="hint">PaddleOCR now saves line positions and uses first-line indentation as primary paragraph evidence. Rebuild from saved geometry later without re-running OCR. Rebuilding replaces current page text, so do it before manual text edits.</p>
-        <div class="actions">
-          <button id="rebuildParagraphs" class="button secondary" type="button" disabled>Rebuild paragraphs</button>
-          <button id="downloadLayoutDiagnostics" class="button secondary" type="button" disabled>Download layout diagnostics</button>
-          <span id="paragraphStatus" class="progress-pill">Needs OCR from this build</span>
-        </div>
-      <div class="subcard">
-        <h3>Formatting Rescue</h3>
-        <p class="hint">Safe cleanup normalizes OCR ellipses and decorative scene dividers without rewriting prose, and now survives paragraph rebuilds. Auto Italic Scan is precision-first: it only auto-marks coherent multi-word runs and leaves single-word emphasis manual for now. Word-level diagnostics exports the exact candidates, grouped runs, thresholds, and final decisions used by EPUB export.</p>
-        <div class="actions">
-          <button id="safePolish" class="button secondary" type="button">Safe text cleanup</button>
-          <button id="autoItalicScan" class="button secondary" type="button">Auto italic scan</button>
-          <button id="downloadItalicDiagnostics" class="button secondary" type="button">Download word-level italic diagnostics</button>
-          <span id="polishStatus" class="progress-pill">Not run</span>
-          <span id="italicStatus" class="progress-pill">Italics not scanned</span>
-        </div>
-    </section>
-
-    <section class="card hidden" id="exportSection">
-      <h2>8. Export</h2>
-      <div class="subcard final-polish-card">
-        <h3>✨ Final Polish</h3>
-        <p class="hint">Kindle-first cleanup after Repair Book. Applies only low-risk punctuation and spacing fixes, then audits wrap-hyphens, quote balance, paragraph fragments, chapter structure, and remaining review items. Ambiguous text is never changed automatically.</p>
-        <div class="actions">
-          <button id="finalPolish" class="button primary" type="button">Final Polish</button>
-          <span id="finalPolishStatus" class="progress-pill">Ready after Repair Book</span>
-        </div>
-      <details id="ligatureReviewDetails" class="ligature-inline-review hidden">
-          <summary id="ligatureReviewSummaryToggle">Review uncertain (0)</summary>
-          <div class="ligature-inline-body">
-            <p id="ligatureReviewSummary" class="hint"></p>
-            <div id="ligatureReviewList" class="review-list"></div>
-          </div>
-        </details>
-      </div>
-    </div>
-      <div class="actions">
-        <button id="downloadTxt" class="button primary" type="button">Download TXT</button>
-        <button id="downloadEpub" class="button secondary" type="button">Download EPUB</button>
-      </div>
-      <p class="hint">For imported EPUBs, export keeps the original package and changes only repairs you applied. For screenshot projects, it uses the existing Book OCR Studio exporter.</p>
-    </section>
-
+<section class="card hidden" id="guidedRepairSection"><h2>6. Guided Repair</h2><div class="subcard guided-repair-card">
+<h3>Guided Repair</h3>
+<p class="hint">One pass through the safe, proven repair pipeline. Studio rebuilds paragraph structure first, applies conservative italics while source geometry is still authoritative, then runs safe cleanup, split-ligature repair, and Dropcap Rescue. High-confidence dropcaps are accepted automatically; anything uncertain stays for review.</p>
+<div class="actions">
+<button class="button primary" id="repairBook" type="button">Repair Book</button>
+<span class="progress-pill" id="repairBookStatus">Ready</span>
+</div>
+<details class="ligature-inline-review hidden" id="repairReview">
+<summary id="repairReviewToggle">Review repairs (0)</summary>
+<div class="ligature-inline-body">
+<p class="hint">Only unresolved Repair Book items appear here. Fix applies the proposed repair; discard/keep leaves the OCR text unchanged.</p>
+<div class="review-list" id="repairReviewList"></div>
+</div>
+</details>
+</div><div class="subcard final-polish-card">
+<h3>✨ Final Polish</h3>
+<p class="hint">Kindle-first cleanup after Repair Book. Applies only low-risk punctuation and spacing fixes, then audits wrap-hyphens, quote balance, paragraph fragments, chapter structure, and remaining review items. Ambiguous text is never changed automatically.</p>
+<div class="actions">
+<button class="button primary" id="finalPolish" type="button">Final Polish</button>
+<span class="progress-pill" id="finalPolishStatus">Ready after Repair Book</span>
+</div>
+<div class="regression-results hidden" id="finalPolishResults"></div>
+<details class="ligature-inline-review hidden" id="finalPolishReview">
+<summary id="finalPolishReviewToggle">Review polish (0)</summary>
+<div class="ligature-inline-body">
+<p class="hint">These are inspection flags only. Studio has not changed them.</p>
+<div class="review-list" id="finalPolishReviewList"></div>
+</div>
+</details>
+</div></section><section class="card hidden" id="advancedSection"><h2>7. Advanced</h2><p class="hint advanced-label"><strong>Diagnostics and individual tools</strong> · Use these when testing a build or rerunning one stage manually.</p><div class="subcard regression-card">
+<h3>Regression Check</h3>
+<p class="hint">Inspection only. Checks paragraph sanity, text continuity, cleanup normalization, scene breaks, split ligatures, layout geometry, dropcaps, and italic sanity without changing the book. The original 20-page IMG_2701–IMG_2720 test set also gets its known layout-profile checks.</p>
+<div class="actions">
+<button class="button secondary" id="runRegression" type="button">Run Regression Check</button>
+<span class="progress-pill" id="regressionStatus">Not run</span>
+</div>
+<div class="regression-results hidden" id="regressionResults"></div>
+</div><div class="subcard">
+<h3>Paragraph Reconstruction</h3>
+<p class="hint">PaddleOCR now saves line positions and uses first-line indentation as primary paragraph evidence. Rebuild from saved geometry later without re-running OCR. Rebuilding replaces current page text, so do it before manual text edits.</p>
+<div class="actions">
+<button class="button secondary" disabled="" id="rebuildParagraphs" type="button">Rebuild paragraphs</button>
+<button class="button secondary" disabled="" id="downloadLayoutDiagnostics" type="button">Download layout diagnostics</button>
+<span class="progress-pill" id="paragraphStatus">Needs OCR from this build</span>
+</div>
+</div><div class="subcard">
+<h3>Formatting Rescue</h3>
+<p class="hint">Safe cleanup normalizes OCR ellipses and decorative scene dividers without rewriting prose, and now survives paragraph rebuilds. Auto Italic Scan is precision-first: it only auto-marks coherent multi-word runs and leaves single-word emphasis manual for now. Word-level diagnostics exports the exact candidates, grouped runs, thresholds, and final decisions used by EPUB export.</p>
+<div class="actions">
+<button class="button secondary" id="safePolish" type="button">Safe text cleanup</button>
+<button class="button secondary" id="autoItalicScan" type="button">Auto italic scan</button>
+<button class="button secondary" id="downloadItalicDiagnostics" type="button">Download word-level italic diagnostics</button>
+<span class="progress-pill" id="polishStatus">Not run</span>
+<span class="progress-pill" id="italicStatus">Italics not scanned</span>
+</div>
+</div></section><section class="card hidden" id="exportSection"><h2>8. Export</h2><div class="actions">
+<button class="button primary" id="downloadTxt" type="button">Download TXT</button>
+<button class="button secondary" id="downloadEpub" type="button">Download EPUB</button>
+</div><p class="hint">For imported EPUBs, export keeps the original package and changes only repairs you applied. For screenshot projects, it uses the existing Book OCR Studio exporter.</p></section>
 </main>
-
-  <dialog id="pageDropcapDialog" aria-labelledby="pageDropcapTitle">
-    <div class="dialog-card">
-      <div class="dialog-head">
-        <div>
-          <p class="eyebrow">PAGE-LEVEL REVIEW</p>
-          <h2 id="pageDropcapTitle">Dropcap Rescue</h2>
-        </div>
-        <button id="closePageDropcap" class="icon-button" type="button" aria-label="Cancel and close">×</button>
-      </div>
-      <p id="pageDropcapReason" class="hint"></p>
-      <div class="page-rescue-layout">
-        <div>
-          <div class="before-after">
-            <div><strong>Current</strong><p id="pageDropcapBefore"></p></div>
-            <div class="proposed"><strong>Suggested correction</strong></div>
-          </div>
-          <label>
-            <span>Edit the proposed paragraph before applying</span>
-            <textarea id="pageDropcapEdit" rows="8" aria-label="Editable page-level Dropcap Rescue proposal"></textarea>
-          </label>
-          <p id="pageDropcapOrphan" class="dropcap-note hidden"></p>
-        </div>
-        <div id="pageDropcapImageWrap" class="dropcap-source hidden">
-          <img id="pageDropcapImage" alt="Source page for Dropcap Rescue review" />
-        </div>
-      </div>
-      <div class="actions end">
-        <button id="cancelPageDropcap" class="button ghost" type="button">Cancel</button>
-        <button id="applyPageDropcap" class="button primary" type="button">Apply suggested repair</button>
-      </div>
-    </div>
-  </dialog>
-
-  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
-  <script src="epub-polish.js?v=2.7.7-workflow"></script>
-  <script src="script-loader.js?v=2.7.7-workflow"></script>
-  <script>
+<dialog aria-labelledby="pageDropcapTitle" id="pageDropcapDialog">
+<div class="dialog-card">
+<div class="dialog-head">
+<div>
+<p class="eyebrow">PAGE-LEVEL REVIEW</p>
+<h2 id="pageDropcapTitle">Dropcap Rescue</h2>
+</div>
+<button aria-label="Cancel and close" class="icon-button" id="closePageDropcap" type="button">×</button>
+</div>
+<p class="hint" id="pageDropcapReason"></p>
+<div class="page-rescue-layout">
+<div>
+<div class="before-after">
+<div><strong>Current</strong><p id="pageDropcapBefore"></p></div>
+<div class="proposed"><strong>Suggested correction</strong></div>
+</div>
+<label>
+<span>Edit the proposed paragraph before applying</span>
+<textarea aria-label="Editable page-level Dropcap Rescue proposal" id="pageDropcapEdit" rows="8"></textarea>
+</label>
+<p class="dropcap-note hidden" id="pageDropcapOrphan"></p>
+</div>
+<div class="dropcap-source hidden" id="pageDropcapImageWrap">
+<img alt="Source page for Dropcap Rescue review" id="pageDropcapImage"/>
+</div>
+</div>
+<div class="actions end">
+<button class="button ghost" id="cancelPageDropcap" type="button">Cancel</button>
+<button class="button primary" id="applyPageDropcap" type="button">Apply suggested repair</button>
+</div>
+</div>
+</dialog>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+<script src="epub-polish.js?v=2.7.8-guided-polish"></script>
+<script src="script-loader.js?v=2.7.8-guided-polish"></script>
+<script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
         navigator.serviceWorker.register("./sw.js").catch((err) => {
