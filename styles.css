@@ -734,3 +734,8 @@ dialog::backdrop { background: rgba(30,25,20,.48); backdrop-filter: blur(5px); }
     grid-column: 2;
   }
 }
+
+/* v2.7.15 restored Final Polish review drawer */
+.final-polish-card #finalPolishReview {
+  margin-top: 12px;
+}

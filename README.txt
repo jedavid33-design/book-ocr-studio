@@ -74,3 +74,6 @@ v2.6.5: Added exportable italic detection 2.0 diagnostics with per-line slant/ga
 
 
 2.7.14 Kindle Ready: adds permanent section 8 between Advanced and Export. Preflight checks book text, metadata, cover, chapter navigation, unresolved Repair/Polish items, italic marker balance, scene breaks, and the reflowable Kindle-safe EPUB structure. Export is now section 9. No Kindle Ready check changes book text.
+
+
+2.7.15 Polish Review Restored: restores the Review polish drawer directly under Final Polish and keeps Final Polish audit stage-owned by removing outstanding Repair Book ligature/dropcap rows from its audit.

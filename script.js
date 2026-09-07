@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.14-kindle-ready-kindle-first";
+  const BUILD_VERSION = "2.7.15-polish-review-restored-kindle-first";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -3230,14 +3230,6 @@
     const chapters = state.pages.filter(p => p.chapterStart).length;
     addCheck("Chapter structure", chapters ? "pass" : "warn",
       chapters ? `${chapters} chapter start${chapters===1?"":"s"} marked for EPUB navigation.` : "No chapter starts are marked.");
-
-    const ligatures = collectUncertainLigatures().length;
-    addCheck("Outstanding ligature review", ligatures ? "warn" : "pass",
-      ligatures ? `${ligatures} uncertain split-ligature candidate${ligatures===1?"":"s"} still await Repair review.` : "No uncertain split-ligature candidates remain.");
-
-    const dropcaps = (state.dropcapCandidates || []).filter(c => c.status === "pending").length;
-    addCheck("Outstanding dropcap review", dropcaps ? "warn" : "pass",
-      dropcaps ? `${dropcaps} dropcap candidate${dropcaps===1?"":"s"} still await Repair review.` : "No pending Dropcap Rescue candidates.");
 
     return { issues, checks };
   }
