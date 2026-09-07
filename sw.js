@@ -1,7 +1,7 @@
-const CACHE_NAME = "book-ocr-studio-shell-v2-7-11-crop-preview-sync";
+const CACHE_NAME = "book-ocr-studio-shell-v2-7-12-recovery-sections";
 const APP_SHELL = [
-  "./styles.css?v=2.7.11-crop-preview-sync",
-  "./epub-polish.js?v=2.7.11-crop-preview-sync",
+  "./styles.css?v=2.7.12-recovery-sections",
+  "./epub-polish.js?v=2.7.12-recovery-sections",
   "./manifest.webmanifest",
   "./icon-192.png",
   "./icon-512.png",

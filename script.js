@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.11-crop-preview-sync-kindle-first";
+  const BUILD_VERSION = "2.7.12-recovery-sections-fix-kindle-first";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -291,10 +291,7 @@
     els.progressBar.value = 0;
     els.progressPercent.textContent = "0%";
     els.progressLabel.textContent = "Ready";
-    els.reviewSection.classList.add("hidden");
-    els.guidedRepairSection?.classList.add("hidden");
-    els.advancedSection?.classList.add("hidden");
-    els.exportSection.classList.add("hidden");
+    setPostOcrSectionsVisible(false);
     els.processBtn.disabled = false;
     els.freshPaddleBtn.disabled = false;
 
@@ -1042,6 +1039,15 @@
     els.nextPageBtn.disabled = state.processing || !hasCurrent || pos < 0 || pos >= indices.length - 1;
     els.prevPageBtn.textContent = state.reviewMode === "chapters" ? "Previous chapter" : "Previous page";
     els.nextPageBtn.textContent = state.reviewMode === "chapters" ? "Next chapter" : "Next page";
+  }
+
+
+  function setPostOcrSectionsVisible(visible) {
+    const method = visible ? "remove" : "add";
+    els.reviewSection?.classList[method]("hidden");
+    els.guidedRepairSection?.classList[method]("hidden");
+    els.advancedSection?.classList[method]("hidden");
+    els.exportSection?.classList[method]("hidden");
   }
 
   function renderReview() {
@@ -3911,9 +3917,7 @@ ${coverSpine}${spine.join("\n")}
     els.fileCount.textContent = `${state.files.length} page${state.files.length === 1 ? "" : "s"} loaded`;
     els.processBtn.disabled = !state.files.length || restored >= state.files.length;
     els.freshPaddleBtn.disabled = !state.files.length;
-    els.reviewSection.classList.toggle("hidden", restored === 0);
-    els.exportSection.classList.toggle("hidden", restored === 0);
-    els.dropcapSection?.classList.toggle("hidden", restored === 0);
+    setPostOcrSectionsVisible(restored > 0);
     renderThumbs();
     renderReview();
     refreshParagraphRebuildUi();
@@ -3939,11 +3943,7 @@ ${coverSpine}${spine.join("\n")}
     els.fileCount.textContent = "0 pages loaded";
     els.processBtn.disabled = true;
     els.freshPaddleBtn.disabled = true;
-    els.reviewSection.classList.add("hidden");
-    els.guidedRepairSection?.classList.add("hidden");
-    els.advancedSection?.classList.add("hidden");
-    els.exportSection.classList.add("hidden");
-    els.dropcapSection?.classList.add("hidden");
+    setPostOcrSectionsVisible(false);
     renderThumbs();
     renderReview();
     refreshParagraphRebuildUi();
@@ -3955,11 +3955,7 @@ ${coverSpine}${spine.join("\n")}
   els.freshPaddleBtn.addEventListener("click", restartFreshWithPaddle);
 
   els.processBtn.addEventListener("click", async () => {
-    els.reviewSection.classList.remove("hidden");
-    els.guidedRepairSection?.classList.remove("hidden");
-    els.advancedSection?.classList.remove("hidden");
-    els.exportSection.classList.remove("hidden");
-    els.dropcapSection?.classList.remove("hidden");
+    setPostOcrSectionsVisible(true);
     await processAllPages();
   });
   els.prevPageBtn.addEventListener("click", goToPreviousPage);

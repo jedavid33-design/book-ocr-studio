@@ -65,3 +65,6 @@ v2.6.5: Added exportable italic detection 2.0 diagnostics with per-line slant/ga
 
 
 2.7.11 Crop Preview Sync: fixes screenshot-selection startup flow after removal of the standalone Dropcap section, immediately refreshes the crop preview after files are selected, keeps preset highlighting synchronized with numeric crop values, and adds a Custom preset state for manual crop values.
+
+
+2.7.12 Recovery Sections Fix: recovered OCR checkpoints now reveal Review, Guided Repair, Advanced, and Export together. A single visibility helper now owns all post-OCR workflow sections so fresh processing and recovered sessions stay in sync.
