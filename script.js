@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.15-polish-review-restored-kindle-first";
+  const BUILD_VERSION = "2.7.16-kindle-typography-toc";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -894,15 +894,46 @@
       if (page.chapterStart) arr.push(index);
       return arr;
     }, []);
-    if (!starts.length) return [{ title: (els.bookTitle.value || "Book").trim() || "Book", start: 0, end: state.pages.length }];
+
+    if (!starts.length) {
+      return [{
+        title: (els.bookTitle.value || "Book").trim() || "Book",
+        start: 0,
+        end: state.pages.length,
+        nav: true
+      }];
+    }
+
     const sections = [];
-    if (starts[0] > 0) sections.push({ title: "Opening", start: 0, end: starts[0] });
+
+    // If OCR begins before the first marked chapter, keep that text in the EPUB
+    // spine but do not invent a fake "Opening" TOC entry. Only label it as
+    // front matter when the text itself looks like front matter.
+    if (starts[0] > 0) {
+      const preText = state.pages
+        .slice(0, starts[0])
+        .map(p => normalizedPageText(p.text || ""))
+        .filter(Boolean)
+        .join("\n\n")
+        .trim();
+
+      const frontMatterLike = /\b(?:copyright|contents|dedication|acknowledg(?:e)?ments?|about the author|title page|also by)\b/i.test(preText.slice(0, 1200));
+
+      sections.push({
+        title: frontMatterLike ? "Front Matter" : "",
+        start: 0,
+        end: starts[0],
+        nav: frontMatterLike
+      });
+    }
+
     starts.forEach((start, i) => {
       const end = i + 1 < starts.length ? starts[i + 1] : state.pages.length;
       const page = state.pages[start];
       const title = (page.chapterTitle || "").trim() || detectChapterTitle(page.text, i + 1);
-      sections.push({ title, start, end });
+      sections.push({ title, start, end, nav: true });
     });
+
     return sections.filter(section => section.end > section.start);
   }
 
@@ -3851,17 +3882,21 @@
         return html.replace("<p>", `<p id="p-${pageIndex + 1}-${paragraphIndex + 1}">`);
       });
 
+      const hasHeading = Boolean(String(section.title || "").trim());
+      const headingHtml = hasHeading ? `<h1>${escapeXml(section.title)}</h1>` : "";
+      const sectionType = section.nav ? "chapter" : "bodymatter";
+
       zip.file(`EPUB/${fileName}`, `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="en">
 <head>
   <meta charset="utf-8"/>
-  <title>${escapeXml(section.title)}</title>
+  <title>${escapeXml(section.title || title)}</title>
   <link rel="stylesheet" type="text/css" href="style.css"/>
 </head>
 <body>
-  <section epub:type="chapter">
-    <h1>${escapeXml(section.title)}</h1>
+  <section epub:type="${sectionType}">
+    ${headingHtml}
     ${bodyParagraphs.join("\n    ")}
   </section>
 </body>
@@ -3869,7 +3904,7 @@
 
       manifest.push(`    <item id="${itemId}" href="${fileName}" media-type="application/xhtml+xml"/>`);
       spine.push(`    <itemref idref="${itemId}"/>`);
-      navItems.push(`<li><a href="${fileName}">${escapeXml(section.title)}</a></li>`);
+      if (section.nav && hasHeading) navItems.push(`<li><a href="${fileName}">${escapeXml(section.title)}</a></li>`);
     });
 
     zip.file("EPUB/nav.xhtml", `<?xml version="1.0" encoding="UTF-8"?>
@@ -3884,7 +3919,40 @@
 </body>
 </html>`);
 
-    zip.file("EPUB/style.css", `body{font-family:serif;line-height:1.5;margin:5%;}p{display:block;margin:0 0 1em;white-space:normal;}h1{font-size:1.5em;margin:0 0 1.25em;}em{font-style:italic}.scene-break{border:0;text-align:center;margin:1.5em 0}.scene-break:after{content:"* * *";}`);
+    zip.file("EPUB/style.css", `
+body{
+  font-family:serif;
+  line-height:1.45;
+  margin:5%;
+}
+h1{
+  font-size:1.5em;
+  margin:0 0 1.5em;
+  text-align:left;
+}
+p{
+  display:block;
+  margin:0;
+  text-indent:1.2em;
+  white-space:normal;
+}
+h1 + p,
+section > p:first-of-type,
+.scene-break + p{
+  text-indent:0;
+}
+em{
+  font-style:italic;
+}
+.scene-break{
+  border:0;
+  text-align:center;
+  margin:1.5em 0;
+}
+.scene-break:after{
+  content:"* * *";
+}
+`);
 
     let coverManifest = "";
     let coverMeta = "";

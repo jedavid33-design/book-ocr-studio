@@ -77,3 +77,6 @@ v2.6.5: Added exportable italic detection 2.0 diagnostics with per-line slant/ga
 
 
 2.7.15 Polish Review Restored: restores the Review polish drawer directly under Final Polish and keeps Final Polish audit stage-owned by removing outstanding Repair Book ligature/dropcap rows from its audit.
+
+
+2.7.16 Kindle Typography + TOC: exported EPUB body paragraphs now use novel-style first-line indents with no extra paragraph spacing, while first chapter paragraphs and paragraphs after scene breaks remain flush-left. Pre-chapter OCR text stays in the spine but no longer gets a fabricated “Opening” TOC entry unless it actually resembles front matter, in which case it is labeled Front Matter.
