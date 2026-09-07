@@ -12,13 +12,12 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=2.7.6-repaired-text-polish" />
+  <link rel="stylesheet" href="styles.css?v=2.7.7-workflow" />
 </head>
 <body>
   <header class="topbar">
     <div>
-      <p class="eyebrow">LOCAL BOOK TOOL · 2.7.6 · Repaired-Text Polish</p>
-      <div id="buildIdentifier" class="build-identifier">BUILD 2.7.6 · REPAIRED-TEXT POLISH · KINDLE-FIRST</div>
+      <div id="buildIdentifier" class="build-identifier">BUILD 2.7.7 · WORKFLOW RESTRUCTURE · KINDLE-FIRST</div>
       <h1>Book OCR Studio</h1>
       <p class="subhead">Crop screenshots, OCR them one page at a time, batch OCR the whole book, review chapter starts or any page, and export TXT or EPUB.</p>
     </div>
@@ -149,24 +148,8 @@
       </div>
     </section>
 
-    <section class="card hidden" id="dropcapSection">
-      <div class="section-head">
-        <div>
-          <h2>6. Dropcap Rescue</h2>
-          <p class="hint">Scans likely chapter-opening paragraphs using existing OCR text. Strong positional evidence can be applied automatically; uncertain suggestions wait for your review.</p>
-        </div>
-        <span id="dropcapSummary" class="progress-pill">Not scanned</span>
-      </div>
-      <div class="actions">
-        <button id="scanDropcaps" class="button primary" type="button">Scan completed book</button>
-        <button id="acceptHighDropcaps" class="button secondary" type="button" disabled>Accept all high-confidence</button>
-      </div>
-      <div id="dropcapEmpty" class="status-box hidden"></div>
-      <div id="dropcapResults" class="dropcap-results"></div>
-    </section>
-
-    <section class="card hidden" id="exportSection">
-      <h2>7. Repair + Export</h2>
+    <section class="card hidden" id="guidedRepairSection">
+      <h2>6. Guided Repair</h2>
       <div class="subcard guided-repair-card">
         <h3>Guided Repair</h3>
         <p class="hint">One pass through the safe, proven repair pipeline. Studio rebuilds paragraph structure first, applies conservative italics while source geometry is still authoritative, then runs safe cleanup, split-ligature repair, and Dropcap Rescue. High-confidence dropcaps are accepted automatically; anything uncertain stays for review.</p>
@@ -174,30 +157,19 @@
           <button id="repairBook" class="button primary" type="button">Repair Book</button>
           <span id="repairBookStatus" class="progress-pill">Ready</span>
         </div>
-        <details id="repairReview" class="ligature-inline-review hidden">
-          <summary id="repairReviewToggle">Review repairs (0)</summary>
-          <div class="ligature-inline-body">
-            <p class="hint">Only unresolved Repair Book items appear here. Fix applies the proposed repair; discard/keep leaves the OCR text unchanged.</p>
-            <div id="repairReviewList" class="review-list"></div>
-          </div>
-        </details>
-      </div>
-      <div class="subcard final-polish-card">
-        <h3>✨ Final Polish</h3>
-        <p class="hint">Kindle-first cleanup after Repair Book. Applies only low-risk punctuation and spacing fixes, then audits wrap-hyphens, quote balance, paragraph fragments, chapter structure, and remaining review items. Ambiguous text is never changed automatically.</p>
+      <div class="subcard">
+        <h3>Split Ligatures</h3>
+        <p class="hint">Repair high-confidence OCR splits involving fi, fl, ff, ffi, and ffl. Uncertain candidates stay with Guided Repair for review.</p>
         <div class="actions">
-          <button id="finalPolish" class="button primary" type="button">Final Polish</button>
-          <span id="finalPolishStatus" class="progress-pill">Ready after Repair Book</span>
+          <button id="repairLigatures" class="button secondary" type="button">Repair split ligatures</button>
+          
+          <span id="ligatureStatus" class="progress-pill">Not run</span>
         </div>
-        <div id="finalPolishResults" class="regression-results hidden"></div>
-        <details id="finalPolishReview" class="ligature-inline-review hidden">
-          <summary id="finalPolishReviewToggle">Review polish (0)</summary>
-          <div class="ligature-inline-body">
-            <p class="hint">These are inspection flags only. Studio has not changed them.</p>
-            <div id="finalPolishReviewList" class="review-list"></div>
-          </div>
-        </details>
-      </div>
+    </section>
+
+    <section class="card hidden" id="advancedSection">
+      <h2>7. Advanced</h2>
+      <p class="hint advanced-label"><strong>Diagnostics and individual tools</strong> · Use these when testing a build or rerunning one stage manually.</p>
       <div class="subcard regression-card">
         <h3>Regression Check</h3>
         <p class="hint">Inspection only. Checks paragraph sanity, text continuity, cleanup normalization, scene breaks, split ligatures, layout geometry, dropcaps, and italic sanity without changing the book. The original 20-page IMG_2701–IMG_2720 test set also gets its known layout-profile checks.</p>
@@ -205,9 +177,6 @@
           <button id="runRegression" class="button secondary" type="button">Run Regression Check</button>
           <span id="regressionStatus" class="progress-pill">Not run</span>
         </div>
-        <div id="regressionResults" class="regression-results hidden"></div>
-      </div>
-      <p class="hint advanced-label"><strong>Advanced / Individual Repairs</strong> · Use these when you want to inspect or rerun one stage manually.</p>
       <div class="subcard">
         <h3>Paragraph Reconstruction</h3>
         <p class="hint">PaddleOCR now saves line positions and uses first-line indentation as primary paragraph evidence. Rebuild from saved geometry later without re-running OCR. Rebuilding replaces current page text, so do it before manual text edits.</p>
@@ -216,7 +185,6 @@
           <button id="downloadLayoutDiagnostics" class="button secondary" type="button" disabled>Download layout diagnostics</button>
           <span id="paragraphStatus" class="progress-pill">Needs OCR from this build</span>
         </div>
-      </div>
       <div class="subcard">
         <h3>Formatting Rescue</h3>
         <p class="hint">Safe cleanup normalizes OCR ellipses and decorative scene dividers without rewriting prose, and now survives paragraph rebuilds. Auto Italic Scan is precision-first: it only auto-marks coherent multi-word runs and leaves single-word emphasis manual for now. Word-level diagnostics exports the exact candidates, grouped runs, thresholds, and final decisions used by EPUB export.</p>
@@ -227,16 +195,18 @@
           <span id="polishStatus" class="progress-pill">Not run</span>
           <span id="italicStatus" class="progress-pill">Italics not scanned</span>
         </div>
-      </div>
-      <div class="subcard">
-        <h3>EPUB Polish</h3>
-        <p class="hint">Repair high-confidence OCR spaces inside fi, fl, ff, ffi, and ffl words. This uses existing text only and leaves uncertain candidates unchanged.</p>
+    </section>
+
+    <section class="card hidden" id="exportSection">
+      <h2>8. Export</h2>
+      <div class="subcard final-polish-card">
+        <h3>✨ Final Polish</h3>
+        <p class="hint">Kindle-first cleanup after Repair Book. Applies only low-risk punctuation and spacing fixes, then audits wrap-hyphens, quote balance, paragraph fragments, chapter structure, and remaining review items. Ambiguous text is never changed automatically.</p>
         <div class="actions">
-          <button id="repairLigatures" class="button secondary" type="button">Repair split ligatures</button>
-          
-          <span id="ligatureStatus" class="progress-pill">Not run</span>
+          <button id="finalPolish" class="button primary" type="button">Final Polish</button>
+          <span id="finalPolishStatus" class="progress-pill">Ready after Repair Book</span>
         </div>
-        <details id="ligatureReviewDetails" class="ligature-inline-review hidden">
+      <details id="ligatureReviewDetails" class="ligature-inline-review hidden">
           <summary id="ligatureReviewSummaryToggle">Review uncertain (0)</summary>
           <div class="ligature-inline-body">
             <p id="ligatureReviewSummary" class="hint"></p>
@@ -251,7 +221,8 @@
       </div>
       <p class="hint">For imported EPUBs, export keeps the original package and changes only repairs you applied. For screenshot projects, it uses the existing Book OCR Studio exporter.</p>
     </section>
-  </main>
+
+</main>
 
   <dialog id="pageDropcapDialog" aria-labelledby="pageDropcapTitle">
     <div class="dialog-card">
@@ -287,8 +258,8 @@
   </dialog>
 
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
-  <script src="epub-polish.js?v=2.7.6-repaired-text-polish"></script>
-  <script src="script-loader.js?v=2.7.6-repaired-text-polish"></script>
+  <script src="epub-polish.js?v=2.7.7-workflow"></script>
+  <script src="script-loader.js?v=2.7.7-workflow"></script>
   <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {

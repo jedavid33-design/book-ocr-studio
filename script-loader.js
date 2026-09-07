@@ -1,9 +1,9 @@
-// Book OCR Studio 2.7.6 Repaired-Text Polish loader. Keeps the review-toggle compatibility patch.
+// Book OCR Studio 2.7.7 Workflow Restructure loader. Keeps the review-toggle compatibility patch.
 // Keeps the existing script.js intact, injects the two missing click handlers,
 // then runs the patched source.
 
 (async () => {
-  const response = await fetch("./script.js?v=2.7.6-repaired-text-polish", { cache: "no-store" });
+  const response = await fetch("./script.js?v=2.7.7-workflow", { cache: "no-store" });
   if (!response.ok) {
     throw new Error(`Could not load script.js (${response.status})`);
   }
@@ -24,7 +24,7 @@
   }
 
   source = source.replace(anchor, replacement);
-  source += "\n//# sourceURL=book-ocr-studio-2.7.6-repaired-text-polish.js";
+  source += "\n//# sourceURL=book-ocr-studio-2.7.7-workflow.js";
 
   (0, eval)(source);
 })().catch((err) => {

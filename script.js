@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.6-repaired-text-polish-kindle-first";
+  const BUILD_VERSION = "2.7.7-workflow-restructure-kindle-first";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -109,6 +109,8 @@
     markItalicBtn: $("markItalicBtn"),
     clearItalicBtn: $("clearItalicBtn"),
     exportSection: $("exportSection"),
+    guidedRepairSection: $("guidedRepairSection"),
+    advancedSection: $("advancedSection"),
     downloadTxt: $("downloadTxt"),
     downloadEpub: $("downloadEpub"),
     safePolish: $("safePolish"),
@@ -290,6 +292,8 @@
     els.progressPercent.textContent = "0%";
     els.progressLabel.textContent = "Ready";
     els.reviewSection.classList.add("hidden");
+    els.guidedRepairSection?.classList.add("hidden");
+    els.advancedSection?.classList.add("hidden");
     els.exportSection.classList.add("hidden");
     els.processBtn.disabled = false;
     els.freshPaddleBtn.disabled = false;
@@ -1634,6 +1638,8 @@
     els.pageDropcapBtn.disabled = true;
     els.progressWrap.classList.remove("hidden");
     els.reviewSection.classList.remove("hidden");
+    els.guidedRepairSection?.classList.remove("hidden");
+    els.advancedSection?.classList.remove("hidden");
     els.exportSection.classList.remove("hidden");
     renderReview();
 
@@ -1793,6 +1799,8 @@
   async function processAllPages() {
     if (!state.files.length || state.processing) return;
     els.reviewSection.classList.remove("hidden");
+    els.guidedRepairSection?.classList.remove("hidden");
+    els.advancedSection?.classList.remove("hidden");
     els.exportSection.classList.remove("hidden");
     const startIndex = state.pages.length;
     if (startIndex >= state.files.length) {
@@ -2339,15 +2347,17 @@
 
   function renderDropcapResults() {
     const candidates = state.dropcapCandidates;
-    els.dropcapResults.innerHTML = "";
+    if (els.dropcapResults) els.dropcapResults.innerHTML = "";
     const pending = candidates.filter(c => c.status === "pending");
     const highPending = pending.filter(c => c.confidence === "high");
-    els.dropcapSummary.textContent = candidates.length
-      ? `${pending.length} to review · ${candidates.length - pending.length} resolved`
-      : "No candidates";
-    els.acceptHighDropcaps.disabled = !highPending.length;
-    els.dropcapEmpty.classList.toggle("hidden", candidates.length > 0);
-    if (!candidates.length) els.dropcapEmpty.textContent = "No likely drop-cap failures were found. Nothing was changed.";
+    if (els.dropcapSummary) {
+      els.dropcapSummary.textContent = candidates.length
+        ? `${pending.length} to review · ${candidates.length - pending.length} resolved`
+        : "No candidates";
+    }
+    if (els.acceptHighDropcaps) els.acceptHighDropcaps.disabled = !highPending.length;
+    els.dropcapEmpty?.classList.toggle("hidden", candidates.length > 0);
+    if (!candidates.length && els.dropcapEmpty) els.dropcapEmpty.textContent = "No likely drop-cap failures were found. Nothing was changed.";
 
     candidates.forEach(candidate => {
       const card = document.createElement("article");
@@ -2469,6 +2479,8 @@
     els.epubImportStatus.textContent = `Imported ${file.name}: ${documents.length} chapter file${documents.length === 1 ? "" : "s"}. Ready to scan; no OCR will run.`;
     els.reviewSection.classList.add("hidden");
     els.dropcapSection.classList.remove("hidden");
+    els.guidedRepairSection?.classList.remove("hidden");
+    els.advancedSection?.classList.remove("hidden");
     els.exportSection.classList.remove("hidden");
     renderDropcapResults();
     scanDropcaps();
@@ -3907,6 +3919,8 @@ ${coverSpine}${spine.join("\n")}
     els.processBtn.disabled = true;
     els.freshPaddleBtn.disabled = true;
     els.reviewSection.classList.add("hidden");
+    els.guidedRepairSection?.classList.add("hidden");
+    els.advancedSection?.classList.add("hidden");
     els.exportSection.classList.add("hidden");
     els.dropcapSection.classList.add("hidden");
     renderThumbs();
@@ -3920,6 +3934,8 @@ ${coverSpine}${spine.join("\n")}
 
   els.processBtn.addEventListener("click", async () => {
     els.reviewSection.classList.remove("hidden");
+    els.guidedRepairSection?.classList.remove("hidden");
+    els.advancedSection?.classList.remove("hidden");
     els.exportSection.classList.remove("hidden");
     els.dropcapSection.classList.remove("hidden");
     await processAllPages();

@@ -652,3 +652,10 @@ dialog::backdrop { background: rgba(30,25,20,.48); backdrop-filter: blur(5px); }
   margin-top: 8px;
   font-weight: 700;
 }
+
+/* v2.7.7 workflow restructure */
+#guidedRepairSection > h2,
+#advancedSection > h2,
+#exportSection > h2 { margin-bottom: 14px; }
+#guidedRepairSection .guided-repair-card { margin-bottom: 14px; }
+#advancedSection .advanced-label { margin-top: 0; }

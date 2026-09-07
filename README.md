@@ -91,3 +91,6 @@ v2.6.5: Added exportable italic detection 2.0 diagnostics with per-line slant/ga
 
 
 2.7.6 Repaired-Text Polish: Final Polish now treats Repair Book's reconstructed page text as its source of truth. Original Paddle line geometry is supporting evidence only. A source wrap such as beam- / ing is suppressed when repaired text already contains beaming; geometry creates a review item only when the repaired text still contains a recognizable unresolved split.
+
+
+2.7.7 Workflow Restructure: standalone Dropcap Rescue removed from normal UI. Guided Repair is section 6 and now contains Repair Book plus Split Ligatures. Advanced is section 7 with Regression Check, Paragraph Reconstruction, and Formatting Rescue. Export is section 8 with Final Polish and export controls. Header now keeps only the build pill.
