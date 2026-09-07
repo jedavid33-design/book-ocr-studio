@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.22-dropcap-rerun-preserve";
+  const BUILD_VERSION = "2.7.23-spoiler-safe-review";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -3130,24 +3130,28 @@
       item.className = "ligature-review-item";
       item.innerHTML = `<strong>Dropcap · Page ${candidate.pageIndex + 1}</strong>
         <p class="hint">${escapeHtml(candidate.reason || "Uncertain chapter-opening repair.")}</p>
-        <p class="ligature-context"><b>Before:</b> ${escapeHtml(excerpt(candidate.before || candidate.text || ""))}</p>
-        <p class="ligature-context"><b>Proposed:</b> ${escapeHtml(excerpt(candidate.proposed || ""))}</p>
+        <p class="ligature-context"><b>Current:</b> ${escapeHtml(excerpt(candidate.before || candidate.text || ""))}</p>
+        <label class="inline-review-editor">
+          <span>Correction</span>
+          <textarea class="dropcap-inline-edit" rows="4" aria-label="Edit this dropcap correction">${escapeHtml(candidate.proposed || candidate.before || "")}</textarea>
+        </label>
         <div class="actions">
-          <button class="button secondary fix" type="button">Fix</button>
-          <button class="button ghost discard" type="button">Discard</button>
-          <button class="button ghost page" type="button">Open page</button>
+          <button class="button secondary apply" type="button">Apply correction</button>
+          <button class="button ghost discard" type="button">Keep as-is</button>
+          <button class="button ghost page" type="button">Open page (optional)</button>
         </div>`;
-      item.querySelector(".fix").addEventListener("click", () => {
-        applyDropcap(candidate, candidate.proposed);
+      item.querySelector(".apply").addEventListener("click", () => {
+        const edited = item.querySelector(".dropcap-inline-edit")?.value || "";
+        applyDropcap(candidate, edited);
         saveCheckpoint();
         refreshDownstreamRepairState();
-        setStatus(`Applied Dropcap Rescue on page ${candidate.pageIndex + 1}. Kindle Ready will use the repaired text on its next check.`);
+        setStatus(`Applied the reviewed dropcap correction on page ${candidate.pageIndex + 1}.`);
       });
       item.querySelector(".discard").addEventListener("click", () => {
         rejectDropcap(candidate);
         saveCheckpoint();
         refreshDownstreamRepairState();
-        setStatus(`Discarded the Dropcap Rescue suggestion on page ${candidate.pageIndex + 1}.`);
+        setStatus(`Kept the current text for the dropcap candidate on page ${candidate.pageIndex + 1}.`);
       });
       item.querySelector(".page").addEventListener("click", () => jumpToPage(candidate.pageIndex));
       els.repairReviewList.appendChild(item);
@@ -3162,7 +3166,7 @@
         <div class="actions">
           <button class="button secondary fix" type="button">Fix</button>
           <button class="button ghost keep" type="button">Keep as-is</button>
-          <button class="button ghost page" type="button">Open page</button>
+          <button class="button ghost page" type="button">Open page (optional)</button>
         </div>`;
       item.querySelector(".fix").addEventListener("click", () => {
         const page = state.pages[c.pageIndex];
@@ -3271,29 +3275,62 @@
         : `No unresolved wrap-hyphens remain in repaired text${alreadyResolvedWrapHyphens ? `; ${alreadyResolvedWrapHyphens} source wrap${alreadyResolvedWrapHyphens===1?" was":"s were"} already healed upstream` : ""}.`);
 
     let quoteFlags = 0;
+    const oddQuotes = [];
     state.pages.forEach((page, pageIndex) => {
-      exportParagraphs(page.text || "").forEach((para, paraIndex) => {
+      const paras = exportParagraphs(page.text || "");
+      paras.forEach((para, paraIndex) => {
         const plain = stripItalicMarkers(para);
         const straight = (plain.match(/"/g) || []).length;
         if (straight % 2 === 1) {
-          const issue = {
-            type: "Quote balance",
+          oddQuotes.push({
             pageIndex,
             paraIndex,
-            fileName: page.fileName || page.file?.name || `Page ${pageIndex + 1}`,
-            current: plain.slice(0, 260),
-            detail: `Paragraph ${paraIndex + 1} contains an odd number of straight quotation marks. This may be valid multi-paragraph dialogue, so no quote is guessed.`
-          };
-          issue.key = finalIssueKey(issue);
-          if (!state.ignoredFinalPolishIssues.has(issue.key)) {
-            quoteFlags++;
-            issues.push(issue);
-          }
+            paraCount: paras.length,
+            text: para,
+            plain,
+            fileName: page.fileName || page.file?.name || `Page ${pageIndex + 1}`
+          });
         }
       });
     });
+
+    const crossPageResolved = new Set();
+    for (let i = 0; i < oddQuotes.length - 1; i++) {
+      const a = oddQuotes[i];
+      const b = oddQuotes[i + 1];
+      const sameChapter = !state.pages[b.pageIndex]?.chapterStart;
+      const touchesBoundary = a.paraIndex === a.paraCount - 1 && b.paraIndex === 0 && b.pageIndex === a.pageIndex + 1;
+      const combinedQuotes = ((a.plain + " " + b.plain).match(/"/g) || []).length;
+
+      if (sameChapter && touchesBoundary && combinedQuotes % 2 === 0) {
+        crossPageResolved.add(`${a.pageIndex}|${a.paraIndex}`);
+        crossPageResolved.add(`${b.pageIndex}|${b.paraIndex}`);
+        i++;
+      }
+    }
+
+    oddQuotes.forEach(entry => {
+      if (crossPageResolved.has(`${entry.pageIndex}|${entry.paraIndex}`)) return;
+      const issue = {
+        type: "Quote balance",
+        pageIndex: entry.pageIndex,
+        paraIndex: entry.paraIndex,
+        fileName: entry.fileName,
+        current: entry.plain.slice(0, 260),
+        fullText: entry.text,
+        detail: `This paragraph has an unmatched straight quotation mark after checking adjacent page boundaries. Edit only this paragraph or mark it correct.`
+      };
+      issue.key = finalIssueKey(issue);
+      if (!state.ignoredFinalPolishIssues.has(issue.key)) {
+        quoteFlags++;
+        issues.push(issue);
+      }
+    });
+
     addCheck("Quote audit", quoteFlags ? "warn" : "pass",
-      quoteFlags ? `${quoteFlags} paragraph${quoteFlags===1?"":"s"} deserve a quick quote check; no quote was guessed.` : "No unresolved odd straight-quote counts found.");
+      quoteFlags
+        ? `${quoteFlags} paragraph${quoteFlags===1?"":"s"} still need quote review after cross-page continuations were reconciled.`
+        : "No unresolved quote-balance issues remain after cross-page continuation checks.");
 
     let fragments = 0;
     state.pages.forEach((page, pageIndex) => {
@@ -3425,15 +3462,33 @@
           runFinalPolish();
           setStatus(`Kept “${issue.current}” unchanged.`);
         });
-        button("Edit page", "ghost", () => jumpToPage(issue.pageIndex));
+        button("Open page (optional)", "ghost", () => jumpToPage(issue.pageIndex));
       } else if (issue.type === "Quote balance") {
+        const editor = document.createElement("label");
+        editor.className = "inline-review-editor";
+        editor.innerHTML = `<span>Edit this paragraph</span>
+          <textarea class="quote-inline-edit" rows="4" aria-label="Edit this quote paragraph">${escapeHtml(issue.fullText || issue.current || "")}</textarea>`;
+        actions.before(editor);
+
+        button("Apply paragraph edit", "secondary", () => {
+          const page = state.pages[issue.pageIndex];
+          const blocks = pageBlocks(page);
+          const edited = editor.querySelector(".quote-inline-edit")?.value || "";
+          if (!page || !blocks[issue.paraIndex] || !edited.trim()) return;
+          blocks[issue.paraIndex] = edited.trim();
+          writePageBlocks(page, blocks);
+          saveCheckpoint();
+          renderReview();
+          runFinalPolish();
+          setStatus("Applied the quote correction without opening the full page.");
+        });
         button("Looks correct", "ghost", () => {
           state.ignoredFinalPolishIssues.add(issue.key);
           saveCheckpoint();
           runFinalPolish();
           setStatus("Quote warning dismissed as correct.");
         });
-        button("Edit page", "secondary", () => jumpToPage(issue.pageIndex));
+        button("Open page (optional)", "ghost", () => jumpToPage(issue.pageIndex));
       } else if (issue.type === "Short paragraph") {
         button("Merge previous", "secondary", () => {
           const page = state.pages[issue.pageIndex];
@@ -3466,7 +3521,7 @@
           saveCheckpoint();
           runFinalPolish();
         });
-        button("Edit page", "ghost", () => jumpToPage(issue.pageIndex));
+        button("Open page (optional)", "ghost", () => jumpToPage(issue.pageIndex));
       }
 
       els.finalPolishReviewList.appendChild(item);

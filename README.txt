@@ -98,3 +98,6 @@ v2.6.5: Added exportable italic detection 2.0 diagnostics with per-line slant/ga
 
 
 2.7.22 Dropcap Rerun Preserve: fixes the root cause of repaired dropcaps reappearing. Auto Italic Scan no longer rebuilds canonical repaired text from original geometry on a subsequent Repair Book run. Dropcap Rescue also rechecks the current page opening before surfacing a candidate. Manual Open-page corrections and previously accepted dropcap repairs therefore survive reruns. The 2.7.21 ligature evidence filter is unchanged.
+
+
+2.7.23 Spoiler-Safe Review: Guided Repair dropcaps can now be corrected directly in Review repairs with an inline editor. Final Polish quote issues can be edited in-place by paragraph; Open page is optional. Quote audit reconciles odd quote counts split across adjacent page boundaries before surfacing warnings. Advanced is now collapsed by default.

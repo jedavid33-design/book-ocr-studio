@@ -1,7 +1,7 @@
-const CACHE_NAME = "book-ocr-studio-shell-v2-7-22-dropcap-rerun-preserve";
+const CACHE_NAME = "book-ocr-studio-shell-v2-7-23-spoiler-safe-review";
 const APP_SHELL = [
-  "./styles.css?v=2.7.22-dropcap-rerun-preserve",
-  "./epub-polish.js?v=2.7.22-dropcap-rerun-preserve",
+  "./styles.css?v=2.7.23-spoiler-safe-review",
+  "./epub-polish.js?v=2.7.23-spoiler-safe-review",
   "./manifest.webmanifest",
   "./icon-192.png",
   "./icon-512.png",
