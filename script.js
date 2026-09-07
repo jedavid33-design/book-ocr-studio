@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.21-ligature-evidence-filter";
+  const BUILD_VERSION = "2.7.22-dropcap-rerun-preserve";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -2364,7 +2364,26 @@
   function scanDropcaps() {
     syncCurrentEditor();
     const openings = likelyOpeningParagraphs();
-    state.dropcapCandidates = openings.map((opening, index) => buildDropcapCandidate(opening, index + 1)).filter(Boolean);
+    state.dropcapCandidates = openings
+      .map((opening, index) => buildDropcapCandidate(opening, index + 1))
+      .filter(Boolean)
+      .filter(candidate => {
+        if (state.importedEpub) return true;
+        const page = state.pages[candidate.pageIndex];
+        if (!page) return false;
+
+        // Re-read the opening from canonical current text after all prior edits.
+        const currentOpening = openingFromPage(page, candidate.pageIndex);
+        if (!currentOpening) return false;
+        const currentInfo = firstWordInfo(currentOpening.text);
+        if (!currentInfo) return false;
+
+        // A repaired opening that now starts normally is resolved. The only
+        // exception is a real displaced duplicate capital still detectable in
+        // the current text, which buildDropcapCandidate will continue to flag.
+        const rebuilt = buildDropcapCandidate(currentOpening, candidate.id);
+        return Boolean(rebuilt);
+      });
     renderDropcapResults();
     const count = state.dropcapCandidates.length;
     setStatus(count
@@ -2756,7 +2775,7 @@
     return runs;
   }
 
-  async function autoScanItalics() {
+  async function autoScanItalics({ rebuildText = true } = {}) {
     if (!state.pages.length || !state.files.length) {
       setStatus("Load and OCR screenshot pages before running the automatic italic scan.");
       return;
@@ -2820,7 +2839,13 @@
         }
         canvas.width = 1; canvas.height = 1;
       }
-      rebuildParagraphsFromSavedGeometry({ confirmOverwrite: false });
+      if (rebuildText) {
+        rebuildParagraphsFromSavedGeometry({ confirmOverwrite: false });
+      } else {
+        // On a Repair Book rerun the current repaired text is canonical.
+        // Never regenerate it from original OCR geometry merely to rescan italics.
+        saveCheckpoint();
+      }
       saveCheckpoint();
       if (els.italicStatus) els.italicStatus.textContent = `${markedRuns} run${markedRuns === 1 ? "" : "s"} · ${markedWords} words`;
       setStatus(`Automatic italic scan 2.4 checked ${scannedWords} words across ${scannedLines} OCR lines and marked ${markedRuns} hybrid run${markedRuns === 1 ? "" : "s"} (${markedWords} words). Full-line italics use line typography; inline runs must beat both same-line and surrounding-line baselines.`);
@@ -3522,8 +3547,10 @@
         ? 0
         : rebuildParagraphsFromSavedGeometry({ confirmOverwrite: false });
 
-      setStatus("Guided Repair 2/5 · Scanning conservative italics…");
-      const italics = await autoScanItalics();
+      setStatus(state.repairBookHasRun
+        ? "Guided Repair 2/5 · Rechecking italics without rebuilding repaired text…"
+        : "Guided Repair 2/5 · Scanning conservative italics…");
+      const italics = await autoScanItalics({ rebuildText: !state.repairBookHasRun });
 
       setStatus("Guided Repair 3/5 · Applying safe text cleanup…");
       const polishStats = applySafePolishToProject() || { fixedCount:0 };

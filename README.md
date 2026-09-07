@@ -133,3 +133,6 @@ v2.6.5: Added exportable italic detection 2.0 diagnostics with per-line slant/ga
 
 
 2.7.21 Ligature Evidence Filter: split-ligature review is now evidence-first. Ordinary word boundaries ending in ff/fi/fl (for example off the, off doing, off personal) are no longer surfaced as uncertain ligatures. Plausible dictionary joins remain auto-repaired; review is reserved for rare plausible joins blocked only by capitalization.
+
+
+2.7.22 Dropcap Rerun Preserve: fixes the root cause of repaired dropcaps reappearing. Auto Italic Scan no longer rebuilds canonical repaired text from original geometry on a subsequent Repair Book run. Dropcap Rescue also rechecks the current page opening before surfacing a candidate. Manual Open-page corrections and previously accepted dropcap repairs therefore survive reruns. The 2.7.21 ligature evidence filter is unchanged.

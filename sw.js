@@ -1,7 +1,7 @@
-const CACHE_NAME = "book-ocr-studio-shell-v2-7-21-ligature-evidence-filter";
+const CACHE_NAME = "book-ocr-studio-shell-v2-7-22-dropcap-rerun-preserve";
 const APP_SHELL = [
-  "./styles.css?v=2.7.21-ligature-evidence-filter",
-  "./epub-polish.js?v=2.7.21-ligature-evidence-filter",
+  "./styles.css?v=2.7.22-dropcap-rerun-preserve",
+  "./epub-polish.js?v=2.7.22-dropcap-rerun-preserve",
   "./manifest.webmanifest",
   "./icon-192.png",
   "./icon-512.png",
