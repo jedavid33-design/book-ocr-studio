@@ -672,3 +672,65 @@ dialog::backdrop { background: rgba(30,25,20,.48); backdrop-filter: blur(5px); }
 .preset-row .chip[data-preset="custom"] {
   white-space: nowrap;
 }
+
+/* v2.7.13 compact existing-EPUB repair */
+.rescue-import-card {
+  padding: 0;
+  overflow: hidden;
+}
+.compact-epub-repair {
+  padding: 0;
+}
+.compact-epub-repair-summary {
+  cursor: pointer;
+  padding: 14px 18px;
+  font-weight: 800;
+  font-size: 1rem;
+  list-style: disclosure-closed;
+  user-select: none;
+}
+.compact-epub-repair[open] > .compact-epub-repair-summary {
+  list-style: disclosure-open;
+  border-bottom: 1px solid var(--line);
+}
+.compact-epub-repair-body {
+  padding: 14px 18px 18px;
+}
+.compact-epub-repair-body > .hint:first-child {
+  margin-top: 0;
+}
+
+/* v2.7.14 permanent Kindle Ready preflight */
+.kindle-ready-section {
+  padding: 0;
+  overflow: hidden;
+}
+.kindle-ready-summary {
+  cursor: pointer;
+  padding: 18px;
+  font-size: 1.35rem;
+  font-weight: 800;
+  list-style: disclosure-open;
+  user-select: none;
+}
+.kindle-ready-section:not([open]) > .kindle-ready-summary {
+  list-style: disclosure-closed;
+}
+.kindle-ready-body {
+  padding: 0 18px 18px;
+}
+.kindle-ready-row {
+  grid-template-columns: 24px minmax(150px, 220px) minmax(0, 1fr);
+  gap: 10px;
+}
+.kindle-ready-row strong {
+  overflow-wrap: normal;
+}
+@media (max-width: 720px) {
+  .kindle-ready-row {
+    grid-template-columns: 24px minmax(0, 1fr);
+  }
+  .kindle-ready-row > span:last-child {
+    grid-column: 2;
+  }
+}

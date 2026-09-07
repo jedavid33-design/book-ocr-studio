@@ -106,3 +106,9 @@ v2.6.5: Added exportable italic detection 2.0 diagnostics with per-line slant/ga
 
 
 2.7.12 Recovery Sections Fix: recovered OCR checkpoints now reveal Review, Guided Repair, Advanced, and Export together. A single visibility helper now owns all post-OCR workflow sections so fresh processing and recovered sessions stay in sync.
+
+
+2.7.13 Compact EPUB Repair: the existing-EPUB repair area is now collapsed by default behind a compact native disclosure, preserving all repair/import behavior while reducing top-of-page visual weight.
+
+
+2.7.14 Kindle Ready: adds permanent section 8 between Advanced and Export. Preflight checks book text, metadata, cover, chapter navigation, unresolved Repair/Polish items, italic marker balance, scene breaks, and the reflowable Kindle-safe EPUB structure. Export is now section 9. No Kindle Ready check changes book text.

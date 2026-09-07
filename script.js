@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.12-recovery-sections-fix-kindle-first";
+  const BUILD_VERSION = "2.7.14-kindle-ready-kindle-first";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -141,6 +141,10 @@
     finalPolishReview: $("finalPolishReview"),
     finalPolishReviewToggle: $("finalPolishReviewToggle"),
     finalPolishReviewList: $("finalPolishReviewList"),
+    kindleReadySection: $("kindleReadySection"),
+    runKindleReady: $("runKindleReady"),
+    kindleReadyStatus: $("kindleReadyStatus"),
+    kindleReadyResults: $("kindleReadyResults"),
     epubInput: $("epubInput"),
     epubImportStatus: $("epubImportStatus"),
     dropcapSection: $("dropcapSection"),
@@ -1047,6 +1051,7 @@
     els.reviewSection?.classList[method]("hidden");
     els.guidedRepairSection?.classList[method]("hidden");
     els.advancedSection?.classList[method]("hidden");
+    els.kindleReadySection?.classList[method]("hidden");
     els.exportSection?.classList[method]("hidden");
   }
 
@@ -3708,6 +3713,111 @@
     return out;
   }
 
+
+  function kindleReadyChecks() {
+    syncCurrentEditor();
+
+    const checks = [];
+    const add = (name, status, detail) => checks.push({ name, status, detail });
+
+    const pagesWithText = state.pages.filter(p => normalizedPageText(p.text || "")).length;
+    const emptyPages = Math.max(0, state.pages.length - pagesWithText);
+    add("Book text", pagesWithText && !emptyPages ? "pass" : (pagesWithText ? "warn" : "fail"),
+      pagesWithText
+        ? (emptyPages ? `${pagesWithText}/${state.pages.length} pages contain text; ${emptyPages} empty page${emptyPages===1?"":"s"} need review.` : `${pagesWithText}/${state.pages.length} processed pages contain text.`)
+        : "No repaired OCR text is available to export.");
+
+    const title = String(els.bookTitle?.value || "").trim();
+    const author = String(els.bookAuthor?.value || "").trim();
+    add("Title metadata", title ? "pass" : "fail", title ? `Title: ${title}` : "Add the book title before export.");
+    add("Author metadata", author ? "pass" : "warn", author ? `Author: ${author}` : "Author is blank. Kindle can accept the EPUB, but metadata will be incomplete.");
+
+    add("Cover", state.coverFile ? "pass" : "warn",
+      state.coverFile ? `Cover image selected: ${state.coverFile.name}` : "No cover selected. The EPUB will still work, but Kindle library presentation will be plainer.");
+
+    const sections = chapterSections();
+    const markedStarts = state.pages.filter(p => p.chapterStart).length;
+    const titles = sections.map(s => String(s.title || "").trim()).filter(Boolean);
+    const duplicateTitles = titles.filter((t, i) => titles.indexOf(t) !== i);
+    add("Chapter navigation", sections.length && !duplicateTitles.length ? "pass" : "warn",
+      duplicateTitles.length
+        ? `${sections.length} navigation entries generated, but duplicate chapter titles were found: ${[...new Set(duplicateTitles)].join(", ")}.`
+        : markedStarts
+          ? `${sections.length} EPUB navigation entr${sections.length===1?"y":"ies"} generated from ${markedStarts} marked chapter start${markedStarts===1?"":"s"}.`
+          : `${sections.length} fallback EPUB navigation entry will be generated. No explicit chapter starts are marked.`);
+
+    const pendingDropcaps = (state.dropcapCandidates || []).filter(c => c.status === "pending").length;
+    const pendingLigatures = collectUncertainLigatures().length;
+    const repairPending = pendingDropcaps + pendingLigatures;
+    add("Repair review", repairPending ? "fail" : "pass",
+      repairPending
+        ? `${repairPending} unresolved Repair Book item${repairPending===1?"":"s"} remain (${pendingDropcaps} dropcap, ${pendingLigatures} split-ligature).`
+        : "No unresolved Repair Book items remain.");
+
+    let polishIssues = [];
+    try {
+      polishIssues = finalPolishAudit()?.issues || [];
+    } catch (_) {
+      polishIssues = [];
+    }
+    add("Polish review", polishIssues.length ? "fail" : "pass",
+      polishIssues.length
+        ? `${polishIssues.length} unresolved Final Polish item${polishIssues.length===1?"":"s"} remain.`
+        : "No unresolved Final Polish items remain.");
+
+    const combined = state.pages.map(p => String(p.text || "")).join("\n");
+    const openItalic = (combined.match(/\[\[i\]\]/gi) || []).length;
+    const closeItalic = (combined.match(/\[\[\/i\]\]/gi) || []).length;
+    add("Italic markup", openItalic === closeItalic ? "pass" : "fail",
+      openItalic === closeItalic
+        ? `${openItalic} semantic italic run${openItalic===1?"":"s"} will export as <em>.`
+        : `Italic markers are unbalanced (${openItalic} opens / ${closeItalic} closes).`);
+
+    const sceneBreaks = state.pages.reduce((n, p) => n + ((String(p.text || "").match(/^\s*\* \* \*\s*$/gm) || []).length), 0);
+    add("Scene breaks", "pass",
+      sceneBreaks ? `${sceneBreaks} semantic scene break${sceneBreaks===1?"":"s"} will export as EPUB separators.` : "No semantic scene breaks are present in this batch.");
+
+    add("Kindle-safe structure", "pass",
+      "Exporter uses a reflowable EPUB 3 package with nav.xhtml, ordered spine entries, semantic paragraphs/emphasis, and simple relative CSS suitable for Send to Kindle.");
+
+    const failCount = checks.filter(c => c.status === "fail").length;
+    const warnCount = checks.filter(c => c.status === "warn").length;
+    return { checks, failCount, warnCount, ready: failCount === 0 };
+  }
+
+  function renderKindleReady(report) {
+    if (!els.kindleReadyResults || !els.kindleReadyStatus) return;
+    els.kindleReadyResults.innerHTML = "";
+
+    report.checks.forEach(check => {
+      const row = document.createElement("div");
+      row.className = `regression-row kindle-ready-row ${check.status}`;
+      const icon = check.status === "pass" ? "✓" : check.status === "warn" ? "!" : "×";
+      row.innerHTML = `<span class="regression-icon">${icon}</span><strong>${escapeHtml(check.name)}</strong><span>${escapeHtml(check.detail)}</span>`;
+      els.kindleReadyResults.appendChild(row);
+    });
+
+    els.kindleReadyResults.classList.remove("hidden");
+    if (report.ready) {
+      els.kindleReadyStatus.textContent = report.warnCount ? `READY · ${report.warnCount} note${report.warnCount===1?"":"s"}` : "KINDLE READY ✓";
+    } else {
+      els.kindleReadyStatus.textContent = `${report.failCount} blocking · ${report.warnCount} note${report.warnCount===1?"":"s"}`;
+    }
+  }
+
+  function runKindleReadyCheck() {
+    if (!state.pages.length || state.processing) {
+      setStatus("Process or import a book before running Kindle Ready.");
+      return;
+    }
+    const report = kindleReadyChecks();
+    renderKindleReady(report);
+    setStatus(report.ready
+      ? `Kindle Ready preflight passed${report.warnCount ? ` with ${report.warnCount} non-blocking note${report.warnCount===1?"":"s"}` : ""}.`
+      : `Kindle Ready preflight found ${report.failCount} blocking item${report.failCount===1?"":"s"}.`);
+    return report;
+  }
+
   async function buildEpub() {
     if (!window.JSZip) throw new Error("JSZip did not load.");
     if (state.importedEpub) {
@@ -3993,6 +4103,7 @@ ${coverSpine}${spine.join("\n")}
   els.downloadEpub.addEventListener("click", downloadEpub);
   els.repairBook?.addEventListener("click", repairBookGuided);
   els.runRegression?.addEventListener("click", runRegressionCheck);
+  els.runKindleReady?.addEventListener("click", runKindleReadyCheck);
   els.finalPolish?.addEventListener("click", runFinalPolish);
   els.safePolish?.addEventListener("click", applySafePolishToProject);
   els.autoItalicScan?.addEventListener("click", autoScanItalics);

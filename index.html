@@ -13,26 +13,25 @@
 <link href="manifest.webmanifest" rel="manifest"/>
 <link href="apple-touch-icon.png" rel="apple-touch-icon"/>
 <link href="icon-192.png" rel="icon" sizes="192x192" type="image/png"/>
-<link href="styles.css?v=2.7.12-recovery-sections" rel="stylesheet"/>
+<link href="styles.css?v=2.7.14-kindle-ready" rel="stylesheet"/>
 </head>
 <body>
 <header class="topbar">
 <div>
-<div class="build-identifier" id="buildIdentifier">BUILD 2.7.12 · RECOVERY SECTIONS FIX · KINDLE-FIRST</div>
+<div class="build-identifier" id="buildIdentifier">BUILD 2.7.14 · KINDLE READY · KINDLE-FIRST</div>
 <h1>Book OCR Studio</h1>
 <p class="subhead">Crop screenshots, OCR them one page at a time, batch OCR the whole book, review chapter starts or any page, and export TXT or EPUB.</p>
 </div>
 </header>
 <main class="app-shell">
-<section class="card rescue-import-card">
-<h2>Repair an existing EPUB — no OCR needed</h2>
+<section class="card rescue-import-card"><details class="compact-epub-repair"><summary class="compact-epub-repair-summary">Repair an existing EPUB</summary><div class="compact-epub-repair-body">
 <p class="hint">Import an untouched EPUB previously exported by Book OCR Studio. Dropcap Rescue scans and repairs its chapter openings as a post-OCR step. Your original EPUB remains unchanged.</p>
 <label class="file-field">
 <span>Book OCR Studio EPUB</span>
 <input accept="application/epub+zip,.epub" id="epubInput" type="file"/>
 </label>
 <div class="status-box subtle" id="epubImportStatus">No EPUB imported.</div>
-</section>
+</div></details></section>
 <section class="card">
 <h2>1. Book info</h2>
 <div class="grid two">
@@ -192,7 +191,7 @@
 <span class="progress-pill" id="polishStatus">Not run</span>
 <span class="progress-pill" id="italicStatus">Italics not scanned</span>
 </div>
-</div></section><section class="card hidden" id="exportSection"><h2>8. Export</h2><div class="actions">
+</div></section><details class="card hidden kindle-ready-section" id="kindleReadySection" open=""><summary class="kindle-ready-summary">8. Kindle Ready</summary><div class="kindle-ready-body"><p class="hint">Final preflight for a clean reflowable EPUB before Send to Kindle. This inspects the repaired/polished book and does not change text.</p><div class="actions"><button class="button primary" id="runKindleReady" type="button">Run Kindle Ready Check</button><span class="progress-pill" id="kindleReadyStatus">Not checked</span></div><div class="regression-results hidden" id="kindleReadyResults"></div></div></details><section class="card hidden" id="exportSection"><h2>9. Export</h2><div class="actions">
 <button class="button primary" id="downloadTxt" type="button">Download TXT</button>
 <button class="button secondary" id="downloadEpub" type="button">Download EPUB</button>
 </div><p class="hint">For imported EPUBs, export keeps the original package and changes only repairs you applied. For screenshot projects, it uses the existing Book OCR Studio exporter.</p></section>
@@ -230,8 +229,8 @@
 </div>
 </dialog>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
-<script src="epub-polish.js?v=2.7.12-recovery-sections"></script>
-<script src="script-loader.js?v=2.7.12-recovery-sections"></script>
+<script src="epub-polish.js?v=2.7.14-kindle-ready"></script>
+<script src="script-loader.js?v=2.7.14-kindle-ready"></script>
 <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
