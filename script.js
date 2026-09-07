@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.10-collapsible-review-kindle-first";
+  const BUILD_VERSION = "2.7.11-crop-preview-sync-kindle-first";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -2478,7 +2478,7 @@
     if (author) els.bookAuthor.value = author;
     els.epubImportStatus.textContent = `Imported ${file.name}: ${documents.length} chapter file${documents.length === 1 ? "" : "s"}. Ready to scan; no OCR will run.`;
     els.reviewSection.classList.add("hidden");
-    els.dropcapSection.classList.remove("hidden");
+    els.dropcapSection?.classList.remove("hidden");
     els.guidedRepairSection?.classList.remove("hidden");
     els.advancedSection?.classList.remove("hidden");
     els.exportSection.classList.remove("hidden");
@@ -3843,10 +3843,24 @@ ${coverSpine}${spine.join("\n")}
     }
   }
 
+
+  function syncCropPresetUi() {
+    const top = Number(els.cropTop?.value || 0);
+    const bottom = Number(els.cropBottom?.value || 0);
+    const sides = Number(els.cropSides?.value || 0);
+
+    let active = "custom";
+    if (top === 0 && bottom === 0 && sides === 0) active = "none";
+    else if (top === 0 && bottom === 75 && sides === 0) active = "cloud";
+    else if (top === 130 && bottom === 0 && sides === 0) active = "kindle";
+
+    document.querySelectorAll("[data-preset]").forEach(btn => {
+      btn.classList.toggle("active", btn.dataset.preset === active);
+    });
+  }
+
   document.querySelectorAll("[data-preset]").forEach(btn => {
     btn.addEventListener("click", () => {
-      document.querySelectorAll("[data-preset]").forEach(b => b.classList.remove("active"));
-      btn.classList.add("active");
       const preset = btn.dataset.preset;
       if (preset === "cloud") {
         els.cropTop.value = 0;
@@ -3856,16 +3870,22 @@ ${coverSpine}${spine.join("\n")}
         els.cropTop.value = 130;
         els.cropBottom.value = 0;
         els.cropSides.value = 0;
-      } else {
+      } else if (preset === "none") {
         els.cropTop.value = 0;
         els.cropBottom.value = 0;
         els.cropSides.value = 0;
       }
+      syncCropPresetUi();
       updatePreview();
     });
   });
 
-  [els.cropTop, els.cropBottom, els.cropSides].forEach(input => input.addEventListener("input", updatePreview));
+  [els.cropTop, els.cropBottom, els.cropSides].forEach(input => input.addEventListener("input", () => {
+    syncCropPresetUi();
+    updatePreview();
+  }));
+
+  syncCropPresetUi();
 
   els.coverInput.addEventListener("change", () => {
     const file = els.coverInput.files?.[0] || null;
@@ -3893,10 +3913,11 @@ ${coverSpine}${spine.join("\n")}
     els.freshPaddleBtn.disabled = !state.files.length;
     els.reviewSection.classList.toggle("hidden", restored === 0);
     els.exportSection.classList.toggle("hidden", restored === 0);
-    els.dropcapSection.classList.toggle("hidden", restored === 0);
+    els.dropcapSection?.classList.toggle("hidden", restored === 0);
     renderThumbs();
     renderReview();
     refreshParagraphRebuildUi();
+    syncCropPresetUi();
     try {
       await updatePreview();
     } catch (err) {
@@ -3922,10 +3943,11 @@ ${coverSpine}${spine.join("\n")}
     els.guidedRepairSection?.classList.add("hidden");
     els.advancedSection?.classList.add("hidden");
     els.exportSection.classList.add("hidden");
-    els.dropcapSection.classList.add("hidden");
+    els.dropcapSection?.classList.add("hidden");
     renderThumbs();
     renderReview();
     refreshParagraphRebuildUi();
+    syncCropPresetUi();
     updatePreview();
     setStatus("Add screenshots to begin.");
   });
@@ -3937,7 +3959,7 @@ ${coverSpine}${spine.join("\n")}
     els.guidedRepairSection?.classList.remove("hidden");
     els.advancedSection?.classList.remove("hidden");
     els.exportSection.classList.remove("hidden");
-    els.dropcapSection.classList.remove("hidden");
+    els.dropcapSection?.classList.remove("hidden");
     await processAllPages();
   });
   els.prevPageBtn.addEventListener("click", goToPreviousPage);

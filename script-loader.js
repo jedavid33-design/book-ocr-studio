@@ -3,7 +3,7 @@
 // then runs the patched source.
 
 (async () => {
-  const response = await fetch("./script.js?v=2.7.10-collapsible-review", { cache: "no-store" });
+  const response = await fetch("./script.js?v=2.7.11-crop-preview-sync", { cache: "no-store" });
   if (!response.ok) {
     throw new Error(`Could not load script.js (${response.status})`);
   }
@@ -24,7 +24,7 @@
   }
 
   source = source.replace(anchor, replacement);
-  source += "\n//# sourceURL=book-ocr-studio-2.7.10-collapsible-review.js";
+  source += "\n//# sourceURL=book-ocr-studio-2.7.11-crop-preview-sync.js";
 
   (0, eval)(source);
 })().catch((err) => {

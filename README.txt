@@ -62,3 +62,6 @@ v2.6.5: Added exportable italic detection 2.0 diagnostics with per-line slant/ga
 
 
 2.7.10 Collapsible Review: section 5 is now a native collapsible disclosure. It opens by default after OCR but can be collapsed to keep the main workflow compact.
+
+
+2.7.11 Crop Preview Sync: fixes screenshot-selection startup flow after removal of the standalone Dropcap section, immediately refreshes the crop preview after files are selected, keeps preset highlighting synchronized with numeric crop values, and adds a Custom preset state for manual crop values.
