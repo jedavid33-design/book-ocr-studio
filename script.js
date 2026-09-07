@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.23-spoiler-safe-review";
+  const BUILD_VERSION = "2.7.24-full-book-repair-audit";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -2363,7 +2363,16 @@
 
   function scanDropcaps() {
     syncCurrentEditor();
+
+    const expectedChapterPages = state.importedEpub
+      ? state.pages.map((_, pageIndex) => pageIndex)
+      : state.pages
+          .map((page, pageIndex) => (page.chapterStart || page.chapterCandidate || pageIndex === 0) ? pageIndex : -1)
+          .filter(pageIndex => pageIndex >= 0);
+
     const openings = likelyOpeningParagraphs();
+    const evaluatedPages = new Set(openings.map(opening => opening.pageIndex));
+
     state.dropcapCandidates = openings
       .map((opening, index) => buildDropcapCandidate(opening, index + 1))
       .filter(Boolean)
@@ -2372,23 +2381,31 @@
         const page = state.pages[candidate.pageIndex];
         if (!page) return false;
 
-        // Re-read the opening from canonical current text after all prior edits.
+        // Current repaired text is authoritative. Geometry may suggest where to
+        // inspect, but it may not resurrect an already-fixed opening.
         const currentOpening = openingFromPage(page, candidate.pageIndex);
         if (!currentOpening) return false;
-        const currentInfo = firstWordInfo(currentOpening.text);
-        if (!currentInfo) return false;
-
-        // A repaired opening that now starts normally is resolved. The only
-        // exception is a real displaced duplicate capital still detectable in
-        // the current text, which buildDropcapCandidate will continue to flag.
-        const rebuilt = buildDropcapCandidate(currentOpening, candidate.id);
-        return Boolean(rebuilt);
+        return Boolean(buildDropcapCandidate(currentOpening, candidate.id));
       });
+
+    const missedPages = expectedChapterPages.filter(pageIndex => !evaluatedPages.has(pageIndex));
+    state.lastDropcapAudit = {
+      expected: expectedChapterPages.length,
+      evaluated: evaluatedPages.size,
+      missedPages,
+      candidates: state.dropcapCandidates.length
+    };
+
     renderDropcapResults();
     const count = state.dropcapCandidates.length;
-    setStatus(count
-      ? `Dropcap Rescue found ${count} chapter opening${count === 1 ? "" : "s"} to review. No OCR was run.`
-      : "Dropcap Rescue found no likely missing drop caps. No text was changed and no OCR was run.");
+    const audit = state.lastDropcapAudit;
+    if (missedPages.length) {
+      setStatus(`Dropcap Rescue INCOMPLETE: evaluated ${audit.evaluated} of ${audit.expected} chapter starts. ${missedPages.length} chapter start${missedPages.length===1?" was":"s were"} not evaluated.`);
+    } else {
+      setStatus(count
+        ? `Dropcap Rescue evaluated all ${audit.evaluated} chapter starts and found ${count} opening${count===1?"":"s"} to review. No OCR was run.`
+        : `Dropcap Rescue evaluated all ${audit.evaluated} chapter starts and found no unresolved drop-cap candidates.`);
+    }
     return state.dropcapCandidates;
   }
 
@@ -3337,7 +3354,9 @@
       const paras = pageBlocks(page);
       paras.forEach((para, paraIndex) => {
         const plain = stripItalicMarkers(para).trim();
+        const messageSpeakerLabel = /^(?:ME|YOU|SABRINA|TUCKER)$/i.test(plain);
         if (plain && plain !== "* * *" && plain.length <= 24 &&
+            !messageSpeakerLabel &&
             !/^(?:CHAPTER\b|PROLOGUE\b|EPILOGUE\b)/i.test(plain) &&
             !/^[A-Z][A-Z .'-]{2,}$/.test(plain) &&
             !/[.!?…"”']$/.test(plain)) {
@@ -3613,11 +3632,15 @@
       setStatus("Guided Repair 4/5 · Repairing high-confidence split ligatures…");
       const ligatureStats = runSplitLigaturePolish() || { fixedCount:0, ambiguousCount:0 };
 
-      setStatus("Guided Repair 5/5 · Running Dropcap Rescue…");
+      setStatus("Guided Repair 5/5 · Running Dropcap Rescue across every chapter start…");
       scanDropcaps();
+      const dropcapAudit = state.lastDropcapAudit || { expected:0, evaluated:0, missedPages:[] };
+      if (dropcapAudit.missedPages.length) {
+        throw new Error(`Dropcap Rescue evaluated only ${dropcapAudit.evaluated} of ${dropcapAudit.expected} chapter starts. Repair Book will not report Done.`);
+      }
+
       const high = state.dropcapCandidates.filter(c => c.status === "pending" && c.confidence === "high");
       high.forEach(candidate => applyDropcap(candidate, candidate.proposed));
-      const remaining = state.dropcapCandidates.filter(c => c.status === "pending").length;
       state.repairBookHasRun = true;
       saveCheckpoint();
       renderReview();
@@ -3626,8 +3649,10 @@
 
       const repairState = getRepairReviewState();
       const repairReviewCount = repairState.total;
-      if (els.repairBookStatus) els.repairBookStatus.textContent = repairReviewCount ? `Done · ${repairReviewCount} review` : "Done";
-      setStatus(`Guided Repair complete: ${rebuiltCount} pages rebuilt, ${italics?.markedRuns || 0} italic run${italics?.markedRuns === 1 ? "" : "s"}, ${polishStats.fixedCount || 0} safe cleanup fix${polishStats.fixedCount === 1 ? "" : "es"}, ${ligatureStats.fixedCount || 0} split ligature${ligatureStats.fixedCount === 1 ? "" : "s"}, ${high.length} high-confidence dropcap${high.length === 1 ? "" : "s"} accepted${repairReviewCount ? `, with ${repairReviewCount} unresolved repair item${repairReviewCount===1?"":"s"} in Review repairs` : ""}.`);
+      if (els.repairBookStatus) {
+        els.repairBookStatus.textContent = `Done · ${repairReviewCount} review · ${dropcapAudit.evaluated}/${dropcapAudit.expected} chapter starts`;
+      }
+      setStatus(`Guided Repair complete: ${dropcapAudit.evaluated}/${dropcapAudit.expected} chapter starts evaluated, ${high.length} high-confidence dropcap${high.length===1?"":"s"} accepted, ${repairState.dropcapCount} dropcap${repairState.dropcapCount===1?"":"s"} and ${repairState.ligatureCount} split-ligature${repairState.ligatureCount===1?"":"s"} left for Review repairs. ${rebuiltCount} pages rebuilt; ${italics?.markedRuns || 0} italic run${italics?.markedRuns===1?"":"s"}; ${polishStats.fixedCount || 0} safe cleanup fix${polishStats.fixedCount===1?"":"es"}.`);
     } catch (err) {
       console.error(err);
       if (els.repairBookStatus) els.repairBookStatus.textContent = "Stopped";
@@ -3961,6 +3986,14 @@
     // Repair Book owns repair resolution. Kindle Ready consumes that canonical
     // stage state instead of running a separate repair-discovery/counting path.
     const repairState = getRepairReviewState();
+    const dropcapAudit = state.lastDropcapAudit;
+    if (dropcapAudit) {
+      const complete = dropcapAudit.evaluated === dropcapAudit.expected && !dropcapAudit.missedPages.length;
+      add("Dropcap scan coverage", complete ? "pass" : "fail",
+        complete
+          ? `${dropcapAudit.evaluated}/${dropcapAudit.expected} chapter starts were evaluated by Dropcap Rescue.`
+          : `${dropcapAudit.evaluated}/${dropcapAudit.expected} chapter starts were evaluated; Repair Book must be rerun before export.`);
+    }
     add("Repair review", repairState.total ? "fail" : "pass",
       repairState.total
         ? `${repairState.total} unresolved Repair Book item${repairState.total===1?"":"s"} remain (${repairState.dropcapCount} dropcap, ${repairState.ligatureCount} split-ligature).`

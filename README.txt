@@ -101,3 +101,6 @@ v2.6.5: Added exportable italic detection 2.0 diagnostics with per-line slant/ga
 
 
 2.7.23 Spoiler-Safe Review: Guided Repair dropcaps can now be corrected directly in Review repairs with an inline editor. Final Polish quote issues can be edited in-place by paragraph; Open page is optional. Quote audit reconciles odd quote counts split across adjacent page boundaries before surfacing warnings. Advanced is now collapsed by default.
+
+
+2.7.24 Full-Book Repair Audit: Repair Book now accounts for every marked chapter start before it can report Done. Dropcap Rescue records expected/evaluated/missed chapter-start counts, Repair Book stops if coverage is incomplete, and the status pill reports both review count and chapter coverage. Kindle Ready surfaces the same dropcap scan coverage. Final Polish now treats known text-message speaker labels such as ME, YOU, SABRINA, and TUCKER as structure rather than suspicious short paragraphs.
