@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.18-atomic-repair-state";
+  const BUILD_VERSION = "2.7.19-stage-owned-readiness";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -3093,9 +3093,8 @@
 
   function renderRepairReview() {
     if (!els.repairReview || !els.repairReviewToggle || !els.repairReviewList) return;
-    const ligatures = collectUncertainLigatures();
-    const dropcaps = (state.dropcapCandidates || []).filter(c => c.status === "pending");
-    const total = ligatures.length + dropcaps.length;
+    const repairState = getRepairReviewState();
+    const { ligatures, dropcaps, total } = repairState;
 
     els.repairReview.classList.toggle("hidden", total === 0);
     els.repairReviewToggle.textContent = `Review repairs (${total})`;
@@ -3543,7 +3542,8 @@
       renderDropcapResults();
       renderRepairReview();
 
-      const repairReviewCount = collectUncertainLigatures().length + remaining;
+      const repairState = getRepairReviewState();
+      const repairReviewCount = repairState.total;
       if (els.repairBookStatus) els.repairBookStatus.textContent = repairReviewCount ? `Done · ${repairReviewCount} review` : "Done";
       setStatus(`Guided Repair complete: ${rebuiltCount} pages rebuilt, ${italics?.markedRuns || 0} italic run${italics?.markedRuns === 1 ? "" : "s"}, ${polishStats.fixedCount || 0} safe cleanup fix${polishStats.fixedCount === 1 ? "" : "es"}, ${ligatureStats.fixedCount || 0} split ligature${ligatureStats.fixedCount === 1 ? "" : "s"}, ${high.length} high-confidence dropcap${high.length === 1 ? "" : "s"} accepted${repairReviewCount ? `, with ${repairReviewCount} unresolved repair item${repairReviewCount===1?"":"s"} in Review repairs` : ""}.`);
     } catch (err) {
@@ -3606,8 +3606,49 @@
       .replace(/'/g, "&#39;");
   }
 
-  function ligatureCandidateKey(candidate, pageIndex) {
+  function ligatureCandidateContext(text, candidate) {
+    const start = Math.max(0, candidate.index - 70);
+    const end = Math.min(text.length, candidate.index + candidate.original.length + 70);
+    return text.slice(start, end).replace(/\s+/g, " ").trim();
+  }
+
+  function stableLigatureCandidateKey(candidate, pageIndex, context = "") {
+    const normalizedContext = String(context || "")
+      .toLowerCase()
+      .replace(/\s+/g, " ")
+      .replace(/[“”]/g, '"')
+      .replace(/[‘’]/g, "'")
+      .trim();
+    return `v2|${pageIndex}|${candidate.original}|${candidate.joined}|${normalizedContext}`;
+  }
+
+  function legacyLigatureCandidateKey(candidate, pageIndex) {
     return `${pageIndex}|${candidate.index}|${candidate.original}|${candidate.joined}`;
+  }
+
+  function isLigatureCandidateIgnored(candidate, pageIndex, context) {
+    const ignored = state.ignoredLigatureCandidates || new Set();
+    const stableKey = stableLigatureCandidateKey(candidate, pageIndex, context);
+    if (ignored.has(stableKey)) return true;
+
+    // Exact v2.7.18 identity, for checkpoints created before stable keys.
+    const legacyExact = legacyLigatureCandidateKey(candidate, pageIndex);
+    if (ignored.has(legacyExact)) return true;
+
+    // Migration fallback: old keys encoded a volatile character index.
+    // If that index moved because another repair changed earlier text, match
+    // the same page/original/joined repair decision so it does not resurrect.
+    const legacySuffix = `|${candidate.original}|${candidate.joined}`;
+    for (const key of ignored) {
+      if (String(key).startsWith(`${pageIndex}|`) && String(key).endsWith(legacySuffix)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function rememberIgnoredLigature(candidate, pageIndex, context) {
+    state.ignoredLigatureCandidates.add(stableLigatureCandidateKey(candidate, pageIndex, context));
   }
 
   function collectUncertainLigatures() {
@@ -3617,14 +3658,31 @@
     state.pages.forEach((page, pageIndex) => {
       const text = page.text || "";
       list(text).forEach(candidate => {
-        const key = ligatureCandidateKey(candidate, pageIndex);
-        if (state.ignoredLigatureCandidates?.has(key)) return;
-        const start = Math.max(0, candidate.index - 55);
-        const end = Math.min(text.length, candidate.index + candidate.original.length + 55);
-        found.push({ ...candidate, key, pageIndex, fileName: page.fileName || `Page ${pageIndex + 1}`, context: text.slice(start, end).replace(/\s+/g, " ").trim() });
+        const context = ligatureCandidateContext(text, candidate);
+        if (isLigatureCandidateIgnored(candidate, pageIndex, context)) return;
+        const key = stableLigatureCandidateKey(candidate, pageIndex, context);
+        found.push({
+          ...candidate,
+          key,
+          pageIndex,
+          fileName: page.fileName || page.file?.name || `Page ${pageIndex + 1}`,
+          context
+        });
       });
     });
     return found;
+  }
+
+  function getRepairReviewState() {
+    const ligatures = collectUncertainLigatures();
+    const dropcaps = (state.dropcapCandidates || []).filter(c => c.status === "pending");
+    return {
+      ligatures,
+      dropcaps,
+      ligatureCount: ligatures.length,
+      dropcapCount: dropcaps.length,
+      total: ligatures.length + dropcaps.length
+    };
   }
 
   function renderLigatureReview() {
@@ -3662,10 +3720,10 @@
 
       item.querySelector(".keep").addEventListener("click", (event) => {
         event.preventDefault();
-        state.ignoredLigatureCandidates.add(c.key);
+        rememberIgnoredLigature(c, c.pageIndex, c.context);
         saveCheckpoint();
         refreshDownstreamRepairState();
-        setStatus(`Kept “${c.original}” as-is.`);
+        setStatus(`Kept “${c.original}” as-is. Repair review now owns that resolved decision.`);
       });
 
       item.querySelector(".repair").addEventListener("click", (event) => {
@@ -3817,12 +3875,12 @@
           ? `${sections.length} EPUB navigation entr${sections.length===1?"y":"ies"} generated from ${markedStarts} marked chapter start${markedStarts===1?"":"s"}.`
           : `${sections.length} fallback EPUB navigation entry will be generated. No explicit chapter starts are marked.`);
 
-    const pendingDropcaps = (state.dropcapCandidates || []).filter(c => c.status === "pending").length;
-    const pendingLigatures = collectUncertainLigatures().length;
-    const repairPending = pendingDropcaps + pendingLigatures;
-    add("Repair review", repairPending ? "fail" : "pass",
-      repairPending
-        ? `${repairPending} unresolved Repair Book item${repairPending===1?"":"s"} remain (${pendingDropcaps} dropcap, ${pendingLigatures} split-ligature).`
+    // Repair Book owns repair resolution. Kindle Ready consumes that canonical
+    // stage state instead of running a separate repair-discovery/counting path.
+    const repairState = getRepairReviewState();
+    add("Repair review", repairState.total ? "fail" : "pass",
+      repairState.total
+        ? `${repairState.total} unresolved Repair Book item${repairState.total===1?"":"s"} remain (${repairState.dropcapCount} dropcap, ${repairState.ligatureCount} split-ligature).`
         : "No unresolved Repair Book items remain.");
 
     let polishIssues = [];

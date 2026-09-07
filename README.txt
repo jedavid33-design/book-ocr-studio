@@ -86,3 +86,6 @@ v2.6.5: Added exportable italic detection 2.0 diagnostics with per-line slant/ga
 
 
 2.7.18 Atomic Repair State: repair actions now update both canonical page text and the open Review editor atomically so a later sync cannot overwrite a completed fix. Repair/Polish dismissals persist in checkpoints. Kindle Ready invalidates stale results after a repair and always recalculates from current repaired text. Rerunning Repair Book preserves already repaired paragraph text instead of rebuilding it again from original OCR geometry; Paragraph Reconstruction remains available explicitly under Advanced.
+
+
+2.7.19 Stage-Owned Readiness: Repair Book is now the single source of truth for unresolved repair state. Kindle Ready consumes the same canonical Repair review state instead of independently rediscovering repairs. Split-ligature Keep as-is decisions now use stable context-based identities and migrate v2.7.18 index-based checkpoint decisions so resolved candidates do not resurrect when earlier text shifts.

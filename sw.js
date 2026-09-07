@@ -1,7 +1,7 @@
-const CACHE_NAME = "book-ocr-studio-shell-v2-7-18-atomic-repair-state";
+const CACHE_NAME = "book-ocr-studio-shell-v2-7-19-stage-owned-readiness";
 const APP_SHELL = [
-  "./styles.css?v=2.7.18-atomic-repair-state",
-  "./epub-polish.js?v=2.7.18-atomic-repair-state",
+  "./styles.css?v=2.7.19-stage-owned-readiness",
+  "./epub-polish.js?v=2.7.19-stage-owned-readiness",
   "./manifest.webmanifest",
   "./icon-192.png",
   "./icon-512.png",
