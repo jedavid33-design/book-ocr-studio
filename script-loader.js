@@ -3,7 +3,7 @@
 // then runs the patched source.
 
 (async () => {
-  const response = await fetch("./script.js?v=2.7.19-stage-owned-readiness", { cache: "no-store" });
+  const response = await fetch("./script.js?v=2.7.20-exact-ligature-resolution", { cache: "no-store" });
   if (!response.ok) {
     throw new Error(`Could not load script.js (${response.status})`);
   }
@@ -24,7 +24,7 @@
   }
 
   source = source.replace(anchor, replacement);
-  source += "\n//# sourceURL=book-ocr-studio-2.7.19-stage-owned-readiness.js";
+  source += "\n//# sourceURL=book-ocr-studio-2.7.20-exact-ligature-resolution.js";
 
   (0, eval)(source);
 })().catch((err) => {

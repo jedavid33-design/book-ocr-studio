@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.19-stage-owned-readiness";
+  const BUILD_VERSION = "2.7.20-exact-ligature-resolution";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -3613,13 +3613,13 @@
   }
 
   function stableLigatureCandidateKey(candidate, pageIndex, context = "") {
+    // One decision belongs to one exact occurrence. Preserve punctuation/case
+    // and only normalize whitespace so two similar repairs on the same page
+    // cannot accidentally suppress one another.
     const normalizedContext = String(context || "")
-      .toLowerCase()
       .replace(/\s+/g, " ")
-      .replace(/[“”]/g, '"')
-      .replace(/[‘’]/g, "'")
       .trim();
-    return `v2|${pageIndex}|${candidate.original}|${candidate.joined}|${normalizedContext}`;
+    return `v3|${pageIndex}|${candidate.original}|${candidate.joined}|${normalizedContext}`;
   }
 
   function legacyLigatureCandidateKey(candidate, pageIndex) {
@@ -3628,23 +3628,24 @@
 
   function isLigatureCandidateIgnored(candidate, pageIndex, context) {
     const ignored = state.ignoredLigatureCandidates || new Set();
-    const stableKey = stableLigatureCandidateKey(candidate, pageIndex, context);
-    if (ignored.has(stableKey)) return true;
 
-    // Exact v2.7.18 identity, for checkpoints created before stable keys.
-    const legacyExact = legacyLigatureCandidateKey(candidate, pageIndex);
-    if (ignored.has(legacyExact)) return true;
+    // Current exact-occurrence identity.
+    if (ignored.has(stableLigatureCandidateKey(candidate, pageIndex, context))) return true;
 
-    // Migration fallback: old keys encoded a volatile character index.
-    // If that index moved because another repair changed earlier text, match
-    // the same page/original/joined repair decision so it does not resurrect.
-    const legacySuffix = `|${candidate.original}|${candidate.joined}`;
-    for (const key of ignored) {
-      if (String(key).startsWith(`${pageIndex}|`) && String(key).endsWith(legacySuffix)) {
-        return true;
-      }
-    }
-    return false;
+    // Compatibility with v2.7.19 exact context keys only. Recreate that key
+    // precisely; do not use page/pattern-wide matching.
+    const v2Context = String(context || "")
+      .toLowerCase()
+      .replace(/\s+/g, " ")
+      .replace(/[“”]/g, '"')
+      .replace(/[‘’]/g, "'")
+      .trim();
+    const v2Key = `v2|${pageIndex}|${candidate.original}|${candidate.joined}|${v2Context}`;
+    if (ignored.has(v2Key)) return true;
+
+    // Compatibility with v2.7.18 only when the exact old character index still
+    // identifies this occurrence. No fuzzy migration.
+    return ignored.has(legacyLigatureCandidateKey(candidate, pageIndex));
   }
 
   function rememberIgnoredLigature(candidate, pageIndex, context) {
