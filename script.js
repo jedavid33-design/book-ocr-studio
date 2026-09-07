@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.27-post-ocr-crop";
+  const BUILD_VERSION = "2.7.28-strict-chapter-detection";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -93,8 +93,6 @@
     cropSides: $("cropSides"),
     previewCanvas: $("previewCanvas"),
     previewDims: $("previewDims"),
-    applyCropExisting: $("applyCropExisting"),
-    applyCropStatus: $("applyCropStatus"),
     processBtn: $("processBtn"),
     freshPaddleBtn: $("freshPaddleBtn"),
     progressWrap: $("progressWrap"),
@@ -237,8 +235,6 @@
           chapterStart: !!p.chapterStart,
           chapterTitle: p.chapterTitle || "",
           layoutLines: Array.isArray(p.layoutLines) ? p.layoutLines : [],
-          rawLayoutLines: Array.isArray(p.rawLayoutLines) ? p.rawLayoutLines : [],
-          ocrCrop: p.ocrCrop || null,
           layoutMeta: p.layoutMeta || null,
         })),
       };
@@ -387,8 +383,6 @@
         chapterStart: page.chapterStart != null ? !!page.chapterStart : !!page.chapterCandidate,
         chapterTitle: page.chapterTitle || "",
         layoutLines: Array.isArray(page.layoutLines) ? page.layoutLines : [],
-        rawLayoutLines: Array.isArray(page.rawLayoutLines) ? page.rawLayoutLines : [],
-        ocrCrop: page.ocrCrop || null,
         layoutMeta: page.layoutMeta || null,
       };
     }).filter(Boolean);
@@ -824,109 +818,6 @@
     return canvas;
   }
 
-  function cloneLayoutLine(line) {
-    return { ...line, box: line?.box ? { ...line.box } : line?.box };
-  }
-
-  function lineOriginalBox(line, sourceCrop) {
-    const box = line?.box;
-    if (!box) return null;
-    const sx = Number(sourceCrop?.sx || 0);
-    const sy = Number(sourceCrop?.sy || 0);
-    return {
-      x: Number(box.x || 0) + sx,
-      y: Number(box.y || 0) + sy,
-      w: Number(box.w || 0),
-      h: Number(box.h || 0)
-    };
-  }
-
-  function refilterLayoutLines(rawLines, sourceCrop, targetCrop) {
-    const right = targetCrop.sx + targetCrop.sw;
-    const bottom = targetCrop.sy + targetCrop.sh;
-    return (rawLines || []).flatMap(line => {
-      const b = lineOriginalBox(line, sourceCrop);
-      if (!b) return [];
-      const cx = b.x + b.w / 2;
-      const cy = b.y + b.h / 2;
-      // Keep a recognized line only when its center belongs to the newly
-      // selected book region. This cleanly removes Kindle/CloudLibrary chrome.
-      if (cx < targetCrop.sx || cx > right || cy < targetCrop.sy || cy > bottom) return [];
-      const next = cloneLayoutLine(line);
-      next.box = {
-        ...next.box,
-        x: b.x - targetCrop.sx,
-        y: b.y - targetCrop.sy,
-        w: b.w,
-        h: b.h,
-        cx: b.x - targetCrop.sx + b.w / 2,
-        cy: b.y - targetCrop.sy + b.h / 2
-      };
-      return [next];
-    });
-  }
-
-  async function applyCropToExistingOcr() {
-    if (!state.pages.length) {
-      setStatus("OCR pages first, then this can re-filter their saved geometry.");
-      return;
-    }
-    syncCurrentEditor();
-    const btn = els.applyCropExisting;
-    if (btn) btn.disabled = true;
-    if (els.applyCropStatus) els.applyCropStatus.textContent = "Working…";
-    let changed = 0, removed = 0, unavailable = 0;
-    try {
-      for (let pageIndex = 0; pageIndex < state.pages.length; pageIndex++) {
-        const page = state.pages[pageIndex];
-        const file = page.file || state.files[pageIndex];
-        if (!file || !Array.isArray(page.layoutLines) || !page.layoutLines.length) { unavailable++; continue; }
-        const img = await loadImageFromFile(file);
-        const targetCrop = getCropSettings(img);
-
-        // Old checkpoints did not store raw geometry separately. On the first
-        // post-OCR crop, preserve the currently saved geometry as the source.
-        // If no source crop was recorded, it came from the historical default
-        // uncropped canvas (0/0/0), which rescues existing projects like this one.
-        if (!Array.isArray(page.rawLayoutLines) || !page.rawLayoutLines.length) {
-          page.rawLayoutLines = page.layoutLines.map(cloneLayoutLine);
-        }
-        const sourceCrop = page.ocrCrop || { sx:0, sy:0, sw:img.width, sh:img.height };
-        const before = page.rawLayoutLines.length;
-        const filtered = refilterLayoutLines(page.rawLayoutLines, sourceCrop, targetCrop);
-        removed += Math.max(0, before - filtered.length);
-        page.layoutLines = filtered;
-        page.ocrCrop = { ...targetCrop };
-        changed++;
-      }
-
-      if (!changed) {
-        if (els.applyCropStatus) els.applyCropStatus.textContent = "No saved geometry";
-        setStatus("No saved OCR line geometry was available to re-filter. Re-OCR is required for those pages.");
-        return;
-      }
-
-      state.bookLayoutProfile = buildBookLayoutProfile(state.pages);
-      const rebuilt = rebuildParagraphsFromSavedGeometry({ confirmOverwrite:false });
-      state.repairBookHasRun = false;
-      state.dropcapCandidates = [];
-      state.lastDropcapAudit = null;
-      state.ignoredFinalPolishIssues = new Set();
-      saveCheckpoint();
-      renderReview();
-      renderRepairReview();
-      refreshParagraphRebuildUi();
-      if (els.applyCropStatus) els.applyCropStatus.textContent = `${changed} pages · ${removed} lines removed`;
-      setStatus(`Applied the current crop to saved OCR on ${changed} page${changed===1?"":"s"}, removed ${removed} out-of-crop OCR line${removed===1?"":"s"}, and rebuilt paragraph text without rerunning PaddleOCR.${unavailable ? ` ${unavailable} page${unavailable===1?"":"s"} had no reusable geometry.` : ""} Guided Repair is ready to rerun.`);
-    } catch (err) {
-      console.error(err);
-      if (els.applyCropStatus) els.applyCropStatus.textContent = "Stopped";
-      setStatus(`Could not reapply crop safely: ${err.message || err}`);
-    } finally {
-      if (btn) btn.disabled = false;
-    }
-  }
-
   async function updatePreview() {
     if (!state.files.length) {
       const c = els.previewCanvas;
@@ -984,11 +875,47 @@
     const normalized = (text || "").replace(/\r/g, "").trimStart();
     if (!normalized) return false;
     const firstLines = normalized.split("\n").map(s => s.trim()).filter(Boolean).slice(0, 6);
-    const firstChunk = firstLines.join(" ").slice(0, 220);
-    const hasChapterWord = /\b(chapter|prologue|epilogue)\b/i.test(firstChunk);
-    const startsWithNumber = /^\d{1,3}\b/.test(firstLines[0] || "");
-    const shortAllCaps = firstLines.some(line => line.length >= 2 && line.length <= 24 && /^[A-Z][A-Z\s.'&-]+$/.test(line));
-    return hasChapterWord || (startsWithNumber && shortAllCaps) || (startsWithNumber && firstLines.length >= 2);
+    if (!firstLines.length) return false;
+
+    // Strict structural detection. A prose page must never become a chapter
+    // merely because the word "chapter" appears somewhere in its opening text
+    // or because a sentence happens to begin with a number.
+    const heading = firstLines.find((line, index) => {
+      if (index > 2) return false;
+      return /^(?:CHAPTER\s+(?:\d{1,3}|[IVXLCDM]+|[A-Z][A-Z0-9 .'-]{0,20})|PROLOGUE|EPILOGUE(?:\s+(?:ONE|TWO|THREE|\d{1,2}|[IVX]+))?|INTERLUDE)\s*[.:—-]*$/i.test(line);
+    });
+    if (heading) return true;
+
+    // Some books render a bare chapter number as its own heading. Accept that
+    // only when it is one of the first two nonblank lines and the neighboring
+    // line looks like a short heading/name, never ordinary prose.
+    for (let i = 0; i < Math.min(2, firstLines.length); i++) {
+      if (!/^\d{1,3}$/.test(firstLines[i])) continue;
+      const neighbor = firstLines[i + 1] || "";
+      if (neighbor && neighbor.length <= 32 &&
+          !/[.!?]["”']?$/.test(neighbor) &&
+          ( /^[A-Z][A-Z\s.'&-]+$/.test(neighbor) || /^[A-Z][a-zA-Z'’-]{1,24}$/.test(neighbor) )) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function redetectAutomaticChapterStarts() {
+    let detected = 0;
+    state.pages.forEach((page, index) => {
+      const isChapter = chapterHeuristic(page.text);
+      page.chapterCandidate = isChapter;
+      page.chapterStart = isChapter;
+      page.chapterTitle = isChapter ? detectChapterTitle(page.text, detected + 1) : "";
+      if (isChapter) detected++;
+    });
+    state.lastDropcapAudit = null;
+    state.dropcapCandidates = [];
+    state.repairBookHasRun = false;
+    saveChapterMemory();
+    saveCheckpoint();
+    return detected;
   }
 
   function syncCurrentEditor() {
@@ -1869,8 +1796,6 @@
           ? rememberedChapter.chapterTitle
           : detectChapterTitle(text, index + 1),
         layoutLines: paddleResult.layoutLines || [],
-        rawLayoutLines: (paddleResult.layoutLines || []).map(line => ({ ...line, box: line.box ? { ...line.box } : line.box })),
-        ocrCrop: getCropSettings(img),
         layoutMeta: paddleResult.layoutMeta || null,
       };
 
@@ -2037,13 +1962,14 @@
     // This prevents helper/profile drift between code paths.
     state.bookLayoutProfile = buildBookLayoutProfile(state.pages);
     rebuildParagraphsFromSavedGeometry({ confirmOverwrite: false });
+    const detectedChapters = redetectAutomaticChapterStarts();
     state.currentPageIndex = 0;
     state.reviewMode = "chapters";
     saveCheckpoint();
     renderReview();
     refreshParagraphRebuildUi();
-    const chapters = reviewIndices().length;
-    setStatus(`Batch OCR complete: ${state.pages.length} pages processed. Book-level paragraph profile applied automatically. Showing ${chapters} detected chapter start page${chapters === 1 ? "" : "s"} for review.`);
+    const chapters = state.pages.filter(page => page.chapterStart).length;
+    setStatus(`Batch OCR complete: ${state.pages.length} pages processed. Book-level paragraph profile applied automatically. Strict chapter detection found ${chapters} chapter start page${chapters === 1 ? "" : "s"} for review.`);
   }
 
   async function goToPreviousPage() {
@@ -4528,7 +4454,6 @@ ${coverSpine}${spine.join("\n")}
   }));
 
   syncCropPresetUi();
-  els.applyCropExisting?.addEventListener("click", applyCropToExistingOcr);
 
   [els.bookTitle, els.bookAuthor].forEach(input => input?.addEventListener("input", () => {
     if (state.files.length) saveCheckpoint();

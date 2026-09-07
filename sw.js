@@ -1,7 +1,7 @@
-const CACHE_NAME = "book-ocr-studio-shell-v2-7-27-post-ocr-crop";
+const CACHE_NAME = "book-ocr-studio-shell-v2-7-28-strict-chapter-detection";
 const APP_SHELL = [
-  "./styles.css?v=2.7.27-post-ocr-crop",
-  "./epub-polish.js?v=2.7.27-post-ocr-crop",
+  "./styles.css?v=2.7.28-strict-chapter-detection",
+  "./epub-polish.js?v=2.7.28-strict-chapter-detection",
   "./manifest.webmanifest",
   "./icon-192.png",
   "./icon-512.png",
