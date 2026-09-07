@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.24-full-book-repair-audit";
+  const BUILD_VERSION = "2.7.25-chapter-guided-repair";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -27,6 +27,8 @@
     ignoredFinalPolishIssues: new Set(),
     lastFinalPolishCounts: null,
     repairBookHasRun: false,
+    guidedRepairMode: "whole",
+    guidedRepairChapterIndex: 0,
   };
 
   let PaddleOCRClass = null;
@@ -130,6 +132,12 @@
     paragraphStatus: $("paragraphStatus"),
     repairBook: $("repairBook"),
     repairBookStatus: $("repairBookStatus"),
+    repairModeWhole: $("repairModeWhole"),
+    repairModeChapter: $("repairModeChapter"),
+    repairChapterNav: $("repairChapterNav"),
+    repairChapterPrev: $("repairChapterPrev"),
+    repairChapterNext: $("repairChapterNext"),
+    repairChapterStatus: $("repairChapterStatus"),
     repairReview: $("repairReview"),
     repairReviewToggle: $("repairReviewToggle"),
     repairReviewList: $("repairReviewList"),
@@ -216,6 +224,8 @@
         bookAuthor: els.bookAuthor?.value || "",
         bookLayoutProfile: state.bookLayoutProfile || null,
         repairBookHasRun: !!state.repairBookHasRun,
+        guidedRepairMode: state.guidedRepairMode || "whole",
+        guidedRepairChapterIndex: Number(state.guidedRepairChapterIndex) || 0,
         ignoredLigatureCandidates: Array.from(state.ignoredLigatureCandidates || []),
         ignoredFinalPolishIssues: Array.from(state.ignoredFinalPolishIssues || []),
         pages: state.pages.map(p => ({
@@ -356,6 +366,8 @@
     const savedPages = saved.pages || [];
     state.bookLayoutProfile = saved.bookLayoutProfile || null;
     state.repairBookHasRun = !!saved.repairBookHasRun;
+    state.guidedRepairMode = saved.guidedRepairMode === "chapter" ? "chapter" : "whole";
+    state.guidedRepairChapterIndex = Number.isFinite(Number(saved.guidedRepairChapterIndex)) ? Number(saved.guidedRepairChapterIndex) : 0;
     state.ignoredLigatureCandidates = new Set(Array.isArray(saved.ignoredLigatureCandidates) ? saved.ignoredLigatureCandidates : []);
     state.ignoredFinalPolishIssues = new Set(Array.isArray(saved.ignoredFinalPolishIssues) ? saved.ignoredFinalPolishIssues : []);
 
@@ -2361,16 +2373,18 @@
     setStatus(`Dropcap Rescue applied the reviewed correction to page ${pageNumber}. No OCR was run.`);
   }
 
-  function scanDropcaps() {
+  function scanDropcaps(pageIndexes = null) {
     syncCurrentEditor();
 
     const expectedChapterPages = state.importedEpub
-      ? state.pages.map((_, pageIndex) => pageIndex)
+      ? state.pages.map((_, pageIndex) => pageIndex).filter(pageIndex => !pageIndexes || pageIndexes.includes(pageIndex))
       : state.pages
           .map((page, pageIndex) => (page.chapterStart || page.chapterCandidate || pageIndex === 0) ? pageIndex : -1)
-          .filter(pageIndex => pageIndex >= 0);
+          .filter(pageIndex => pageIndex >= 0 && (!pageIndexes || pageIndexes.includes(pageIndex)));
 
-    const openings = likelyOpeningParagraphs();
+    const allowed = pageIndexes ? new Set(pageIndexes) : null;
+    const allOpenings = likelyOpeningParagraphs();
+    const openings = allowed ? allOpenings.filter(opening => allowed.has(opening.pageIndex)) : allOpenings;
     const evaluatedPages = new Set(openings.map(opening => opening.pageIndex));
 
     state.dropcapCandidates = openings
@@ -3133,6 +3147,66 @@
     setStatus(`Opened page ${pageIndex + 1} for manual review.`);
   }
 
+
+  function guidedRepairChapters() {
+    const starts = state.pages
+      .map((page, pageIndex) => page.chapterStart ? pageIndex : -1)
+      .filter(pageIndex => pageIndex >= 0);
+    if (!starts.length && state.pages.length) starts.push(0);
+    return starts.map((start, index) => ({
+      start,
+      end: index + 1 < starts.length ? starts[index + 1] : state.pages.length,
+      number: index + 1
+    }));
+  }
+
+  function currentGuidedRepairChapter() {
+    const chapters = guidedRepairChapters();
+    if (!chapters.length) return null;
+    state.guidedRepairChapterIndex = clamp(state.guidedRepairChapterIndex || 0, 0, chapters.length - 1);
+    return chapters[state.guidedRepairChapterIndex];
+  }
+
+  function guidedRepairPageIndexes() {
+    if (state.guidedRepairMode !== "chapter") return state.pages.map((_, i) => i);
+    const chapter = currentGuidedRepairChapter();
+    if (!chapter) return [];
+    return Array.from({ length: chapter.end - chapter.start }, (_, i) => chapter.start + i);
+  }
+
+  function updateGuidedRepairModeUi() {
+    const chapterMode = state.guidedRepairMode === "chapter";
+    els.repairModeWhole?.classList.toggle("active", !chapterMode);
+    els.repairModeChapter?.classList.toggle("active", chapterMode);
+    els.repairChapterNav?.classList.toggle("hidden", !chapterMode);
+
+    const chapters = guidedRepairChapters();
+    const chapter = currentGuidedRepairChapter();
+    if (els.repairChapterStatus) {
+      els.repairChapterStatus.textContent = chapter
+        ? `Chapter ${chapter.number} of ${chapters.length}`
+        : "No chapters";
+    }
+    if (els.repairChapterPrev) els.repairChapterPrev.disabled = !chapterMode || state.guidedRepairChapterIndex <= 0;
+    if (els.repairChapterNext) els.repairChapterNext.disabled = !chapterMode || state.guidedRepairChapterIndex >= chapters.length - 1;
+  }
+
+  function setGuidedRepairMode(mode) {
+    state.guidedRepairMode = mode === "chapter" ? "chapter" : "whole";
+    updateGuidedRepairModeUi();
+    renderRepairReview();
+    saveCheckpoint();
+  }
+
+  function moveGuidedRepairChapter(delta) {
+    const chapters = guidedRepairChapters();
+    if (!chapters.length) return;
+    state.guidedRepairChapterIndex = clamp((state.guidedRepairChapterIndex || 0) + delta, 0, chapters.length - 1);
+    updateGuidedRepairModeUi();
+    renderRepairReview();
+    saveCheckpoint();
+  }
+
   function renderRepairReview() {
     if (!els.repairReview || !els.repairReviewToggle || !els.repairReviewList) return;
     const repairState = getRepairReviewState();
@@ -3565,7 +3639,10 @@
     const continuationMerges = autoMergeStrongContinuations();
 
     let fixedCount = 0, punctuationSpacing = 0, quoteSpacing = 0, dashSpacing = 0;
-    for (const page of state.pages) {
+    const allowed = pageIndexes ? new Set(pageIndexes) : null;
+    for (let pageIndex = 0; pageIndex < state.pages.length; pageIndex++) {
+      if (allowed && !allowed.has(pageIndex)) continue;
+      const page = state.pages[pageIndex];
       const result = polish(page.text || "");
       page.text = result.text;
       fixedCount += result.fixedCount || 0;
@@ -3609,61 +3686,104 @@
       setStatus("Process or import a book before running Guided Repair.");
       return;
     }
+
+    const chapterMode = state.guidedRepairMode === "chapter";
+    const chapter = chapterMode ? currentGuidedRepairChapter() : null;
+    const pageIndexes = chapterMode ? guidedRepairPageIndexes() : null;
     const originalLabel = els.repairBook?.textContent || "Repair Book";
-    if (els.repairBook) { els.repairBook.disabled = true; els.repairBook.textContent = "Repairing…"; }
+
+    if (els.repairBook) {
+      els.repairBook.disabled = true;
+      els.repairBook.textContent = chapterMode ? "Repairing chapter…" : "Repairing…";
+    }
     if (els.repairBookStatus) els.repairBookStatus.textContent = "Working…";
+
     try {
       syncCurrentEditor();
-      setStatus(state.repairBookHasRun
-        ? "Guided Repair 1/5 · Preserving already repaired paragraph text…"
-        : "Guided Repair 1/5 · Rebuilding paragraph structure…");
-      const rebuiltCount = state.repairBookHasRun
-        ? 0
-        : rebuildParagraphsFromSavedGeometry({ confirmOverwrite: false });
 
-      setStatus(state.repairBookHasRun
-        ? "Guided Repair 2/5 · Rechecking italics without rebuilding repaired text…"
-        : "Guided Repair 2/5 · Scanning conservative italics…");
-      const italics = await autoScanItalics({ rebuildText: !state.repairBookHasRun });
+      let rebuiltCount = 0;
+      let italics = null;
 
-      setStatus("Guided Repair 3/5 · Applying safe text cleanup…");
-      const polishStats = applySafePolishToProject() || { fixedCount:0 };
+      if (chapterMode) {
+        // Paragraph geometry and italic analysis were already produced by OCR.
+        // Chapter mode intentionally avoids whole-book rebuild/rescan so it
+        // stays fast, local, and cannot disturb repaired text in other chapters.
+        setStatus(`Guided Repair · Chapter ${chapter.number}: preserving paragraph geometry and existing italic analysis…`);
+      } else {
+        setStatus(state.repairBookHasRun
+          ? "Guided Repair 1/5 · Preserving already repaired paragraph text…"
+          : "Guided Repair 1/5 · Rebuilding paragraph structure…");
+        rebuiltCount = state.repairBookHasRun
+          ? 0
+          : rebuildParagraphsFromSavedGeometry({ confirmOverwrite: false });
 
-      setStatus("Guided Repair 4/5 · Repairing high-confidence split ligatures…");
-      const ligatureStats = runSplitLigaturePolish() || { fixedCount:0, ambiguousCount:0 };
-
-      setStatus("Guided Repair 5/5 · Running Dropcap Rescue across every chapter start…");
-      scanDropcaps();
-      const dropcapAudit = state.lastDropcapAudit || { expected:0, evaluated:0, missedPages:[] };
-      if (dropcapAudit.missedPages.length) {
-        throw new Error(`Dropcap Rescue evaluated only ${dropcapAudit.evaluated} of ${dropcapAudit.expected} chapter starts. Repair Book will not report Done.`);
+        setStatus(state.repairBookHasRun
+          ? "Guided Repair 2/5 · Rechecking italics without rebuilding repaired text…"
+          : "Guided Repair 2/5 · Scanning conservative italics…");
+        italics = await autoScanItalics({ rebuildText: !state.repairBookHasRun });
       }
 
-      const high = state.dropcapCandidates.filter(c => c.status === "pending" && c.confidence === "high");
+      setStatus(chapterMode
+        ? `Guided Repair · Chapter ${chapter.number}: applying safe cleanup…`
+        : "Guided Repair 3/5 · Applying safe text cleanup…");
+      const polishStats = applySafePolishToProject(pageIndexes) || { fixedCount:0 };
+
+      setStatus(chapterMode
+        ? `Guided Repair · Chapter ${chapter.number}: repairing split ligatures…`
+        : "Guided Repair 4/5 · Repairing high-confidence split ligatures…");
+      const ligatureStats = runSplitLigaturePolish(pageIndexes) || { fixedCount:0, ambiguousCount:0 };
+
+      setStatus(chapterMode
+        ? `Guided Repair · Chapter ${chapter.number}: checking chapter opening…`
+        : "Guided Repair 5/5 · Running Dropcap Rescue across every chapter start…");
+      scanDropcaps(pageIndexes);
+
+      const dropcapAudit = state.lastDropcapAudit || { expected:0, evaluated:0, missedPages:[] };
+      if (dropcapAudit.missedPages.length) {
+        throw new Error(`Dropcap Rescue evaluated only ${dropcapAudit.evaluated} of ${dropcapAudit.expected} expected chapter starts.`);
+      }
+
+      const high = state.dropcapCandidates.filter(c =>
+        c.status === "pending" &&
+        c.confidence === "high" &&
+        (!pageIndexes || pageIndexes.includes(c.pageIndex))
+      );
       high.forEach(candidate => applyDropcap(candidate, candidate.proposed));
+
       state.repairBookHasRun = true;
       saveCheckpoint();
       renderReview();
       renderDropcapResults();
       renderRepairReview();
+      updateGuidedRepairModeUi();
 
       const repairState = getRepairReviewState();
       const repairReviewCount = repairState.total;
+
       if (els.repairBookStatus) {
-        els.repairBookStatus.textContent = `Done · ${repairReviewCount} review · ${dropcapAudit.evaluated}/${dropcapAudit.expected} chapter starts`;
+        els.repairBookStatus.textContent = chapterMode
+          ? `Chapter ${chapter.number} · ${repairReviewCount} review`
+          : `Done · ${repairReviewCount} review · ${dropcapAudit.evaluated}/${dropcapAudit.expected} chapter starts`;
       }
-      setStatus(`Guided Repair complete: ${dropcapAudit.evaluated}/${dropcapAudit.expected} chapter starts evaluated, ${high.length} high-confidence dropcap${high.length===1?"":"s"} accepted, ${repairState.dropcapCount} dropcap${repairState.dropcapCount===1?"":"s"} and ${repairState.ligatureCount} split-ligature${repairState.ligatureCount===1?"":"s"} left for Review repairs. ${rebuiltCount} pages rebuilt; ${italics?.markedRuns || 0} italic run${italics?.markedRuns===1?"":"s"}; ${polishStats.fixedCount || 0} safe cleanup fix${polishStats.fixedCount===1?"":"es"}.`);
+
+      setStatus(chapterMode
+        ? `Chapter ${chapter.number} repaired: ${repairState.dropcapCount} dropcap and ${repairState.ligatureCount} split-ligature review item${repairReviewCount===1?"":"s"} remain in this chapter.`
+        : `Guided Repair complete: ${dropcapAudit.evaluated}/${dropcapAudit.expected} chapter starts evaluated, ${high.length} high-confidence dropcaps accepted, ${repairState.dropcapCount} dropcaps and ${repairState.ligatureCount} split-ligatures left for Review repairs. ${rebuiltCount} pages rebuilt; ${italics?.markedRuns || 0} italic runs; ${polishStats.fixedCount || 0} safe cleanup fixes.`);
     } catch (err) {
       console.error(err);
       if (els.repairBookStatus) els.repairBookStatus.textContent = "Stopped";
       setStatus(`Guided Repair stopped safely: ${err.message || err}`);
     } finally {
-      if (els.repairBook) { els.repairBook.disabled = false; els.repairBook.textContent = originalLabel; }
+      if (els.repairBook) {
+        els.repairBook.disabled = false;
+        els.repairBook.textContent = originalLabel;
+      }
       updateNavigationControls();
+      updateGuidedRepairModeUi();
     }
   }
 
-  function applySafePolishToProject() {
+  function applySafePolishToProject(pageIndexes = null) {
     const polish = globalThis.BookOcrEpubPolish?.safePolishText;
     if (typeof polish !== "function") {
       setStatus("Safe polish helper did not load. Refresh and try again.");
@@ -3759,11 +3879,13 @@
     state.ignoredLigatureCandidates.add(stableLigatureCandidateKey(candidate, pageIndex, context));
   }
 
-  function collectUncertainLigatures() {
+  function collectUncertainLigatures(pageIndexes = null) {
     const list = globalThis.BookOcrEpubPolish?.listSplitLigatureCandidates;
     if (!list) return [];
+    const allowed = pageIndexes ? new Set(pageIndexes) : null;
     const found = [];
     state.pages.forEach((page, pageIndex) => {
+      if (allowed && !allowed.has(pageIndex)) return;
       const text = page.text || "";
       list(text).forEach(candidate => {
         const context = ligatureCandidateContext(text, candidate);
@@ -3782,8 +3904,12 @@
   }
 
   function getRepairReviewState() {
-    const ligatures = collectUncertainLigatures();
-    const dropcaps = (state.dropcapCandidates || []).filter(c => c.status === "pending");
+    const pageIndexes = state.guidedRepairMode === "chapter" ? guidedRepairPageIndexes() : null;
+    const allowed = pageIndexes ? new Set(pageIndexes) : null;
+    const ligatures = collectUncertainLigatures(pageIndexes);
+    const dropcaps = (state.dropcapCandidates || []).filter(c =>
+      c.status === "pending" && (!allowed || allowed.has(c.pageIndex))
+    );
     return {
       ligatures,
       dropcaps,
@@ -3858,7 +3984,7 @@
     renderLigatureReview();
   }
 
-  function runSplitLigaturePolish() {
+  function runSplitLigaturePolish(pageIndexes = null) {
     const repair = globalThis.BookOcrEpubPolish?.repairSplitLigatures;
     if (!repair) {
       alert("Split Ligature Repair did not load. Refresh the app and try again.");
@@ -3882,7 +4008,9 @@
           .map(paragraph => paragraph.textContent.trim()).filter(Boolean).join("\n\n");
       });
     } else {
-      state.pages.forEach(page => {
+      const allowed = pageIndexes ? new Set(pageIndexes) : null;
+      state.pages.forEach((page, pageIndex) => {
+        if (allowed && !allowed.has(pageIndex)) return;
         const result = repair(page.text || "");
         page.text = result.text;
         fixedCount += result.fixedCount;
@@ -4388,12 +4516,17 @@ ${coverSpine}${spine.join("\n")}
     } finally {
       els.messageOcrBtn.textContent = original;
       updateNavigationControls();
+  updateGuidedRepairModeUi();
     }
   });
 
   els.downloadTxt.addEventListener("click", downloadTxt);
   els.downloadEpub.addEventListener("click", downloadEpub);
   els.repairBook?.addEventListener("click", repairBookGuided);
+  els.repairModeWhole?.addEventListener("click", () => setGuidedRepairMode("whole"));
+  els.repairModeChapter?.addEventListener("click", () => setGuidedRepairMode("chapter"));
+  els.repairChapterPrev?.addEventListener("click", () => moveGuidedRepairChapter(-1));
+  els.repairChapterNext?.addEventListener("click", () => moveGuidedRepairChapter(1));
   els.runRegression?.addEventListener("click", runRegressionCheck);
   els.runKindleReady?.addEventListener("click", runKindleReadyCheck);
   els.finalPolish?.addEventListener("click", runFinalPolish);

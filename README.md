@@ -142,3 +142,6 @@ v2.6.5: Added exportable italic detection 2.0 diagnostics with per-line slant/ga
 
 
 2.7.24 Full-Book Repair Audit: Repair Book now accounts for every marked chapter start before it can report Done. Dropcap Rescue records expected/evaluated/missed chapter-start counts, Repair Book stops if coverage is incomplete, and the status pill reports both review count and chapter coverage. Kindle Ready surfaces the same dropcap scan coverage. Final Polish now treats known text-message speaker labels such as ME, YOU, SABRINA, and TUCKER as structure rather than suspicious short paragraphs.
+
+
+2.7.25 Chapter Guided Repair: adds a compact Whole book / Chapter by chapter mode directly beside Repair Book. Chapter mode shows unobtrusive previous/next chapter controls, persists the current chapter, scopes safe cleanup, split-ligature repair, Dropcap Rescue, and Review repairs to only that chapter, and avoids whole-book paragraph/italic rebuilds so other repaired chapters remain untouched.
