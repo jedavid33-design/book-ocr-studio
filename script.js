@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.44-v2740-status-quote-fix";
+  const BUILD_VERSION = "2.7.45-dialogue-aware-quote-review";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -3590,12 +3590,18 @@
   }
 
   function finalIssueKey(issue) {
+    const file = state.pages[issue?.pageIndex]?.file?.name || issue?.fileName || "";
+    const normalizedText = String(issue?.fullText || issue?.current || "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLowerCase()
+      .slice(0, 420);
     return [
-      issue.type || "",
-      issue.pageIndex ?? "",
-      issue.paraIndex ?? "",
-      issue.current || "",
-      issue.suggestion || ""
+      issue?.type || "issue",
+      normalizedStem(file),
+      Number.isFinite(Number(issue?.pageIndex)) ? Number(issue.pageIndex) : -1,
+      Number.isFinite(Number(issue?.paraIndex)) ? Number(issue.paraIndex) : -1,
+      normalizedText
     ].join("|");
   }
 
@@ -3842,51 +3848,131 @@
         : `No unresolved wrap-hyphens remain in repaired text${alreadyResolvedWrapHyphens ? `; ${alreadyResolvedWrapHyphens} source wrap${alreadyResolvedWrapHyphens===1?" was":"s were"} already healed upstream` : ""}.`);
 
     let quoteFlags = 0;
-    const oddQuotes = [];
+    const quoteIssues = [];
+    const quoteRuns = [];
+    const dialogueQuoteRe = /["“”]/g;
+    const normalizeQuoteText = value => stripItalicMarkers(String(value || ""));
+    const quoteCountFor = value => (normalizeQuoteText(value).match(dialogueQuoteRe) || []).length;
+    const startsWithQuote = value => /^[\s([{]*["“]/u.test(normalizeQuoteText(value));
+    const endsWithQuote = value => /["”]\s*[)\]}.,!?;:—–-]*\s*$/u.test(normalizeQuoteText(value));
+
+    let openDialogue = null;
+
     state.pages.forEach((page, pageIndex) => {
       const paras = exportParagraphs(page.text || "");
+
+      // A dialogue run should never silently cross a marked chapter boundary.
+      if (openDialogue && page.chapterStart) {
+        quoteIssues.push({
+          type: "Quote balance",
+          pageIndex: openDialogue.startPageIndex,
+          paraIndex: openDialogue.startParaIndex,
+          fileName: openDialogue.fileName,
+          current: openDialogue.text.slice(0, 260),
+          fullText: openDialogue.fullText,
+          detail: "A multi-paragraph dialogue run reaches a new chapter without a closing quote. Verify the closing punctuation before the chapter break."
+        });
+        openDialogue = null;
+      }
+
       paras.forEach((para, paraIndex) => {
-        const plain = stripItalicMarkers(para);
-        const dialogueQuotes = (plain.match(/["“”]/g) || []).length;
-        if (dialogueQuotes % 2 === 1) {
-          oddQuotes.push({
+        const plain = normalizeQuoteText(para);
+        const quoteCount = quoteCountFor(plain);
+        const startsQuoted = startsWithQuote(plain);
+        const endsQuoted = endsWithQuote(plain);
+        const odd = quoteCount % 2 === 1;
+        const fileName = page.fileName || page.file?.name || `Page ${pageIndex + 1}`;
+
+        if (!openDialogue) {
+          if (quoteCount === 0 || !odd) return;
+
+          // Standard fiction convention: first paragraph opens dialogue but
+          // intentionally has no closing quote because the same speaker
+          // continues into another paragraph.
+          if (startsQuoted && !endsQuoted) {
+            openDialogue = {
+              startPageIndex: pageIndex,
+              startParaIndex: paraIndex,
+              fileName,
+              text: plain,
+              fullText: para
+            };
+            return;
+          }
+
+          quoteIssues.push({
+            type: "Quote balance",
             pageIndex,
             paraIndex,
-            paraCount: paras.length,
-            text: para,
-            plain,
-            fileName: page.fileName || page.file?.name || `Page ${pageIndex + 1}`
+            fileName,
+            current: plain.slice(0, 260),
+            fullText: para,
+            detail: "This paragraph has an unmatched dialogue quote while no earlier multi-paragraph dialogue is open. Verify the opening or closing quotation mark."
           });
+          return;
         }
+
+        // We are inside multi-paragraph dialogue.
+        // Intermediate speech paragraphs conventionally begin with a fresh
+        // opening quote and omit the close, producing an odd local count.
+        if (startsQuoted && odd && !endsQuoted) return;
+
+        // The final paragraph of the same speaker's multi-paragraph speech
+        // normally begins with an opening quote and also closes, giving an
+        // even local count (often exactly two).
+        if (startsQuoted && !odd && endsQuoted) {
+          quoteRuns.push({
+            startPageIndex: openDialogue.startPageIndex,
+            startParaIndex: openDialogue.startParaIndex,
+            endPageIndex: pageIndex,
+            endParaIndex: paraIndex
+          });
+          openDialogue = null;
+          return;
+        }
+
+        // A page-boundary continuation can arrive without a fresh opening quote
+        // and then supply only the final closing quote.
+        if (!startsQuoted && odd && endsQuoted) {
+          quoteRuns.push({
+            startPageIndex: openDialogue.startPageIndex,
+            startParaIndex: openDialogue.startParaIndex,
+            endPageIndex: pageIndex,
+            endParaIndex: paraIndex
+          });
+          openDialogue = null;
+          return;
+        }
+
+        // Anything else is genuinely ambiguous enough to ask the user.
+        quoteIssues.push({
+          type: "Quote balance",
+          pageIndex,
+          paraIndex,
+          fileName,
+          current: plain.slice(0, 260),
+          fullText: para,
+          detail: quoteCount === 0
+            ? "Dialogue was already open, but this paragraph contains no dialogue quotation mark. Verify whether the prior paragraph should have closed or this paragraph is missing an opening quote."
+            : "This paragraph occurs inside an open multi-paragraph dialogue run, but its quote pattern does not match a normal continuing or closing speech paragraph. Verify the quote punctuation."
+        });
+        openDialogue = null;
       });
     });
 
-    const crossPageResolved = new Set();
-    for (let i = 0; i < oddQuotes.length - 1; i++) {
-      const a = oddQuotes[i];
-      const b = oddQuotes[i + 1];
-      const sameChapter = !state.pages[b.pageIndex]?.chapterStart;
-      const touchesBoundary = a.paraIndex === a.paraCount - 1 && b.paraIndex === 0 && b.pageIndex === a.pageIndex + 1;
-      const combinedQuotes = ((a.plain + " " + b.plain).match(/["“”]/g) || []).length;
-
-      if (sameChapter && touchesBoundary && combinedQuotes % 2 === 0) {
-        crossPageResolved.add(`${a.pageIndex}|${a.paraIndex}`);
-        crossPageResolved.add(`${b.pageIndex}|${b.paraIndex}`);
-        i++;
-      }
+    if (openDialogue) {
+      quoteIssues.push({
+        type: "Quote balance",
+        pageIndex: openDialogue.startPageIndex,
+        paraIndex: openDialogue.startParaIndex,
+        fileName: openDialogue.fileName,
+        current: openDialogue.text.slice(0, 260),
+        fullText: openDialogue.fullText,
+        detail: "A multi-paragraph dialogue run reaches the end of the book without a closing quote. Verify the final dialogue punctuation."
+      });
     }
 
-    oddQuotes.forEach(entry => {
-      if (crossPageResolved.has(`${entry.pageIndex}|${entry.paraIndex}`)) return;
-      const issue = {
-        type: "Quote balance",
-        pageIndex: entry.pageIndex,
-        paraIndex: entry.paraIndex,
-        fileName: entry.fileName,
-        current: entry.plain.slice(0, 260),
-        fullText: entry.text,
-        detail: `This paragraph has an unmatched dialogue quotation mark after normalizing straight and curly double quotes and checking adjacent page boundaries. Edit only this paragraph or mark it correct.`
-      };
+    quoteIssues.forEach(issue => {
       issue.key = finalIssueKey(issue);
       if (!state.ignoredFinalPolishIssues.has(issue.key)) {
         quoteFlags++;
@@ -3896,8 +3982,8 @@
 
     addCheck("Quote audit", quoteFlags ? "warn" : "pass",
       quoteFlags
-        ? `${quoteFlags} paragraph${quoteFlags===1?"":"s"} still need quote review after cross-page continuations were reconciled.`
-        : "No unresolved quote-balance issues remain after cross-page continuation checks.");
+        ? `${quoteFlags} dialogue paragraph${quoteFlags===1?"":"s"} still need quote review after multi-paragraph dialogue state was reconciled.`
+        : "No unresolved quote-balance issues remain after multi-paragraph dialogue reconciliation.");
 
     let fragments = 0;
     state.pages.forEach((page, pageIndex) => {
@@ -4048,13 +4134,15 @@
           writePageBlocks(page, blocks);
           saveCheckpoint();
           renderReview();
-          runFinalPolish();
+          const report = runFinalPolish();
+          if (report && els.finalPolishReview) els.finalPolishReview.open = true;
           setStatus("Applied the quote correction without opening the full page.");
         });
         button("Looks correct", "ghost", () => {
           state.ignoredFinalPolishIssues.add(issue.key);
           saveCheckpoint();
-          runFinalPolish();
+          const report = runFinalPolish();
+          if (report && els.finalPolishReview) els.finalPolishReview.open = true;
           setStatus("Quote warning dismissed as correct.");
         });
         button("Open page (optional)", "ghost", () => jumpToPage(issue.pageIndex));
