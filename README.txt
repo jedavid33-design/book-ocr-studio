@@ -116,3 +116,5 @@ v2.6.5: Added exportable italic detection 2.0 diagnostics with per-line slant/ga
 2.7.29: Re-detect chapter starts from existing saved OCR without rerunning OCR. Clears stale chapter-derived Repair/Polish state.
 
 2.7.31: Strict chapter detection now tolerates OCR confusion in short top-of-page decade headings (10/20/30, including O-for-0 and I/l-for-1) and up to two OCR-character errors in short EPILOGUE headings. Re-detect Existing Chapters remains available and does not rerun OCR.
+
+2.7.32: Restores existing Final Polish review items into Guided Repair after reload/update. Polish run state is persisted; restoration performs audit only and does not reapply text fixes.

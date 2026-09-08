@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.31-decade-epilogue-detection";
+  const BUILD_VERSION = "2.7.32-polish-review-restore";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -224,6 +224,7 @@
         bookAuthor: els.bookAuthor?.value || "",
         bookLayoutProfile: state.bookLayoutProfile || null,
         repairBookHasRun: !!state.repairBookHasRun,
+        finalPolishHasRun: !!state.finalPolishHasRun,
         guidedRepairMode: state.guidedRepairMode || "whole",
         guidedRepairChapterIndex: Number(state.guidedRepairChapterIndex) || 0,
         ignoredLigatureCandidates: Array.from(state.ignoredLigatureCandidates || []),
@@ -366,6 +367,7 @@
     const savedPages = saved.pages || [];
     state.bookLayoutProfile = saved.bookLayoutProfile || null;
     state.repairBookHasRun = !!saved.repairBookHasRun;
+    state.finalPolishHasRun = !!saved.finalPolishHasRun;
     state.guidedRepairMode = saved.guidedRepairMode === "chapter" ? "chapter" : "whole";
     state.guidedRepairChapterIndex = Number.isFinite(Number(saved.guidedRepairChapterIndex)) ? Number(saved.guidedRepairChapterIndex) : 0;
     state.ignoredLigatureCandidates = new Set(Array.isArray(saved.ignoredLigatureCandidates) ? saved.ignoredLigatureCandidates : []);
@@ -1996,6 +1998,7 @@
     });
     saveCheckpoint();
     renderReview();
+    if (restored && state.repairBookHasRun) restoreFinalPolishReviewUi();
     refreshParagraphRebuildUi();
     const profileNote = bookProfile?.indentCount
       ? ` Layout profile: body ${Math.round(bookProfile.bodyLeft)} / indent ${Math.round(bookProfile.indentLeft)} from ${bookProfile.learnedFromLines} OCR lines.`
@@ -3741,6 +3744,23 @@
     els.finalPolishReviewToggle.textContent = `Review polish (${report.issues.length})`;
   }
 
+  function restoreFinalPolishReviewUi() {
+    if (!state.pages.length || !state.repairBookHasRun) return;
+    try {
+      const audit = finalPolishAudit();
+      if (!audit || !Array.isArray(audit.issues)) return;
+      const report = { buildVersion: BUILD_VERSION, runAt: new Date().toISOString(),
+        fixedCount: 0, punctuationSpacing: 0, quoteSpacing: 0, dashSpacing: 0,
+        continuationMerges: 0, restoredReview: true, ...audit };
+      state.lastFinalPolishReport = report;
+      renderFinalPolishReport(report);
+      if (els.finalPolishStatus) els.finalPolishStatus.textContent =
+        audit.issues.length ? `${audit.issues.length} review` : "0 review";
+    } catch (err) {
+      console.warn("Could not restore Final Polish review UI", err);
+    }
+  }
+
   function runFinalPolish() {
     if (!state.pages.length || state.processing) {
       setStatus("Process or import a book before running Final Polish.");
@@ -3771,6 +3791,7 @@
     renderReview();
 
     const audit = finalPolishAudit();
+    state.finalPolishHasRun = true;
     const report = {
       buildVersion: BUILD_VERSION,
       runAt: new Date().toISOString(),
@@ -3788,6 +3809,8 @@
         ? `${continuationMerges} high-confidence broken paragraph continuation${continuationMerges===1?" was":"s were"} merged automatically.`
         : "No high-confidence broken paragraph continuations needed merging."
     });
+    state.lastFinalPolishReport = report;
+    saveCheckpoint();
     renderFinalPolishReport(report);
 
     const notes = audit.checks.filter(c => c.status === "warn").length;
