@@ -141,3 +141,9 @@ v2.6.5: Added exportable italic detection 2.0 diagnostics with per-line slant/ga
 - Fixes Final Polish failing on an undefined pageIndexes variable.
 - Chapter-start raw Paddle detections now live in a dedicated durable store separate from the large OCR checkpoint. Existing v2.7.39/v2.7.40 raw data is migrated automatically on restore; future reloads/build updates can reuse it without re-OCRing the 44 chapter starts.
 - Explicit Clear old OCR + restart clears the dedicated raw store.
+
+2.7.42 Quote Audit + Status + Raw Fix:
+- Guided Repair and Final Polish live progress now appears in section 6 beside the repair controls, including Dropcap hydration progress.
+- Raw chapter-start Paddle OCR is reapplied from its dedicated durable store before Repair decides which chapter pages need hydration; a fully populated project reports 0/N needed instead of re-OCRing them.
+- The 17 resolved dropcap decisions remain protected by v2.7.41 stable ignored-candidate keys; finished Repair state clears stale in-memory cards on reload instead of resurrecting them.
+- Quote audit now treats straight and curly double quotation marks as one normalized dialogue-quote set, eliminating mixed-style false positives such as a curly opener paired with a straight closer.

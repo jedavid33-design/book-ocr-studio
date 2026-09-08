@@ -1,7 +1,7 @@
-const CACHE_NAME = "book-ocr-studio-shell-v2-7-41-repair-state-and-raw-persistence";
+const CACHE_NAME = "book-ocr-studio-shell-v2-7-42-quote-audit-status-rawfix";
 const APP_SHELL = [
-  "./styles.css?v=2.7.41-repair-state-and-raw-persistence",
-  "./epub-polish.js?v=2.7.41-repair-state-and-raw-persistence",
+  "./styles.css?v=2.7.42-quote-audit-status-rawfix",
+  "./epub-polish.js?v=2.7.42-quote-audit-status-rawfix",
   "./manifest.webmanifest",
   "./icon-192.png",
   "./icon-512.png",

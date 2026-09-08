@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.41-repair-state-and-raw-persistence";
+  const BUILD_VERSION = "2.7.42-quote-audit-status-rawfix";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -135,6 +135,7 @@
     paragraphStatus: $("paragraphStatus"),
     repairBook: $("repairBook"),
     repairBookStatus: $("repairBookStatus"),
+    guidedLiveStatus: $("guidedLiveStatus"),
     geometryAssist: $("geometryAssist"),
     repairDiagnostic: $("repairDiagnostic"),
     repairModeWhole: $("repairModeWhole"),
@@ -191,6 +192,15 @@
   function setStatus(message) {
     els.statusBox.textContent = message;
   }
+
+  function setGuidedStatus(message) {
+    const text = String(message || "");
+    if (els.guidedLiveStatus) {
+      els.guidedLiveStatus.textContent = text;
+      els.guidedLiveStatus.classList.toggle("hidden", !text);
+    }
+  }
+
 
   function clamp(n, min, max) {
     return Math.min(max, Math.max(min, n));
@@ -561,6 +571,7 @@
       candidates.sort((a, b) => (b.pageCount - a.pageCount) || (b.score - a.score));
       const best = candidates[0];
       applyCheckpoint(best.saved);
+      if (state.repairBookHasRun) state.dropcapCandidates = [];
 
       // Re-save in the permanent format with the currently selected files so
       // future version updates no longer depend on old iOS file metadata.
@@ -2281,6 +2292,7 @@
 
   async function hydrateRawDropcapDetections(pageIndexes = null) {
     if (state.importedEpub || !state.files.length) return 0;
+    applyRawDropcapStore();
     const allowed = pageIndexes ? new Set(pageIndexes) : null;
     const targets = state.pages
       .map((page, pageIndex) => ({ page, pageIndex }))
@@ -2290,13 +2302,18 @@
         (!Array.isArray(page.rawOcrItems) || !page.rawOcrItems.length)
       );
 
+    if (!targets.length) {
+      const totalStarts = state.pages.filter(page => page?.chapterStart).length;
+      setGuidedStatus(`5/5 · Dropcaps · raw chapter OCR already saved · 0/${totalStarts} needed`);
+      return 0;
+    }
     let hydrated = 0;
     for (let i = 0; i < targets.length; i++) {
       const { page, pageIndex } = targets[i];
       const file = state.files[pageIndex] || page.file;
       if (!file) continue;
       try {
-        setStatus(`Dropcap Rescue geometry ${i + 1}/${targets.length} · reading raw Paddle detections from page ${pageIndex + 1}…`);
+        setGuidedStatus(`Dropcap Rescue geometry ${i + 1}/${targets.length} · reading raw Paddle detections from page ${pageIndex + 1}…`);
         const img = await loadImageFromFile(file);
         const canvas = makeCroppedCanvas(img);
         const paddle = await paddleRecognizeCanvas(canvas, { messageMode: false });
@@ -3915,8 +3932,8 @@
       const paras = exportParagraphs(page.text || "");
       paras.forEach((para, paraIndex) => {
         const plain = stripItalicMarkers(para);
-        const straight = (plain.match(/"/g) || []).length;
-        if (straight % 2 === 1) {
+        const dialogueQuotes = (plain.match(/["“”]/g) || []).length;
+        if (dialogueQuotes % 2 === 1) {
           oddQuotes.push({
             pageIndex,
             paraIndex,
@@ -3935,7 +3952,7 @@
       const b = oddQuotes[i + 1];
       const sameChapter = !state.pages[b.pageIndex]?.chapterStart;
       const touchesBoundary = a.paraIndex === a.paraCount - 1 && b.paraIndex === 0 && b.pageIndex === a.pageIndex + 1;
-      const combinedQuotes = ((a.plain + " " + b.plain).match(/"/g) || []).length;
+      const combinedQuotes = ((a.plain + " " + b.plain).match(/["“”]/g) || []).length;
 
       if (sameChapter && touchesBoundary && combinedQuotes % 2 === 0) {
         crossPageResolved.add(`${a.pageIndex}|${a.paraIndex}`);
@@ -3953,7 +3970,7 @@
         fileName: entry.fileName,
         current: entry.plain.slice(0, 260),
         fullText: entry.text,
-        detail: `This paragraph has an unmatched straight quotation mark after checking adjacent page boundaries. Edit only this paragraph or mark it correct.`
+        detail: `This paragraph has an unmatched dialogue quotation mark after normalizing straight and curly double quotes and checking adjacent page boundaries. Edit only this paragraph or mark it correct.`
       };
       issue.key = finalIssueKey(issue);
       if (!state.ignoredFinalPolishIssues.has(issue.key)) {
@@ -4187,13 +4204,13 @@
 
   function runFinalPolish() {
     if (!state.pages.length || state.processing) {
-      setStatus("Process or import a book before running Final Polish.");
+      setGuidedStatus("Process or import a book before running Final Polish.");
       return;
     }
     syncCurrentEditor();
     const polish = globalThis.BookOcrEpubPolish?.finalPolishText;
     if (typeof polish !== "function") {
-      setStatus("Final Polish helper did not load. Refresh and try again.");
+      setGuidedStatus("Final Polish helper did not load. Refresh and try again.");
       return;
     }
 
@@ -4239,13 +4256,13 @@
     if (els.finalPolishStatus) {
       els.finalPolishStatus.textContent = `${fixedCount} safe fix${fixedCount===1?"":"es"} · ${audit.issues.length} review`;
     }
-    setStatus(`Final Polish complete: ${fixedCount} safe Kindle-first cleanup fix${fixedCount===1?"":"es"} applied. ${audit.issues.length} uncertain item${audit.issues.length===1?"":"s"} left untouched for review${notes ? ` across ${notes} audit categor${notes===1?"y":"ies"}` : ""}.`);
+    setGuidedStatus(`Final Polish complete: ${fixedCount} safe Kindle-first cleanup fix${fixedCount===1?"":"es"} applied. ${audit.issues.length} uncertain item${audit.issues.length===1?"":"s"} left untouched for review${notes ? ` across ${notes} audit categor${notes===1?"y":"ies"}` : ""}.`);
     return report;
   }
 
   async function repairBookGuided() {
     if (!state.pages.length || state.processing) {
-      setStatus("Process or import a book before running Guided Repair.");
+      setGuidedStatus("Process or import a book before running Guided Repair.");
       return;
     }
 
@@ -4276,9 +4293,9 @@
         // Paragraph geometry and italic analysis were already produced by OCR.
         // Chapter mode intentionally avoids whole-book rebuild/rescan so it
         // stays fast, local, and cannot disturb repaired text in other chapters.
-        setStatus(`Guided Repair · Chapter ${chapter.number}: preserving paragraph geometry and existing italic analysis…`);
+        setGuidedStatus(`Guided Repair · Chapter ${chapter.number}: preserving paragraph geometry and existing italic analysis…`);
       } else {
-        setStatus(state.repairBookHasRun
+        setGuidedStatus(state.repairBookHasRun
           ? "Guided Repair 1/5 · Preserving already repaired paragraph text…"
           : "Guided Repair 1/5 · Rebuilding paragraph structure…");
         repairStage = "paragraph rebuild";
@@ -4286,26 +4303,26 @@
           ? 0
           : rebuildParagraphsFromSavedGeometry({ confirmOverwrite: false });
 
-        setStatus(state.repairBookHasRun
+        setGuidedStatus(state.repairBookHasRun
           ? "Guided Repair 2/5 · Rechecking italics without rebuilding repaired text…"
           : "Guided Repair 2/5 · Scanning conservative italics…");
         repairStage = "automatic italic scan";
         italics = await autoScanItalics({ rebuildText: !state.repairBookHasRun });
       }
 
-      setStatus(chapterMode
+      setGuidedStatus(chapterMode
         ? `Guided Repair · Chapter ${chapter.number}: applying safe cleanup…`
         : "Guided Repair 3/5 · Applying safe text cleanup…");
       repairStage = "safe text cleanup";
       const polishStats = applySafePolishToProject(pageIndexes) || { fixedCount:0 };
 
-      setStatus(chapterMode
+      setGuidedStatus(chapterMode
         ? `Guided Repair · Chapter ${chapter.number}: repairing split ligatures…`
         : "Guided Repair 4/5 · Repairing high-confidence split ligatures…");
       repairStage = "split-ligature repair";
       const ligatureStats = runSplitLigaturePolish(pageIndexes) || { fixedCount:0, ambiguousCount:0 };
 
-      setStatus(chapterMode
+      setGuidedStatus(chapterMode
         ? `Guided Repair · Chapter ${chapter.number}: checking chapter opening…`
         : "Guided Repair 5/5 · Running Dropcap Rescue across every chapter start…");
       if (els.geometryAssist?.checked && !state.importedEpub) {
@@ -4346,7 +4363,7 @@
           : `Done · ${repairReviewCount} review · ${dropcapAudit.evaluated}/${dropcapAudit.expected} chapter starts`;
       }
 
-      setStatus(chapterMode
+      setGuidedStatus(chapterMode
         ? `Chapter ${chapter.number} repaired: ${repairState.dropcapCount} dropcap and ${repairState.ligatureCount} split-ligature review item${repairReviewCount===1?"":"s"} remain in this chapter.`
         : `Guided Repair complete: ${dropcapAudit.evaluated}/${dropcapAudit.expected} chapter starts evaluated, ${high.length} high-confidence dropcaps accepted, ${repairState.dropcapCount} dropcaps and ${repairState.ligatureCount} split-ligatures left for Review repairs. ${rebuiltCount} pages rebuilt; ${italics?.markedRuns || 0} italic runs; ${polishStats.fixedCount || 0} safe cleanup fixes.`);
     } catch (err) {
@@ -4359,7 +4376,7 @@
           `Stage: ${repairStage}\nError: ${message}${stackLine ? `\n${stackLine}` : ""}\nGeometry assist: ${els.geometryAssist?.checked ? "ON" : "OFF"}`;
         els.repairDiagnostic.classList.remove("hidden");
       }
-      setStatus(`Guided Repair stopped at ${repairStage}: ${message}`);
+      setGuidedStatus(`Guided Repair stopped at ${repairStage}: ${message}`);
     } finally {
       if (els.repairBook) {
         els.repairBook.disabled = false;
@@ -5028,6 +5045,7 @@ ${coverSpine}${spine.join("\n")}
     state.pages = [];
     state.currentPageIndex = -1;
     const restored = state.files.length ? restoreCheckpointIfMatching() : 0;
+    if (restored) applyRawDropcapStore();
     if (restored && state.currentPageIndex < 0) state.currentPageIndex = restored - 1;
     els.fileCount.textContent = `${state.files.length} page${state.files.length === 1 ? "" : "s"} loaded`;
     els.processBtn.disabled = !state.files.length || restored >= state.files.length;
