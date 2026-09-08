@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.37-repair-diagnostics";
+  const BUILD_VERSION = "2.7.38-paragraph-rebuild-fix";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -2074,7 +2074,6 @@
     });
     saveCheckpoint();
     renderReview();
-    if (restored && state.repairBookHasRun) restoreFinalPolishReviewUi();
     refreshParagraphRebuildUi();
     const profileNote = bookProfile?.indentCount
       ? ` Layout profile: body ${Math.round(bookProfile.bodyLeft)} / indent ${Math.round(bookProfile.indentLeft)} from ${bookProfile.learnedFromLines} OCR lines.`

@@ -166,3 +166,5 @@ v2.6.5: Added exportable italic detection 2.0 diagnostics with per-line slant/ga
 2.7.36 Fail-Soft Geometry: Geometry Dropcap Rescue now sanitizes saved Paddle box values and traps all geometry errors per chapter opening. Missing, malformed, or stale geometry returns null and automatically falls back to the proven text-based Dropcap Rescue path instead of stopping Repair Book. Durable repair persistence from 2.7.34 remains intact.
 
 2.7.37 Repair Diagnostics: Guided Repair now reports the exact stage that stops and surfaces the runtime error directly under Repair Book. Added a compact Geometry assist checkbox; ON tests the new Paddle-geometry Dropcap Rescue, OFF runs the proven text-only detector path. This diagnostic switch changes only candidate reconstruction, not OCR text or saved repairs.
+
+2.7.38 Paragraph Rebuild Fix: removes an invalid `restored` reference accidentally inserted into rebuildParagraphsFromSavedGeometry. Guided Repair can now pass the paragraph-rebuild stage and continue into italics, cleanup, ligatures, and Dropcap Rescue. Repair diagnostics and Geometry assist remain available.
