@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.28-strict-chapter-detection";
+  const BUILD_VERSION = "2.7.29-redetect-existing-chapters";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -916,6 +916,36 @@
     saveChapterMemory();
     saveCheckpoint();
     return detected;
+  }
+
+  function redetectExistingChapterStarts() {
+    syncCurrentEditor();
+    if (!state.pages.length || !state.pages.some(page => String(page.text || "").trim())) {
+      setStatus("No saved OCR text is available to re-detect chapter starts.");
+      return;
+    }
+    const oldCount = state.pages.filter(page => page.chapterStart).length;
+    state.pages.forEach(page => {
+      page.chapterStart = false;
+      page.chapterCandidate = false;
+      page.chapterTitle = "";
+    });
+    const newCount = redetectAutomaticChapterStarts();
+    state.repairReview = [];
+    state.repairBookHasRun = false;
+    state.lastDropcapAudit = null;
+    state.dropcapCandidates = [];
+    state.finalPolishReview = [];
+    state.finalPolishHasRun = false;
+    const starts = state.pages.reduce((a,p,i) => { if (p.chapterStart) a.push(i); return a; }, []);
+    state.currentPageIndex = starts.length ? starts[0] : 0;
+    state.reviewMode = "chapters";
+    saveCheckpoint();
+    renderReview();
+    renderRepairReview();
+    if (els.kindleReadyStatus) els.kindleReadyStatus.textContent = "Recheck needed";
+    if (els.kindleReadyResults) els.kindleReadyResults.classList.add("hidden");
+    setStatus(`Chapter starts re-detected from existing OCR: ${oldCount} → ${newCount}. OCR text was not rerun or changed.`);
   }
 
   function syncCurrentEditor() {
@@ -4562,6 +4592,7 @@ ${coverSpine}${spine.join("\n")}
     }
   });
 
+  document.getElementById("redetectChaptersBtn")?.addEventListener("click", redetectExistingChapterStarts);
   els.downloadTxt.addEventListener("click", downloadTxt);
   els.downloadEpub.addEventListener("click", downloadEpub);
   els.repairBook?.addEventListener("click", repairBookGuided);

@@ -150,3 +150,5 @@ v2.6.5: Added exportable italic detection 2.0 diagnostics with per-line slant/ga
 2.7.26 Dropcap Lowercase Rule: any marked chapter opening whose first prose word begins lowercase is now always surfaced as a Dropcap Rescue review item. If a detached capital can be inferred, Studio proposes it; otherwise the inline Guided Repair editor shows the damaged opening unchanged for manual correction. This catches full-book cases such as s this..., eese..., o you..., ey there..., and hen... that were previously suppressed by dictionary-only heuristics.
 
 2.7.28 Strict Chapter Detection: chapter starts now require structural heading evidence near the top of the page. Removed broad matching of the word chapter anywhere in opening prose and loose number-start rules. Full OCR rebuild re-detects automatic chapter markers and clears stale automatic titles before Guided Repair.
+
+2.7.29: Re-detect chapter starts from existing saved OCR without rerunning OCR. Clears stale chapter-derived Repair/Polish state.
