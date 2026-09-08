@@ -1,7 +1,7 @@
-const CACHE_NAME = "book-ocr-studio-shell-v2-7-35-geometry-dropcap-rescue";
+const CACHE_NAME = "book-ocr-studio-shell-v2-7-36-fail-soft-geometry";
 const APP_SHELL = [
-  "./styles.css?v=2.7.35-geometry-dropcap-rescue",
-  "./epub-polish.js?v=2.7.35-geometry-dropcap-rescue",
+  "./styles.css?v=2.7.36-fail-soft-geometry",
+  "./epub-polish.js?v=2.7.36-fail-soft-geometry",
   "./manifest.webmanifest",
   "./icon-192.png",
   "./icon-512.png",

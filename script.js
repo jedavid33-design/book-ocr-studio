@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.35-geometry-dropcap-rescue";
+  const BUILD_VERSION = "2.7.36-fail-soft-geometry";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -2203,84 +2203,109 @@
   }
 
   function geometryDropcapFragment(opening, expectedInitial = "") {
-    const page = opening?.page;
-    const lines = Array.isArray(page?.layoutLines)
-      ? page.layoutLines.filter(line => line?.text && line?.box)
-      : [];
-    if (!lines.length) return null;
+    try {
+      const page = opening?.page;
+      const rawLines = Array.isArray(page?.layoutLines) ? page.layoutLines : [];
+      const lines = rawLines
+        .map((line, originalIndex) => ({
+          ...line,
+          originalIndex,
+          box: line?.box ? {
+            x: Number(line.box.x),
+            y: Number(line.box.y),
+            w: Number(line.box.w),
+            h: Number(line.box.h),
+            cx: Number(line.box.cx),
+            cy: Number(line.box.cy)
+          } : null
+        }))
+        .filter(line =>
+          line?.text &&
+          line?.box &&
+          [line.box.x, line.box.y, line.box.w, line.box.h, line.box.cx, line.box.cy].every(Number.isFinite)
+        );
 
-    const openingInfo = firstWordInfo(opening?.text || "");
-    if (!openingInfo || !/^\p{Ll}/u.test(openingInfo.word)) return null;
+      if (!lines.length) return null;
 
-    const firstWord = openingInfo.word.toLowerCase();
-    const typicalH = median(lines.map(line => Number(line.box?.h)).filter(h => h > 2)) || 28;
+      const openingInfo = firstWordInfo(opening?.text || "");
+      if (!openingInfo || !/^\p{Ll}/u.test(openingInfo.word)) return null;
 
-    let targetIndex = lines.findIndex(line => {
-      const text = String(line.text || "").trim()
-        .replace(/^[“”"'‘’([{—–-]+/, "")
-        .toLowerCase();
-      return text.startsWith(firstWord) ||
-        text.startsWith(String(opening?.text || "").trim().slice(0, 18).toLowerCase());
-    });
+      const firstWord = openingInfo.word.toLowerCase();
+      const heights = lines.map(line => line.box.h).filter(h => h > 2 && Number.isFinite(h));
+      const typicalH = median(heights) || 28;
+      if (!Number.isFinite(typicalH) || typicalH <= 0) return null;
 
-    if (targetIndex < 0) {
-      targetIndex = lines.findIndex(line =>
-        String(line.text || "").toLowerCase().includes(firstWord)
-      );
-    }
-    if (targetIndex < 0) return null;
-
-    const target = lines[targetIndex];
-    const expected = String(expectedInitial || "").toUpperCase();
-    const candidates = [];
-
-    lines.forEach((line, index) => {
-      if (index === targetIndex) return;
-      const value = String(line.text || "").trim().replace(/[“”"'‘’]/g, "");
-      if (!/^[A-Z]$/u.test(value)) return;
-
-      const dy = Math.abs(Number(line.box.cy) - Number(target.box.cy));
-      const dx = Number(target.box.x) - Number(line.box.x);
-      const distance = Math.abs(index - targetIndex);
-      const tall = Number(line.box.h) >= typicalH * 1.05;
-      const leftOfText = dx >= -typicalH * 0.15;
-      const verticallyClose = dy <= typicalH * 2.25;
-
-      if (!verticallyClose && distance > 2) return;
-      if (!leftOfText && !tall) return;
-
-      let score = 0;
-      if (expected && value === expected) score += 8;
-      if (distance <= 1) score += 4;
-      else if (distance === 2) score += 2;
-      if (dy <= typicalH * 0.9) score += 3;
-      else if (dy <= typicalH * 1.6) score += 1;
-      if (Number(line.box.x) < Number(target.box.x)) score += 3;
-      if (tall) score += 2;
-
-      candidates.push({
-        value,
-        lineIndex: index,
-        distance,
-        source: "geometry-line",
-        geometryScore: score,
-        geometry: {
-          targetLineIndex: targetIndex,
-          targetText: String(target.text || ""),
-          targetBox: target.box,
-          fragmentBox: line.box,
-          typicalH
-        }
+      let targetIndex = lines.findIndex(line => {
+        const text = String(line.text || "").trim()
+          .replace(/^[“”"'‘’([{—–-]+/, "")
+          .toLowerCase();
+        return text.startsWith(firstWord) ||
+          text.startsWith(String(opening?.text || "").trim().slice(0, 18).toLowerCase());
       });
-    });
 
-    candidates.sort((a, b) => b.geometryScore - a.geometryScore || a.distance - b.distance);
-    const best = candidates[0];
-    if (!best) return null;
+      if (targetIndex < 0) {
+        targetIndex = lines.findIndex(line =>
+          String(line.text || "").toLowerCase().includes(firstWord)
+        );
+      }
+      if (targetIndex < 0) return null;
 
-    if (!expected && best.geometryScore < 6) return null;
-    if (expected && best.value !== expected && best.geometryScore < 8) return null;
-    return best;
+      const target = lines[targetIndex];
+      const expected = String(expectedInitial || "").toUpperCase();
+      const candidates = [];
+
+      lines.forEach((line, index) => {
+        if (index === targetIndex) return;
+
+        const value = String(line.text || "").trim().replace(/[“”"'‘’]/g, "");
+        if (!/^[A-Z]$/u.test(value)) return;
+
+        const dy = Math.abs(line.box.cy - target.box.cy);
+        const dx = target.box.x - line.box.x;
+        const distance = Math.abs(index - targetIndex);
+        const tall = line.box.h >= typicalH * 1.05;
+        const leftOfText = dx >= -typicalH * 0.15;
+        const verticallyClose = dy <= typicalH * 2.25;
+
+        if (!verticallyClose && distance > 2) return;
+        if (!leftOfText && !tall) return;
+
+        let score = 0;
+        if (expected && value === expected) score += 8;
+        if (distance <= 1) score += 4;
+        else if (distance === 2) score += 2;
+        if (dy <= typicalH * 0.9) score += 3;
+        else if (dy <= typicalH * 1.6) score += 1;
+        if (line.box.x < target.box.x) score += 3;
+        if (tall) score += 2;
+
+        candidates.push({
+          value,
+          lineIndex: line.originalIndex,
+          distance,
+          source: "geometry-line",
+          geometryScore: score,
+          geometry: {
+            targetLineIndex: target.originalIndex,
+            targetText: String(target.text || ""),
+            targetBox: target.box,
+            fragmentBox: line.box,
+            typicalH
+          }
+        });
+      });
+
+      candidates.sort((a, b) => b.geometryScore - a.geometryScore || a.distance - b.distance);
+      const best = candidates[0];
+      if (!best) return null;
+
+      if (!expected && best.geometryScore < 6) return null;
+      if (expected && best.value !== expected && best.geometryScore < 8) return null;
+      return best;
+    } catch (err) {
+      console.warn("Geometry Dropcap Rescue skipped one opening", err, opening?.pageIndex);
+      return null;
+    }
   }
 
   function standaloneFragment(text, paragraphText, expectedInitial = "", allowPronounI = false) {
@@ -2508,9 +2533,15 @@
     const expectedInitial = contractionProposal
       ? "I"
       : phraseProposal?.missing || dictionaryProposal.charAt(0) || "";
-    const geometryFragment = !state.importedEpub
-      ? geometryDropcapFragment(opening, expectedInitial)
-      : null;
+    let geometryFragment = null;
+    if (!state.importedEpub) {
+      try {
+        geometryFragment = geometryDropcapFragment(opening, expectedInitial);
+      } catch (err) {
+        console.warn("Geometry Dropcap Rescue fallback", err, opening?.pageIndex);
+        geometryFragment = null;
+      }
+    }
     const fragment = geometryFragment ||
       standaloneFragment(pageText, opening.text, expectedInitial, contractionProposal);
     const latinFragment = fragment && /^\p{Lu}$/u.test(fragment.value) ? fragment.value : "";
