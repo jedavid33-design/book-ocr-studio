@@ -1,7 +1,7 @@
-const CACHE_NAME = "book-ocr-studio-shell-v2-7-34-durable-repair-overlay";
+const CACHE_NAME = "book-ocr-studio-shell-v2-7-35-geometry-dropcap-rescue";
 const APP_SHELL = [
-  "./styles.css?v=2.7.34-durable-repair-overlay",
-  "./epub-polish.js?v=2.7.34-durable-repair-overlay",
+  "./styles.css?v=2.7.35-geometry-dropcap-rescue",
+  "./epub-polish.js?v=2.7.35-geometry-dropcap-rescue",
   "./manifest.webmanifest",
   "./icon-192.png",
   "./icon-512.png",

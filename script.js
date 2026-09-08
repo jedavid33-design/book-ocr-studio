@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.34-durable-repair-overlay";
+  const BUILD_VERSION = "2.7.35-geometry-dropcap-rescue";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -2202,6 +2202,87 @@
     return flat.length > limit ? `${flat.slice(0, limit).trim()}…` : flat;
   }
 
+  function geometryDropcapFragment(opening, expectedInitial = "") {
+    const page = opening?.page;
+    const lines = Array.isArray(page?.layoutLines)
+      ? page.layoutLines.filter(line => line?.text && line?.box)
+      : [];
+    if (!lines.length) return null;
+
+    const openingInfo = firstWordInfo(opening?.text || "");
+    if (!openingInfo || !/^\p{Ll}/u.test(openingInfo.word)) return null;
+
+    const firstWord = openingInfo.word.toLowerCase();
+    const typicalH = median(lines.map(line => Number(line.box?.h)).filter(h => h > 2)) || 28;
+
+    let targetIndex = lines.findIndex(line => {
+      const text = String(line.text || "").trim()
+        .replace(/^[“”"'‘’([{—–-]+/, "")
+        .toLowerCase();
+      return text.startsWith(firstWord) ||
+        text.startsWith(String(opening?.text || "").trim().slice(0, 18).toLowerCase());
+    });
+
+    if (targetIndex < 0) {
+      targetIndex = lines.findIndex(line =>
+        String(line.text || "").toLowerCase().includes(firstWord)
+      );
+    }
+    if (targetIndex < 0) return null;
+
+    const target = lines[targetIndex];
+    const expected = String(expectedInitial || "").toUpperCase();
+    const candidates = [];
+
+    lines.forEach((line, index) => {
+      if (index === targetIndex) return;
+      const value = String(line.text || "").trim().replace(/[“”"'‘’]/g, "");
+      if (!/^[A-Z]$/u.test(value)) return;
+
+      const dy = Math.abs(Number(line.box.cy) - Number(target.box.cy));
+      const dx = Number(target.box.x) - Number(line.box.x);
+      const distance = Math.abs(index - targetIndex);
+      const tall = Number(line.box.h) >= typicalH * 1.05;
+      const leftOfText = dx >= -typicalH * 0.15;
+      const verticallyClose = dy <= typicalH * 2.25;
+
+      if (!verticallyClose && distance > 2) return;
+      if (!leftOfText && !tall) return;
+
+      let score = 0;
+      if (expected && value === expected) score += 8;
+      if (distance <= 1) score += 4;
+      else if (distance === 2) score += 2;
+      if (dy <= typicalH * 0.9) score += 3;
+      else if (dy <= typicalH * 1.6) score += 1;
+      if (Number(line.box.x) < Number(target.box.x)) score += 3;
+      if (tall) score += 2;
+
+      candidates.push({
+        value,
+        lineIndex: index,
+        distance,
+        source: "geometry-line",
+        geometryScore: score,
+        geometry: {
+          targetLineIndex: targetIndex,
+          targetText: String(target.text || ""),
+          targetBox: target.box,
+          fragmentBox: line.box,
+          typicalH
+        }
+      });
+    });
+
+    candidates.sort((a, b) => b.geometryScore - a.geometryScore || a.distance - b.distance);
+    const best = candidates[0];
+    if (!best) return null;
+
+    if (!expected && best.geometryScore < 6) return null;
+    if (expected && best.value !== expected && best.geometryScore < 8) return null;
+    return best;
+  }
+
   function standaloneFragment(text, paragraphText, expectedInitial = "", allowPronounI = false) {
     const lines = String(text || "").split(/\n+/).map(line => line.trim()).filter(Boolean);
     const target = String(paragraphText || "").trim();
@@ -2427,7 +2508,11 @@
     const expectedInitial = contractionProposal
       ? "I"
       : phraseProposal?.missing || dictionaryProposal.charAt(0) || "";
-    const fragment = standaloneFragment(pageText, opening.text, expectedInitial, contractionProposal);
+    const geometryFragment = !state.importedEpub
+      ? geometryDropcapFragment(opening, expectedInitial)
+      : null;
+    const fragment = geometryFragment ||
+      standaloneFragment(pageText, opening.text, expectedInitial, contractionProposal);
     const latinFragment = fragment && /^\p{Lu}$/u.test(fragment.value) ? fragment.value : "";
     let proposedWord = "";
     let confidence = "ambiguous";
@@ -2438,8 +2523,10 @@
       reason = latinFragment === "I"
         ? "A detached capital “I” matches the missing start of the opening contraction."
         : "The opening contraction appears to be missing “I”; please verify the suggestion.";
-      confidence = latinFragment === "I" && fragment.source === "line" && fragment.distance <= 1
-        ? "high" : "ambiguous";
+      confidence = latinFragment === "I" && (
+        (fragment.source === "line" && fragment.distance <= 1) ||
+        (fragment.source === "geometry-line" && Number(fragment.geometryScore || 0) >= 7)
+      ) ? "high" : "ambiguous";
     } else if (phraseProposal) {
       proposedWord = info.word;
       reason = phraseProposal.firstPerson
@@ -2449,12 +2536,17 @@
           : `This opening phrase appears to be missing “${expectedInitial}”; please verify the suggestion.`;
       // A normal pronoun “I” inside prose is never strong evidence. Only a
       // separate adjacent OCR line can raise an I-based repair to high.
-      confidence = latinFragment === expectedInitial && fragment.source === "line" && fragment.distance <= 1
-        ? "high" : "ambiguous";
+      confidence = latinFragment === expectedInitial && (
+        (fragment.source === "line" && fragment.distance <= 1) ||
+        (fragment.source === "geometry-line" && Number(fragment.geometryScore || 0) >= 7)
+      ) ? "high" : "ambiguous";
     } else if (dictionaryProposal) {
       proposedWord = dictionaryProposal;
       const matches = latinFragment.toLocaleUpperCase() === expectedInitial.toLocaleUpperCase();
-      confidence = matches && fragment.distance <= 2 ? "high" : "ambiguous";
+      confidence = matches && (
+        fragment.distance <= 2 ||
+        (fragment.source === "geometry-line" && Number(fragment.geometryScore || 0) >= 7)
+      ) ? "high" : "ambiguous";
       const punctuationNote = info.prefix ? ` Opening punctuation “${info.prefix}” will be preserved.` : "";
       reason = matches
         ? `A detached capital “${latinFragment}” matches the missing start of “${dictionaryProposal}.”${punctuationNote}`
@@ -2463,10 +2555,17 @@
           : `“${dictionaryProposal}” is a review suggestion; no reliable detached letter was found.${punctuationNote}`;
     } else if (latinFragment) {
       proposedWord = `${latinFragment}${info.word}`;
-      confidence = fragment.source === "line" && fragment.distance <= 1 ? "high" : "ambiguous";
-      reason = confidence === "high"
-        ? `A detached capital “${latinFragment}” appears beside this opening paragraph.`
-        : `A detached capital “${latinFragment}” appears elsewhere in this chapter; please verify it.`;
+      const geometryHigh = fragment.source === "geometry-line" &&
+        Number(fragment.geometryScore || 0) >= 7;
+      confidence = (fragment.source === "line" && fragment.distance <= 1) || geometryHigh
+        ? "high" : "ambiguous";
+      reason = fragment.source === "geometry-line"
+        ? confidence === "high"
+          ? `Saved Paddle geometry places a detached capital “${latinFragment}” beside the damaged opening.`
+          : `Saved Paddle geometry found a nearby capital “${latinFragment}”; please verify the reconstruction.`
+        : confidence === "high"
+          ? `A detached capital “${latinFragment}” appears beside this opening paragraph.`
+          : `A detached capital “${latinFragment}” appears elsewhere in this chapter; please verify it.`;
     } else {
       // New hard rule: a lowercase first prose word at a marked chapter start
       // is itself enough evidence that a decorative initial may have been lost.
@@ -2659,7 +2758,7 @@
 
     if (candidate.fragment?.value) {
       const escaped = candidate.fragment.value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      if (candidate.fragment.source === "line") {
+      if (candidate.fragment.source === "line" || candidate.fragment.source === "geometry-line") {
         const detached = new RegExp(`(^|\\n)\\s*${escaped}\\s*(?=\\n|$)`, "u");
         nextText = nextText.replace(detached, "$1").replace(/\n{3,}/g, "\n\n");
       }

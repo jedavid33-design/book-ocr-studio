@@ -160,3 +160,5 @@ v2.6.5: Added exportable italic detection 2.0 diagnostics with per-line slant/ga
 2.7.33: Guided Repair now verifies dropcap corrections actually modify current page text before resolving the review card. Uses current-text fallback when paragraph indexes are stale, checkpoints immediately, and leaves failed corrections open.
 
 2.7.34 Durable Repair Save: repaired page text is now written immediately to a compact, verified repair-overlay store in addition to the large OCR checkpoint. On reload/checkpoint recovery the repair overlay is reapplied last, so an older or unsaved full checkpoint cannot resurrect pre-repair text. The overlay is cleared only by an explicit OCR restart/clear.
+
+2.7.35 Geometry Dropcap Rescue: Dropcap Rescue now searches saved PaddleOCR line geometry for detached single-capital glyphs near the first prose line of each marked chapter. Strong geometry can reconstruct unknown initials such as I+s → Is, D+o → Do, R+eese → Reese, and H+ey → Hey without relying on a word dictionary. Geometry evidence is conservative: unknown initials require strong nearby/left-of-text support. Durable repair persistence from 2.7.34 is retained.
