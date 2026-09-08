@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.32-polish-review-restore";
+  const BUILD_VERSION = "2.7.33-verified-repair-apply";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -2545,24 +2545,53 @@
 
   function replaceLocalParagraph(candidate, replacement) {
     const page = state.pages[candidate.pageIndex];
-    if (!page) return;
-    const blocks = normalizedPageText(page.text).split(/\n{2,}/);
+    if (!page) return false;
+    const originalText = String(page.text || "");
+    const blocks = normalizedPageText(originalText).split(/\n{2,}/);
     const blockIndex = Number.isInteger(candidate.sourceBlockIndex)
       ? candidate.sourceBlockIndex : candidate.paragraphIndex;
-    if (!blocks[blockIndex]) return;
-    blocks[blockIndex] = candidate.leadingMetadataLines?.length
-      ? `${candidate.leadingMetadataLines.join("\n")}\n${replacement}`
-      : replacement;
-    page.text = blocks.join("\n\n");
+    let replaced = false;
+
+    // Prefer the saved block only when it still contains the candidate's current
+    // paragraph. Repair/rebuild passes can change block indexes.
+    if (blocks[blockIndex]) {
+      const blockBody = String(blocks[blockIndex]);
+      const expected = String(candidate.text || candidate.before || "").trim();
+      if (!expected || blockBody.includes(expected) || blockBody.trim() === expected) {
+        blocks[blockIndex] = candidate.leadingMetadataLines?.length
+          ? `${candidate.leadingMetadataLines.join("\n")}\n${replacement}`
+          : replacement;
+        replaced = true;
+      }
+    }
+
+    let nextText = replaced ? blocks.join("\n\n") : originalText;
+
+    // Fallback to the actual current candidate text instead of trusting a stale
+    // paragraph index.
+    if (!replaced) {
+      const needles = [candidate.text, candidate.before]
+        .map(v => String(v || "").trim()).filter(Boolean);
+      for (const needle of needles) {
+        const pos = nextText.indexOf(needle);
+        if (pos >= 0) {
+          nextText = nextText.slice(0, pos) + replacement + nextText.slice(pos + needle.length);
+          replaced = true;
+          break;
+        }
+      }
+    }
+    if (!replaced) return false;
 
     if (candidate.fragment?.value) {
       const escaped = candidate.fragment.value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       if (candidate.fragment.source === "line") {
         const detached = new RegExp(`(^|\\n)\\s*${escaped}\\s*(?=\\n|$)`, "u");
-        page.text = page.text.replace(detached, "$1").replace(/\n{3,}/g, "\n\n");
+        nextText = nextText.replace(detached, "$1").replace(/\n{3,}/g, "\n\n");
       }
     }
-    commitPageText(candidate.pageIndex, page.text);
+    if (!commitPageText(candidate.pageIndex, nextText)) return false;
+    return String(state.pages[candidate.pageIndex]?.text || "").includes(replacement);
   }
 
   function applyDropcap(candidate, replacement) {
@@ -2582,11 +2611,14 @@
       state.pages[candidate.pageIndex].text = Array.from(candidate.doc.dom.querySelectorAll("p"))
         .map(p => p.textContent.trim()).filter(Boolean).join("\n\n");
     } else {
-      replaceLocalParagraph(candidate, clean);
+      const applied = replaceLocalParagraph(candidate, clean);
+      if (!applied) return false;
       candidate.text = clean;
     }
     candidate.status = "accepted";
+    saveCheckpoint();
     renderDropcapResults();
+    return true;
   }
 
   function rejectDropcap(candidate) {
@@ -3353,10 +3385,13 @@
         </div>`;
       item.querySelector(".apply").addEventListener("click", () => {
         const edited = item.querySelector(".dropcap-inline-edit")?.value || "";
-        applyDropcap(candidate, edited);
-        saveCheckpoint();
+        const applied = applyDropcap(candidate, edited);
+        if (!applied) {
+          setStatus(`Correction could not be applied on page ${candidate.pageIndex + 1}. The review item was kept open.`);
+          return;
+        }
         refreshDownstreamRepairState();
-        setStatus(`Applied the reviewed dropcap correction on page ${candidate.pageIndex + 1}.`);
+        setStatus(`Applied and saved the reviewed dropcap correction on page ${candidate.pageIndex + 1}.`);
       });
       item.querySelector(".discard").addEventListener("click", () => {
         rejectDropcap(candidate);
