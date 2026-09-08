@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.40-dropcap-token-diagnostics";
+  const BUILD_VERSION = "2.7.41-repair-state-and-raw-persistence";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -24,6 +24,7 @@
     bookLayoutProfile: null,
     lastRegressionReport: null,
     ignoredLigatureCandidates: new Set(),
+    ignoredDropcapCandidates: new Set(),
     ignoredFinalPolishIssues: new Set(),
     lastFinalPolishCounts: null,
     repairBookHasRun: false,
@@ -70,6 +71,7 @@
 
   const CHECKPOINT_KEY = "bookOcrStudio.progress.current";
   const REPAIR_OVERLAY_KEY = "bookOcrStudio.repairs.current";
+  const RAW_DROPCAP_KEY = "bookOcrStudio.rawDropcaps.current";
   const CHAPTER_MEMORY_KEY = "bookOcrStudio.chapterMemory.current";
   const LEGACY_CHECKPOINT_KEYS = [
     "bookOcrStudio.progress.v12",
@@ -276,6 +278,70 @@
     return applied;
   }
 
+  function rawDropcapSignature() {
+    return state.files.map(file => normalizedStem(file?.name || ""));
+  }
+
+  function readRawDropcapStore() {
+    try {
+      const raw = localStorage.getItem(RAW_DROPCAP_KEY);
+      if (!raw) return null;
+      const saved = JSON.parse(raw);
+      const sig = rawDropcapSignature();
+      if (!Array.isArray(saved?.signatureNames) || saved.signatureNames.length !== sig.length) return null;
+      if (!saved.signatureNames.every((name, i) => name === sig[i])) return null;
+      return saved;
+    } catch (err) {
+      console.warn("Could not read raw Dropcap OCR store", err);
+      return null;
+    }
+  }
+
+  function saveRawDropcapPage(pageIndex) {
+    const page = state.pages[pageIndex];
+    const file = state.files[pageIndex] || page?.file;
+    if (!page || !file || !Array.isArray(page.rawOcrItems) || !page.rawOcrItems.length) return false;
+    try {
+      const saved = readRawDropcapStore() || { signatureNames: rawDropcapSignature(), pages: {} };
+      if (!saved.pages || typeof saved.pages !== "object") saved.pages = {};
+      saved.pages[normalizedStem(file.name)] = {
+        fileName: file.name,
+        rawOcrItems: page.rawOcrItems,
+        savedAt: Date.now()
+      };
+      localStorage.setItem(RAW_DROPCAP_KEY, JSON.stringify(saved));
+      const verify = readRawDropcapStore();
+      return Array.isArray(verify?.pages?.[normalizedStem(file.name)]?.rawOcrItems) &&
+        verify.pages[normalizedStem(file.name)].rawOcrItems.length > 0;
+    } catch (err) {
+      console.warn("Could not save raw Dropcap OCR", err);
+      return false;
+    }
+  }
+
+  function applyRawDropcapStore() {
+    const saved = readRawDropcapStore();
+    if (!saved?.pages) return 0;
+    let applied = 0;
+    state.pages.forEach((page, pageIndex) => {
+      const file = state.files[pageIndex] || page?.file;
+      const stored = file ? saved.pages[normalizedStem(file.name)] : null;
+      if (stored && Array.isArray(stored.rawOcrItems) && stored.rawOcrItems.length) {
+        page.rawOcrItems = stored.rawOcrItems;
+        applied++;
+      }
+    });
+    return applied;
+  }
+
+  function migrateRawDropcapsFromCheckpoint() {
+    let migrated = 0;
+    state.pages.forEach((page, pageIndex) => {
+      if (Array.isArray(page.rawOcrItems) && page.rawOcrItems.length && saveRawDropcapPage(pageIndex)) migrated++;
+    });
+    return migrated;
+  }
+
   function saveCheckpoint() {
     if (!state.files.length) return;
     try {
@@ -293,6 +359,7 @@
         guidedRepairMode: state.guidedRepairMode || "whole",
         guidedRepairChapterIndex: Number(state.guidedRepairChapterIndex) || 0,
         ignoredLigatureCandidates: Array.from(state.ignoredLigatureCandidates || []),
+        ignoredDropcapCandidates: Array.from(state.ignoredDropcapCandidates || []),
         ignoredFinalPolishIssues: Array.from(state.ignoredFinalPolishIssues || []),
         pages: state.pages.map(p => ({
           fileName: p.file.name,
@@ -301,7 +368,6 @@
           chapterStart: !!p.chapterStart,
           chapterTitle: p.chapterTitle || "",
           layoutLines: Array.isArray(p.layoutLines) ? p.layoutLines : [],
-          rawOcrItems: Array.isArray(p.rawOcrItems) ? p.rawOcrItems : [],
           layoutMeta: p.layoutMeta || null,
         })),
       };
@@ -315,6 +381,7 @@
     try {
       localStorage.removeItem(CHECKPOINT_KEY);
       localStorage.removeItem(REPAIR_OVERLAY_KEY);
+      localStorage.removeItem(RAW_DROPCAP_KEY);
       LEGACY_CHECKPOINT_KEYS.forEach(key => localStorage.removeItem(key));
     } catch (_) {}
   }
@@ -438,6 +505,7 @@
     state.guidedRepairMode = saved.guidedRepairMode === "chapter" ? "chapter" : "whole";
     state.guidedRepairChapterIndex = Number.isFinite(Number(saved.guidedRepairChapterIndex)) ? Number(saved.guidedRepairChapterIndex) : 0;
     state.ignoredLigatureCandidates = new Set(Array.isArray(saved.ignoredLigatureCandidates) ? saved.ignoredLigatureCandidates : []);
+    state.ignoredDropcapCandidates = new Set(Array.isArray(saved.ignoredDropcapCandidates) ? saved.ignoredDropcapCandidates : []);
     state.ignoredFinalPolishIssues = new Set(Array.isArray(saved.ignoredFinalPolishIssues) ? saved.ignoredFinalPolishIssues : []);
 
     state.pages = savedPages.map((page, index) => {
@@ -462,9 +530,10 @@
       ? clamp(Number.isFinite(savedIndex) ? savedIndex : state.pages.length - 1, 0, state.pages.length - 1)
       : -1;
 
-    // Repair edits live in a compact second store as well as the large OCR
-    // checkpoint. Reapply them last so an older/full checkpoint can never
-    // resurrect pre-repair text after reload.
+    // Migrate any raw chapter-start OCR carried by older checkpoints into a
+    // dedicated compact store, then reapply durable repair/raw overlays last.
+    migrateRawDropcapsFromCheckpoint();
+    applyRawDropcapStore();
     applyRepairOverlay();
   }
 
@@ -1102,6 +1171,7 @@
     renderReview();
     renderLigatureReview();
     renderRepairReview();
+    refreshRepairStatusSummary();
     if (refreshPolish) {
       try {
         const audit = finalPolishAudit();
@@ -1957,6 +2027,9 @@
 
       if (index < state.pages.length) state.pages[index] = pageData;
       else state.pages.push(pageData);
+      if (pageData.chapterStart && Array.isArray(pageData.rawOcrItems) && pageData.rawOcrItems.length) {
+        saveRawDropcapPage(index);
+      }
 
       state.currentPageIndex = index;
       saveCheckpoint();
@@ -2228,6 +2301,7 @@
         const canvas = makeCroppedCanvas(img);
         const paddle = await paddleRecognizeCanvas(canvas, { messageMode: false });
         page.rawOcrItems = normalizePaddleItems(paddle.result?.items);
+        saveRawDropcapPage(pageIndex);
         canvas.width = 1;
         canvas.height = 1;
         hydrated++;
@@ -2774,6 +2848,14 @@
     setStatus(`Dropcap Rescue applied the reviewed correction to page ${pageNumber}. No OCR was run.`);
   }
 
+  function stableDropcapCandidateKey(candidate) {
+    const page = state.pages[candidate?.pageIndex];
+    const fileName = page?.file?.name || candidate?.fileName || `page-${candidate?.pageIndex ?? -1}`;
+    const before = String(candidate?.before || candidate?.text || "")
+      .replace(/\s+/g, " ").trim().slice(0, 240).toLowerCase();
+    return `${normalizedStem(fileName)}|${before}`;
+  }
+
   function scanDropcaps(pageIndexes = null) {
     syncCurrentEditor();
 
@@ -2791,6 +2873,7 @@
     state.dropcapCandidates = openings
       .map((opening, index) => buildDropcapCandidate(opening, index + 1))
       .filter(Boolean)
+      .filter(candidate => !state.ignoredDropcapCandidates.has(stableDropcapCandidateKey(candidate)))
       .filter(candidate => {
         if (state.importedEpub) return true;
         const page = state.pages[candidate.pageIndex];
@@ -2897,6 +2980,7 @@
       candidate.text = clean;
     }
     candidate.status = "accepted";
+    state.ignoredDropcapCandidates.add(stableDropcapCandidateKey(candidate));
     saveCheckpoint();
     renderDropcapResults();
     return true;
@@ -2905,6 +2989,8 @@
   function rejectDropcap(candidate) {
     if (!candidate) return;
     candidate.status = "rejected";
+    state.ignoredDropcapCandidates.add(stableDropcapCandidateKey(candidate));
+    saveCheckpoint();
     renderDropcapResults();
   }
 
@@ -3640,6 +3726,16 @@
     saveCheckpoint();
   }
 
+  function refreshRepairStatusSummary() {
+    if (!els.repairBookStatus || !state.repairBookHasRun) return;
+    const repairState = getRepairReviewState();
+    const audit = state.lastDropcapAudit;
+    const coverage = audit?.expected
+      ? ` · ${audit.evaluated}/${audit.expected} chapter starts`
+      : "";
+    els.repairBookStatus.textContent = `Done · ${repairState.total} review${coverage}`;
+  }
+
   function renderRepairReview() {
     if (!els.repairReview || !els.repairReviewToggle || !els.repairReviewList) return;
     const repairState = getRepairReviewState();
@@ -4104,9 +4200,7 @@
     const continuationMerges = autoMergeStrongContinuations();
 
     let fixedCount = 0, punctuationSpacing = 0, quoteSpacing = 0, dashSpacing = 0;
-    const allowed = pageIndexes ? new Set(pageIndexes) : null;
     for (let pageIndex = 0; pageIndex < state.pages.length; pageIndex++) {
-      if (allowed && !allowed.has(pageIndex)) continue;
       const page = state.pages[pageIndex];
       const result = polish(page.text || "");
       page.text = result.text;
@@ -4928,6 +5022,7 @@ ${coverSpine}${spine.join("\n")}
     state.dropcapCandidates = [];
     state.repairBookHasRun = false;
     state.ignoredLigatureCandidates = new Set();
+    state.ignoredDropcapCandidates = new Set();
     state.ignoredFinalPolishIssues = new Set();
     state.files = Array.from(els.imageInput.files || []).sort(naturalSort);
     state.pages = [];
@@ -4961,6 +5056,7 @@ ${coverSpine}${spine.join("\n")}
     state.currentPageIndex = -1;
     state.repairBookHasRun = false;
     state.ignoredLigatureCandidates = new Set();
+    state.ignoredDropcapCandidates = new Set();
     state.ignoredFinalPolishIssues = new Set();
     clearCheckpoint();
     els.fileCount.textContent = "0 pages loaded";
