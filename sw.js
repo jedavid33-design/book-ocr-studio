@@ -1,7 +1,7 @@
-const CACHE_NAME = "book-ocr-studio-shell-v2-7-38-paragraph-rebuild-fix";
+const CACHE_NAME = "book-ocr-studio-shell-v2-7-39-raw-dropcap-detections";
 const APP_SHELL = [
-  "./styles.css?v=2.7.38-paragraph-rebuild-fix",
-  "./epub-polish.js?v=2.7.38-paragraph-rebuild-fix",
+  "./styles.css?v=2.7.39-raw-dropcap-detections",
+  "./epub-polish.js?v=2.7.39-raw-dropcap-detections",
   "./manifest.webmanifest",
   "./icon-192.png",
   "./icon-512.png",

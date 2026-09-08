@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.38-paragraph-rebuild-fix";
+  const BUILD_VERSION = "2.7.39-raw-dropcap-detections";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -301,6 +301,7 @@
           chapterStart: !!p.chapterStart,
           chapterTitle: p.chapterTitle || "",
           layoutLines: Array.isArray(p.layoutLines) ? p.layoutLines : [],
+          rawOcrItems: Array.isArray(p.rawOcrItems) ? p.rawOcrItems : [],
           layoutMeta: p.layoutMeta || null,
         })),
       };
@@ -451,6 +452,7 @@
         chapterStart: page.chapterStart != null ? !!page.chapterStart : !!page.chapterCandidate,
         chapterTitle: page.chapterTitle || "",
         layoutLines: Array.isArray(page.layoutLines) ? page.layoutLines : [],
+        rawOcrItems: Array.isArray(page.rawOcrItems) ? page.rawOcrItems : [],
         layoutMeta: page.layoutMeta || null,
       };
     }).filter(Boolean);
@@ -1949,6 +1951,7 @@
           ? rememberedChapter.chapterTitle
           : detectChapterTitle(text, index + 1),
         layoutLines: paddleResult.layoutLines || [],
+        rawOcrItems: normalizePaddleItems(paddleResult.result?.items),
         layoutMeta: paddleResult.layoutMeta || null,
       };
 
@@ -2203,108 +2206,109 @@
     return flat.length > limit ? `${flat.slice(0, limit).trim()}…` : flat;
   }
 
+  async function hydrateRawDropcapDetections(pageIndexes = null) {
+    if (state.importedEpub || !state.files.length) return 0;
+    const allowed = pageIndexes ? new Set(pageIndexes) : null;
+    const targets = state.pages
+      .map((page, pageIndex) => ({ page, pageIndex }))
+      .filter(({ page, pageIndex }) =>
+        page?.chapterStart &&
+        (!allowed || allowed.has(pageIndex)) &&
+        (!Array.isArray(page.rawOcrItems) || !page.rawOcrItems.length)
+      );
+
+    let hydrated = 0;
+    for (let i = 0; i < targets.length; i++) {
+      const { page, pageIndex } = targets[i];
+      const file = state.files[pageIndex] || page.file;
+      if (!file) continue;
+      try {
+        setStatus(`Dropcap Rescue geometry ${i + 1}/${targets.length} · reading raw Paddle detections from page ${pageIndex + 1}…`);
+        const img = await loadImageFromFile(file);
+        const canvas = makeCroppedCanvas(img);
+        const paddle = await paddleRecognizeCanvas(canvas, { messageMode: false });
+        page.rawOcrItems = normalizePaddleItems(paddle.result?.items);
+        canvas.width = 1;
+        canvas.height = 1;
+        hydrated++;
+        saveCheckpoint();
+        await new Promise(resolve => setTimeout(resolve, 25));
+      } catch (err) {
+        console.warn("Could not hydrate raw Dropcap Rescue detections", pageIndex, err);
+      }
+    }
+    return hydrated;
+  }
+
   function geometryDropcapFragment(opening, expectedInitial = "") {
     try {
       const page = opening?.page;
-      const rawLines = Array.isArray(page?.layoutLines) ? page.layoutLines : [];
-      const lines = rawLines
+      const sourceItems = Array.isArray(page?.rawOcrItems) && page.rawOcrItems.length
+        ? page.rawOcrItems
+        : (Array.isArray(page?.layoutLines) ? page.layoutLines : []);
+
+      const lines = sourceItems
         .map((line, originalIndex) => ({
-          ...line,
-          originalIndex,
+          ...line, originalIndex,
           box: line?.box ? {
-            x: Number(line.box.x),
-            y: Number(line.box.y),
-            w: Number(line.box.w),
-            h: Number(line.box.h),
-            cx: Number(line.box.cx),
-            cy: Number(line.box.cy)
+            x:Number(line.box.x), y:Number(line.box.y), w:Number(line.box.w),
+            h:Number(line.box.h), cx:Number(line.box.cx), cy:Number(line.box.cy)
           } : null
         }))
-        .filter(line =>
-          line?.text &&
-          line?.box &&
-          [line.box.x, line.box.y, line.box.w, line.box.h, line.box.cx, line.box.cy].every(Number.isFinite)
-        );
+        .filter(line => line?.text && line?.box &&
+          [line.box.x,line.box.y,line.box.w,line.box.h,line.box.cx,line.box.cy].every(Number.isFinite));
 
       if (!lines.length) return null;
-
       const openingInfo = firstWordInfo(opening?.text || "");
       if (!openingInfo || !/^\p{Ll}/u.test(openingInfo.word)) return null;
 
       const firstWord = openingInfo.word.toLowerCase();
-      const heights = lines.map(line => line.box.h).filter(h => h > 2 && Number.isFinite(h));
-      const typicalH = median(heights) || 28;
-      if (!Number.isFinite(typicalH) || typicalH <= 0) return null;
+      const typicalH = median(lines.map(line => line.box.h).filter(h => h > 2)) || 28;
+      const prose = lines.filter(line => String(line.text || "").trim().length > 1);
 
-      let targetIndex = lines.findIndex(line => {
-        const text = String(line.text || "").trim()
-          .replace(/^[“”"'‘’([{—–-]+/, "")
-          .toLowerCase();
-        return text.startsWith(firstWord) ||
-          text.startsWith(String(opening?.text || "").trim().slice(0, 18).toLowerCase());
+      let target = prose.find(line => {
+        const t = String(line.text || "").trim().replace(/^[“”"'‘’([{—–-]+/, "").toLowerCase();
+        return t.startsWith(firstWord) || t.includes(firstWord.slice(0, Math.min(12, firstWord.length)));
+      });
+      if (!target) return null;
+
+      const expected = String(expectedInitial || "").toUpperCase();
+      const singles = lines.filter(line => {
+        const value = String(line.text || "").trim().replace(/[“”"'‘’]/g, "");
+        return /^[A-Z]$/u.test(value) && line !== target;
       });
 
-      if (targetIndex < 0) {
-        targetIndex = lines.findIndex(line =>
-          String(line.text || "").toLowerCase().includes(firstWord)
-        );
-      }
-      if (targetIndex < 0) return null;
-
-      const target = lines[targetIndex];
-      const expected = String(expectedInitial || "").toUpperCase();
-      const candidates = [];
-
-      lines.forEach((line, index) => {
-        if (index === targetIndex) return;
-
+      const candidates = singles.map(line => {
         const value = String(line.text || "").trim().replace(/[“”"'‘’]/g, "");
-        if (!/^[A-Z]$/u.test(value)) return;
-
+        const leftGap = target.box.x - (line.box.x + line.box.w);
+        const verticalOverlap = Math.max(0,
+          Math.min(line.box.y + line.box.h, target.box.y + target.box.h * 2.6) -
+          Math.max(line.box.y, target.box.y - target.box.h * 1.2));
         const dy = Math.abs(line.box.cy - target.box.cy);
-        const dx = target.box.x - line.box.x;
-        const distance = Math.abs(index - targetIndex);
-        const tall = line.box.h >= typicalH * 1.05;
-        const leftOfText = dx >= -typicalH * 0.15;
-        const verticallyClose = dy <= typicalH * 2.25;
-
-        if (!verticallyClose && distance > 2) return;
-        if (!leftOfText && !tall) return;
+        const isLeft = line.box.x < target.box.x;
+        const closeLeft = leftGap >= -typicalH * .45 && leftGap <= typicalH * 2.8;
+        const tall = line.box.h >= typicalH * 1.15;
 
         let score = 0;
-        if (expected && value === expected) score += 8;
-        if (distance <= 1) score += 4;
-        else if (distance === 2) score += 2;
-        if (dy <= typicalH * 0.9) score += 3;
-        else if (dy <= typicalH * 1.6) score += 1;
-        if (line.box.x < target.box.x) score += 3;
-        if (tall) score += 2;
+        if (expected && value === expected) score += 9;
+        if (isLeft) score += 5;
+        if (closeLeft) score += 5;
+        if (verticalOverlap > 0) score += 4;
+        if (dy <= typicalH * 1.8) score += 3;
+        if (tall) score += 3;
 
-        candidates.push({
-          value,
-          lineIndex: line.originalIndex,
-          distance,
-          source: "geometry-line",
-          geometryScore: score,
-          geometry: {
-            targetLineIndex: target.originalIndex,
-            targetText: String(target.text || ""),
-            targetBox: target.box,
-            fragmentBox: line.box,
-            typicalH
-          }
-        });
-      });
+        return {
+          value, source:"raw-geometry", distance: dy / Math.max(1, typicalH),
+          geometryScore:score,
+          geometry:{ targetText:String(target.text||""), targetBox:target.box,
+                     fragmentBox:line.box, typicalH, raw: Array.isArray(page?.rawOcrItems) && page.rawOcrItems.length > 0 }
+        };
+      }).filter(c => c.geometryScore >= (expected ? 8 : 11));
 
-      candidates.sort((a, b) => b.geometryScore - a.geometryScore || a.distance - b.distance);
-      const best = candidates[0];
-      if (!best) return null;
-
-      if (!expected && best.geometryScore < 6) return null;
-      if (expected && best.value !== expected && best.geometryScore < 8) return null;
-      return best;
+      candidates.sort((a,b) => b.geometryScore-a.geometryScore || a.distance-b.distance);
+      return candidates[0] || null;
     } catch (err) {
-      console.warn("Geometry Dropcap Rescue skipped one opening", err, opening?.pageIndex);
+      console.warn("Raw geometry Dropcap Rescue skipped one opening", err, opening?.pageIndex);
       return null;
     }
   }
@@ -2558,7 +2562,7 @@
         : "The opening contraction appears to be missing “I”; please verify the suggestion.";
       confidence = latinFragment === "I" && (
         (fragment.source === "line" && fragment.distance <= 1) ||
-        (fragment.source === "geometry-line" && Number(fragment.geometryScore || 0) >= 7)
+        ((fragment.source === "geometry-line" || fragment.source === "raw-geometry") && Number(fragment.geometryScore || 0) >= 7)
       ) ? "high" : "ambiguous";
     } else if (phraseProposal) {
       proposedWord = info.word;
@@ -2571,14 +2575,14 @@
       // separate adjacent OCR line can raise an I-based repair to high.
       confidence = latinFragment === expectedInitial && (
         (fragment.source === "line" && fragment.distance <= 1) ||
-        (fragment.source === "geometry-line" && Number(fragment.geometryScore || 0) >= 7)
+        ((fragment.source === "geometry-line" || fragment.source === "raw-geometry") && Number(fragment.geometryScore || 0) >= 7)
       ) ? "high" : "ambiguous";
     } else if (dictionaryProposal) {
       proposedWord = dictionaryProposal;
       const matches = latinFragment.toLocaleUpperCase() === expectedInitial.toLocaleUpperCase();
       confidence = matches && (
         fragment.distance <= 2 ||
-        (fragment.source === "geometry-line" && Number(fragment.geometryScore || 0) >= 7)
+        ((fragment.source === "geometry-line" || fragment.source === "raw-geometry") && Number(fragment.geometryScore || 0) >= 7)
       ) ? "high" : "ambiguous";
       const punctuationNote = info.prefix ? ` Opening punctuation “${info.prefix}” will be preserved.` : "";
       reason = matches
@@ -2588,11 +2592,11 @@
           : `“${dictionaryProposal}” is a review suggestion; no reliable detached letter was found.${punctuationNote}`;
     } else if (latinFragment) {
       proposedWord = `${latinFragment}${info.word}`;
-      const geometryHigh = fragment.source === "geometry-line" &&
+      const geometryHigh = (fragment.source === "geometry-line" || fragment.source === "raw-geometry") &&
         Number(fragment.geometryScore || 0) >= 7;
       confidence = (fragment.source === "line" && fragment.distance <= 1) || geometryHigh
         ? "high" : "ambiguous";
-      reason = fragment.source === "geometry-line"
+      reason = (fragment.source === "geometry-line" || fragment.source === "raw-geometry")
         ? confidence === "high"
           ? `Saved Paddle geometry places a detached capital “${latinFragment}” beside the damaged opening.`
           : `Saved Paddle geometry found a nearby capital “${latinFragment}”; please verify the reconstruction.`
@@ -2791,7 +2795,7 @@
 
     if (candidate.fragment?.value) {
       const escaped = candidate.fragment.value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      if (candidate.fragment.source === "line" || candidate.fragment.source === "geometry-line") {
+      if (candidate.fragment.source === "line" || (candidate.fragment.source === "geometry-line" || candidate.fragment.source === "raw-geometry")) {
         const detached = new RegExp(`(^|\\n)\\s*${escaped}\\s*(?=\\n|$)`, "u");
         nextText = nextText.replace(detached, "$1").replace(/\n{3,}/g, "\n\n");
       }
@@ -4127,6 +4131,10 @@
       setStatus(chapterMode
         ? `Guided Repair · Chapter ${chapter.number}: checking chapter opening…`
         : "Guided Repair 5/5 · Running Dropcap Rescue across every chapter start…");
+      if (els.geometryAssist?.checked && !state.importedEpub) {
+        repairStage = "Dropcap Rescue · raw Paddle detections";
+        await hydrateRawDropcapDetections(pageIndexes);
+      }
       repairStage = els.geometryAssist?.checked ? "Dropcap Rescue · geometry on" : "Dropcap Rescue · geometry off";
       scanDropcaps(pageIndexes);
 
