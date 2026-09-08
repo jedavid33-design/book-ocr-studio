@@ -172,3 +172,11 @@ v2.6.5: Added exportable italic detection 2.0 diagnostics with per-line slant/ga
 2.7.39 Raw Dropcap Detections: Geometry-assisted Guided Repair now hydrates and saves unmerged PaddleOCR detections for marked chapter-start pages only. Dropcap Rescue searches those raw boxes before reconstructed layout lines, allowing decorative initials that were lost during same-row/paragraph reconstruction to be recovered. Existing projects do not need a full 204-page OCR rerun; Repair Book obtains raw detections only for chapter starts. Raw detections persist in the checkpoint for later runs.
 
 2.7.40 Dropcap Token Diagnostics: unresolved dropcap cards now include a collapsed Raw Paddle diagnostic. It shows the raw OCR token matched to the damaged opening, nearby raw tokens and their box coordinates, and labels single-capital, left-side, and tall tokens. Diagnostic-only; repair behavior is unchanged.
+
+2.7.44 v2.7.40 + Status + Quote Fix:
+- Based directly on v2.7.40, before all chapter-start OCR persistence experiments.
+- Guided Repair / Final Polish progress appears in Section 6 with stage percentages.
+- Italics shows page N/total; Dropcap re-OCR shows chapter N/total and page number.
+- Quote audit normalizes straight and curly double quotes.
+- Fixes v2.7.40's Final Polish undefined pageIndexes bug.
+- No chapter-start OCR persistence or migration logic is included.

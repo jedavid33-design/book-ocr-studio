@@ -1,7 +1,7 @@
-const CACHE_NAME = "book-ocr-studio-shell-v2-7-40-dropcap-token-diagnostics";
+const CACHE_NAME = "book-ocr-studio-shell-v2-7-44-v2740-status-quote-fix";
 const APP_SHELL = [
-  "./styles.css?v=2.7.40-dropcap-token-diagnostics",
-  "./epub-polish.js?v=2.7.40-dropcap-token-diagnostics",
+  "./styles.css?v=2.7.44-v2740-status-quote-fix",
+  "./epub-polish.js?v=2.7.44-v2740-status-quote-fix",
   "./manifest.webmanifest",
   "./icon-192.png",
   "./icon-512.png",
