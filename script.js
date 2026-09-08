@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.29-redetect-existing-chapters";
+  const BUILD_VERSION = "2.7.31-decade-epilogue-detection";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -877,14 +877,59 @@
     const firstLines = normalized.split("\n").map(s => s.trim()).filter(Boolean).slice(0, 6);
     if (!firstLines.length) return false;
 
-    // Strict structural detection. A prose page must never become a chapter
-    // merely because the word "chapter" appears somewhere in its opening text
-    // or because a sentence happens to begin with a number.
-    const heading = firstLines.find((line, index) => {
-      if (index > 2) return false;
-      return /^(?:CHAPTER\s+(?:\d{1,3}|[IVXLCDM]+|[A-Z][A-Z0-9 .'-]{0,20})|PROLOGUE|EPILOGUE(?:\s+(?:ONE|TWO|THREE|\d{1,2}|[IVX]+))?|INTERLUDE)\s*[.:—-]*$/i.test(line);
-    });
-    if (heading) return true;
+    const editDistance = (a, b) => {
+      const x = String(a || ""), y = String(b || "");
+      const row = Array.from({ length: y.length + 1 }, (_, i) => i);
+      for (let i = 1; i <= x.length; i++) {
+        let prev = row[0];
+        row[0] = i;
+        for (let j = 1; j <= y.length; j++) {
+          const old = row[j];
+          row[j] = Math.min(
+            row[j] + 1,
+            row[j - 1] + 1,
+            prev + (x[i - 1] === y[j - 1] ? 0 : 1)
+          );
+          prev = old;
+        }
+      }
+      return row[y.length];
+    };
+
+    const structuralHeading = (line) => {
+      const raw = String(line || "").trim();
+      if (!raw || raw.length > 42) return false;
+
+      // Normal headings first.
+      if (/^(?:CHAPTER\s+(?:\d{1,3}|[IVXLCDM]+)|PROLOGUE|EPILOGUE(?:\s+(?:ONE|TWO|THREE|\d{1,2}|[IVX]+))?|INTERLUDE)\s*[.:—-]*$/i.test(raw)) {
+        return true;
+      }
+
+      // OCR commonly confuses zero with O and 1 with I/l in decade chapter
+      // numbers. Only tolerate that inside a short top-of-page CHAPTER heading.
+      const compact = raw.toUpperCase().replace(/[^A-Z0-9]/g, "");
+      if (compact.startsWith("CHAPTER")) {
+        const suffix = compact.slice(7);
+        if (/^[0-9OIL]{1,3}$/.test(suffix)) {
+          const repairedNumber = suffix.replace(/O/g, "0").replace(/[IL]/g, "1");
+          if (/^\d{1,3}$/.test(repairedNumber)) return true;
+        }
+      }
+
+      // Epilogue headings are also prone to one- or two-character OCR damage.
+      // Fuzzy matching is restricted to a very short, heading-like top line.
+      const epilogueBase = compact
+        .replace(/(?:ONE|TWO|THREE|1|2|3|I|II|III)$/, "");
+      if (epilogueBase.length >= 6 && epilogueBase.length <= 10 &&
+          editDistance(epilogueBase, "EPILOGUE") <= 2) {
+        return true;
+      }
+
+      return false;
+    };
+
+    // Structural evidence must occur in the first three nonblank lines.
+    if (firstLines.slice(0, 3).some(structuralHeading)) return true;
 
     // Some books render a bare chapter number as its own heading. Accept that
     // only when it is one of the first two nonblank lines and the neighboring

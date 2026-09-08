@@ -1,7 +1,7 @@
-const CACHE_NAME = "book-ocr-studio-shell-v2-7-29-redetect-existing-chapters";
+const CACHE_NAME = "book-ocr-studio-shell-v2-7-31-decade-epilogue-detection";
 const APP_SHELL = [
-  "./styles.css?v=2.7.29-redetect-existing-chapters",
-  "./epub-polish.js?v=2.7.29-redetect-existing-chapters",
+  "./styles.css?v=2.7.31-decade-epilogue-detection",
+  "./epub-polish.js?v=2.7.31-decade-epilogue-detection",
   "./manifest.webmanifest",
   "./icon-192.png",
   "./icon-512.png",

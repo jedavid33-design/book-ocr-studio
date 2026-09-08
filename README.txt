@@ -114,3 +114,5 @@ v2.6.5: Added exportable italic detection 2.0 diagnostics with per-line slant/ga
 2.7.28 Strict Chapter Detection: chapter starts now require structural heading evidence near the top of the page. Removed broad matching of the word chapter anywhere in opening prose and loose number-start rules. Full OCR rebuild re-detects automatic chapter markers and clears stale automatic titles before Guided Repair.
 
 2.7.29: Re-detect chapter starts from existing saved OCR without rerunning OCR. Clears stale chapter-derived Repair/Polish state.
+
+2.7.31: Strict chapter detection now tolerates OCR confusion in short top-of-page decade headings (10/20/30, including O-for-0 and I/l-for-1) and up to two OCR-character errors in short EPILOGUE headings. Re-detect Existing Chapters remains available and does not rerun OCR.
