@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.39-raw-dropcap-detections";
+  const BUILD_VERSION = "2.7.40-dropcap-token-diagnostics";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -2489,6 +2489,76 @@
     return -1;
   }
 
+  function dropcapRawDiagnostic(opening) {
+    try {
+      const page = opening?.page;
+      const items = Array.isArray(page?.rawOcrItems) ? page.rawOcrItems : [];
+      if (!items.length) return { summary: "No raw Paddle detections saved for this page.", tokens: [] };
+
+      const info = firstWordInfo(opening?.text || "");
+      const firstWord = String(info?.word || "").toLowerCase();
+
+      const cleanItems = items
+        .map((item, index) => ({
+          index,
+          text: String(item?.text || "").trim(),
+          score: Number(item?.score ?? 0),
+          box: item?.box ? {
+            x:Number(item.box.x), y:Number(item.box.y), w:Number(item.box.w), h:Number(item.box.h),
+            cx:Number(item.box.cx), cy:Number(item.box.cy)
+          } : null
+        }))
+        .filter(item => item.text && item.box &&
+          [item.box.x,item.box.y,item.box.w,item.box.h,item.box.cx,item.box.cy].every(Number.isFinite));
+
+      if (!cleanItems.length) return { summary: "Raw detections exist, but none have usable box geometry.", tokens: [] };
+
+      let target = cleanItems.find(item => {
+        const t = item.text.replace(/^[“”"'‘’([{—–-]+/, "").toLowerCase();
+        return firstWord && (t.startsWith(firstWord) || t.includes(firstWord));
+      });
+
+      if (!target) {
+        return {
+          summary: `Raw detections: ${cleanItems.length}. Could not match damaged opening “${info?.word || "?"}” to a raw token.`,
+          tokens: cleanItems.slice(0, 12).map(item => ({ ...item, relation:"unmatched" }))
+        };
+      }
+
+      const typicalH = median(cleanItems.map(item => item.box.h).filter(h => h > 2)) || 28;
+
+      const nearby = cleanItems
+        .filter(item => item.index !== target.index)
+        .map(item => {
+          const dx = item.box.cx - target.box.cx;
+          const dy = item.box.cy - target.box.cy;
+          const leftGap = target.box.x - (item.box.x + item.box.w);
+          const distance = Math.hypot(dx, dy);
+          return {
+            ...item,
+            dx, dy, leftGap, distance,
+            isSingleCapital:/^[A-Z]$/u.test(item.text.replace(/[“”"'‘’]/g, "")),
+            isLeft:item.box.x < target.box.x,
+            tall:item.box.h >= typicalH * 1.15
+          };
+        })
+        .filter(item =>
+          Math.abs(item.dy) <= typicalH * 3.5 ||
+          (item.isLeft && Math.abs(item.leftGap) <= typicalH * 5)
+        )
+        .sort((a,b) => a.distance - b.distance)
+        .slice(0, 16);
+
+      return {
+        summary: `Matched raw opening token “${target.text}” (#${target.index}). ${nearby.length} nearby raw token${nearby.length===1?"":"s"} shown.`,
+        target,
+        tokens: nearby
+      };
+    } catch (err) {
+      return { summary: `Raw diagnostic failed: ${err?.message || err}`, tokens: [] };
+    }
+  }
+
   function buildDropcapCandidate(opening, id, { legacyRetry = false } = {}) {
     const info = firstWordInfo(opening.text);
     if (!info) return null;
@@ -2628,7 +2698,8 @@
     }
     return {
       id, ...opening, info, fragment, confidence, reason,
-      before: opening.fullText || opening.text, proposed: proposedText, status: "pending"
+      before: opening.fullText || opening.text, proposed: proposedText, status: "pending",
+      rawDiagnostic: state.importedEpub ? null : dropcapRawDiagnostic(opening)
     };
   }
 
@@ -3584,6 +3655,18 @@
       item.innerHTML = `<strong>Dropcap · Page ${candidate.pageIndex + 1}</strong>
         <p class="hint">${escapeHtml(candidate.reason || "Uncertain chapter-opening repair.")}</p>
         <p class="ligature-context"><b>Current:</b> ${escapeHtml(excerpt(candidate.before || candidate.text || ""))}</p>
+        ${candidate.rawDiagnostic ? `<details class="dropcap-raw-diagnostic">
+          <summary>Raw Paddle diagnostic</summary>
+          <p class="hint">${escapeHtml(candidate.rawDiagnostic.summary || "")}</p>
+          ${candidate.rawDiagnostic.target ? `<p class="hint"><b>Opening token:</b> ${escapeHtml(candidate.rawDiagnostic.target.text)} · box x${Math.round(candidate.rawDiagnostic.target.box.x)} y${Math.round(candidate.rawDiagnostic.target.box.y)} w${Math.round(candidate.rawDiagnostic.target.box.w)} h${Math.round(candidate.rawDiagnostic.target.box.h)}</p>` : ""}
+          ${(candidate.rawDiagnostic.tokens || []).length ? `<div class="dropcap-token-table">${candidate.rawDiagnostic.tokens.map(token =>
+            `<div class="dropcap-token-row${token.isSingleCapital ? " capital" : ""}">
+              <code>${escapeHtml(token.text)}</code>
+              <span>#${token.index}</span>
+              <span>x${Math.round(token.box.x)} y${Math.round(token.box.y)}</span>
+              <span>${token.isSingleCapital ? "CAP" : ""}${token.isLeft ? " · left" : ""}${token.tall ? " · tall" : ""}</span>
+            </div>`).join("")}</div>` : ""}
+        </details>` : ""}
         <label class="inline-review-editor">
           <span>Correction</span>
           <textarea class="dropcap-inline-edit" rows="4" aria-label="Edit this dropcap correction">${escapeHtml(candidate.proposed || candidate.before || "")}</textarea>
