@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.36-fail-soft-geometry";
+  const BUILD_VERSION = "2.7.37-repair-diagnostics";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -133,6 +133,8 @@
     paragraphStatus: $("paragraphStatus"),
     repairBook: $("repairBook"),
     repairBookStatus: $("repairBookStatus"),
+    geometryAssist: $("geometryAssist"),
+    repairDiagnostic: $("repairDiagnostic"),
     repairModeWhole: $("repairModeWhole"),
     repairModeChapter: $("repairModeChapter"),
     repairChapterNav: $("repairChapterNav"),
@@ -2534,7 +2536,8 @@
       ? "I"
       : phraseProposal?.missing || dictionaryProposal.charAt(0) || "";
     let geometryFragment = null;
-    if (!state.importedEpub) {
+    const geometryEnabled = els.geometryAssist ? els.geometryAssist.checked : true;
+    if (!state.importedEpub && geometryEnabled) {
       try {
         geometryFragment = geometryDropcapFragment(opening, expectedInitial);
       } catch (err) {
@@ -4070,6 +4073,11 @@
     const chapter = chapterMode ? currentGuidedRepairChapter() : null;
     const pageIndexes = chapterMode ? guidedRepairPageIndexes() : null;
     const originalLabel = els.repairBook?.textContent || "Repair Book";
+    let repairStage = "startup";
+    if (els.repairDiagnostic) {
+      els.repairDiagnostic.textContent = "";
+      els.repairDiagnostic.classList.add("hidden");
+    }
 
     if (els.repairBook) {
       els.repairBook.disabled = true;
@@ -4078,6 +4086,7 @@
     if (els.repairBookStatus) els.repairBookStatus.textContent = "Working…";
 
     try {
+      repairStage = "sync current editor";
       syncCurrentEditor();
 
       let rebuiltCount = 0;
@@ -4092,6 +4101,7 @@
         setStatus(state.repairBookHasRun
           ? "Guided Repair 1/5 · Preserving already repaired paragraph text…"
           : "Guided Repair 1/5 · Rebuilding paragraph structure…");
+        repairStage = "paragraph rebuild";
         rebuiltCount = state.repairBookHasRun
           ? 0
           : rebuildParagraphsFromSavedGeometry({ confirmOverwrite: false });
@@ -4099,22 +4109,26 @@
         setStatus(state.repairBookHasRun
           ? "Guided Repair 2/5 · Rechecking italics without rebuilding repaired text…"
           : "Guided Repair 2/5 · Scanning conservative italics…");
+        repairStage = "automatic italic scan";
         italics = await autoScanItalics({ rebuildText: !state.repairBookHasRun });
       }
 
       setStatus(chapterMode
         ? `Guided Repair · Chapter ${chapter.number}: applying safe cleanup…`
         : "Guided Repair 3/5 · Applying safe text cleanup…");
+      repairStage = "safe text cleanup";
       const polishStats = applySafePolishToProject(pageIndexes) || { fixedCount:0 };
 
       setStatus(chapterMode
         ? `Guided Repair · Chapter ${chapter.number}: repairing split ligatures…`
         : "Guided Repair 4/5 · Repairing high-confidence split ligatures…");
+      repairStage = "split-ligature repair";
       const ligatureStats = runSplitLigaturePolish(pageIndexes) || { fixedCount:0, ambiguousCount:0 };
 
       setStatus(chapterMode
         ? `Guided Repair · Chapter ${chapter.number}: checking chapter opening…`
         : "Guided Repair 5/5 · Running Dropcap Rescue across every chapter start…");
+      repairStage = els.geometryAssist?.checked ? "Dropcap Rescue · geometry on" : "Dropcap Rescue · geometry off";
       scanDropcaps(pageIndexes);
 
       const dropcapAudit = state.lastDropcapAudit || { expected:0, evaluated:0, missedPages:[] };
@@ -4127,10 +4141,13 @@
         c.confidence === "high" &&
         (!pageIndexes || pageIndexes.includes(c.pageIndex))
       );
+      repairStage = "auto-apply high-confidence dropcaps";
       high.forEach(candidate => applyDropcap(candidate, candidate.proposed));
 
+      repairStage = "save repaired checkpoint";
       state.repairBookHasRun = true;
       saveCheckpoint();
+      repairStage = "render repaired results";
       renderReview();
       renderDropcapResults();
       renderRepairReview();
@@ -4149,9 +4166,16 @@
         ? `Chapter ${chapter.number} repaired: ${repairState.dropcapCount} dropcap and ${repairState.ligatureCount} split-ligature review item${repairReviewCount===1?"":"s"} remain in this chapter.`
         : `Guided Repair complete: ${dropcapAudit.evaluated}/${dropcapAudit.expected} chapter starts evaluated, ${high.length} high-confidence dropcaps accepted, ${repairState.dropcapCount} dropcaps and ${repairState.ligatureCount} split-ligatures left for Review repairs. ${rebuiltCount} pages rebuilt; ${italics?.markedRuns || 0} italic runs; ${polishStats.fixedCount || 0} safe cleanup fixes.`);
     } catch (err) {
-      console.error(err);
-      if (els.repairBookStatus) els.repairBookStatus.textContent = "Stopped";
-      setStatus(`Guided Repair stopped safely: ${err.message || err}`);
+      console.error("Guided Repair failed", { stage: repairStage, error: err });
+      const message = err?.message || String(err);
+      const stackLine = String(err?.stack || "").split("\n")[1]?.trim() || "";
+      if (els.repairBookStatus) els.repairBookStatus.textContent = `Stopped · ${repairStage}`;
+      if (els.repairDiagnostic) {
+        els.repairDiagnostic.textContent =
+          `Stage: ${repairStage}\nError: ${message}${stackLine ? `\n${stackLine}` : ""}\nGeometry assist: ${els.geometryAssist?.checked ? "ON" : "OFF"}`;
+        els.repairDiagnostic.classList.remove("hidden");
+      }
+      setStatus(`Guided Repair stopped at ${repairStage}: ${message}`);
     } finally {
       if (els.repairBook) {
         els.repairBook.disabled = false;
