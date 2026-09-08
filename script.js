@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.33-verified-repair-apply";
+  const BUILD_VERSION = "2.7.34-durable-repair-overlay";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -69,6 +69,7 @@
   }
 
   const CHECKPOINT_KEY = "bookOcrStudio.progress.current";
+  const REPAIR_OVERLAY_KEY = "bookOcrStudio.repairs.current";
   const CHAPTER_MEMORY_KEY = "bookOcrStudio.chapterMemory.current";
   const LEGACY_CHECKPOINT_KEYS = [
     "bookOcrStudio.progress.v12",
@@ -211,6 +212,68 @@
     return state.files.map(f => `${f.name}:${f.size}:${f.lastModified || 0}`);
   }
 
+  function repairOverlaySignature() {
+    return state.files.map(file => normalizedStem(file?.name || ""));
+  }
+
+  function readRepairOverlay() {
+    try {
+      const raw = localStorage.getItem(REPAIR_OVERLAY_KEY);
+      if (!raw) return null;
+      const saved = JSON.parse(raw);
+      const sig = repairOverlaySignature();
+      if (!Array.isArray(saved?.signatureNames) || saved.signatureNames.length !== sig.length) return null;
+      if (!saved.signatureNames.every((name, i) => name === sig[i])) return null;
+      return saved;
+    } catch (err) {
+      console.warn("Could not read durable repair overlay", err);
+      return null;
+    }
+  }
+
+  function saveRepairOverlayPage(pageIndex) {
+    const page = state.pages[pageIndex];
+    const file = state.files[pageIndex] || page?.file;
+    if (!page || !file) return false;
+    try {
+      const existing = readRepairOverlay() || {
+        signatureNames: repairOverlaySignature(),
+        pages: {}
+      };
+      if (!existing.pages || typeof existing.pages !== "object") existing.pages = {};
+      const key = normalizedStem(file.name);
+      existing.pages[key] = {
+        fileName: file.name,
+        text: String(page.text || ""),
+        savedAt: Date.now()
+      };
+      localStorage.setItem(REPAIR_OVERLAY_KEY, JSON.stringify(existing));
+
+      // Verify the lightweight durable store itself before claiming success.
+      const verify = readRepairOverlay();
+      return String(verify?.pages?.[key]?.text ?? "") === String(page.text || "");
+    } catch (err) {
+      console.warn("Could not save durable repair overlay", err);
+      return false;
+    }
+  }
+
+  function applyRepairOverlay() {
+    const overlay = readRepairOverlay();
+    if (!overlay?.pages || !state.pages.length) return 0;
+    let applied = 0;
+    state.pages.forEach((page, pageIndex) => {
+      const file = state.files[pageIndex] || page?.file;
+      if (!file) return;
+      const saved = overlay.pages[normalizedStem(file.name)];
+      if (!saved || typeof saved.text !== "string") return;
+      page.text = saved.text;
+      page.chapterCandidate = chapterHeuristic(page.text);
+      applied++;
+    });
+    return applied;
+  }
+
   function saveCheckpoint() {
     if (!state.files.length) return;
     try {
@@ -248,6 +311,7 @@
   function clearCheckpoint() {
     try {
       localStorage.removeItem(CHECKPOINT_KEY);
+      localStorage.removeItem(REPAIR_OVERLAY_KEY);
       LEGACY_CHECKPOINT_KEYS.forEach(key => localStorage.removeItem(key));
     } catch (_) {}
   }
@@ -393,6 +457,11 @@
     state.currentPageIndex = state.pages.length
       ? clamp(Number.isFinite(savedIndex) ? savedIndex : state.pages.length - 1, 0, state.pages.length - 1)
       : -1;
+
+    // Repair edits live in a compact second store as well as the large OCR
+    // checkpoint. Reapply them last so an older/full checkpoint can never
+    // resurrect pre-repair text after reload.
+    applyRepairOverlay();
   }
 
   function restoreCheckpointIfMatching() {
@@ -1016,8 +1085,13 @@
       const editor = els.reviewList?.querySelector("textarea");
       if (editor) editor.value = page.text;
     }
+
+    // The full OCR checkpoint can be very large (204 pages + geometry). Store
+    // repaired page text separately first so quota/serialization trouble in the
+    // large checkpoint cannot erase a successful repair on reload.
+    const overlaySaved = saveRepairOverlayPage(pageIndex);
     saveCheckpoint();
-    return true;
+    return overlaySaved;
   }
 
   function refreshDownstreamRepairState({ refreshPolish = false } = {}) {
@@ -3387,11 +3461,11 @@
         const edited = item.querySelector(".dropcap-inline-edit")?.value || "";
         const applied = applyDropcap(candidate, edited);
         if (!applied) {
-          setStatus(`Correction could not be applied on page ${candidate.pageIndex + 1}. The review item was kept open.`);
+          setStatus(`Correction could not be applied and durably saved on page ${candidate.pageIndex + 1}. The review item was kept open.`);
           return;
         }
         refreshDownstreamRepairState();
-        setStatus(`Applied and saved the reviewed dropcap correction on page ${candidate.pageIndex + 1}.`);
+        setStatus(`Applied and durably saved the reviewed dropcap correction on page ${candidate.pageIndex + 1}.`);
       });
       item.querySelector(".discard").addEventListener("click", () => {
         rejectDropcap(candidate);

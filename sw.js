@@ -1,7 +1,7 @@
-const CACHE_NAME = "book-ocr-studio-shell-v2-7-33-verified-repair-apply";
+const CACHE_NAME = "book-ocr-studio-shell-v2-7-34-durable-repair-overlay";
 const APP_SHELL = [
-  "./styles.css?v=2.7.33-verified-repair-apply",
-  "./epub-polish.js?v=2.7.33-verified-repair-apply",
+  "./styles.css?v=2.7.34-durable-repair-overlay",
+  "./epub-polish.js?v=2.7.34-durable-repair-overlay",
   "./manifest.webmanifest",
   "./icon-192.png",
   "./icon-512.png",

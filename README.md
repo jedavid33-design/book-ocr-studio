@@ -158,3 +158,5 @@ v2.6.5: Added exportable italic detection 2.0 diagnostics with per-line slant/ga
 2.7.32: Restores existing Final Polish review items into Guided Repair after reload/update. Polish run state is persisted; restoration performs audit only and does not reapply text fixes.
 
 2.7.33: Guided Repair now verifies dropcap corrections actually modify current page text before resolving the review card. Uses current-text fallback when paragraph indexes are stale, checkpoints immediately, and leaves failed corrections open.
+
+2.7.34 Durable Repair Save: repaired page text is now written immediately to a compact, verified repair-overlay store in addition to the large OCR checkpoint. On reload/checkpoint recovery the repair overlay is reapplied last, so an older or unsaved full checkpoint cannot resurrect pre-repair text. The overlay is cleared only by an explicit OCR restart/clear.
