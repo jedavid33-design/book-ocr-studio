@@ -172,17 +172,3 @@ v2.6.5: Added exportable italic detection 2.0 diagnostics with per-line slant/ga
 2.7.39 Raw Dropcap Detections: Geometry-assisted Guided Repair now hydrates and saves unmerged PaddleOCR detections for marked chapter-start pages only. Dropcap Rescue searches those raw boxes before reconstructed layout lines, allowing decorative initials that were lost during same-row/paragraph reconstruction to be recovered. Existing projects do not need a full 204-page OCR rerun; Repair Book obtains raw detections only for chapter starts. Raw detections persist in the checkpoint for later runs.
 
 2.7.40 Dropcap Token Diagnostics: unresolved dropcap cards now include a collapsed Raw Paddle diagnostic. It shows the raw OCR token matched to the damaged opening, nearby raw tokens and their box coordinates, and labels single-capital, left-side, and tall tokens. Diagnostic-only; repair behavior is unchanged.
-
-2.7.41 Repair State + Raw OCR Persistence:
-- Repair Book's review badge now recalculates after each Apply correction / Keep as-is action instead of retaining the original run count.
-- Dropcap resolutions are persisted by stable candidate keys, so resolved/kept items do not resurrect after reload.
-- Fixes Final Polish failing on an undefined pageIndexes variable.
-- Chapter-start raw Paddle detections now live in a dedicated durable store separate from the large OCR checkpoint. Existing v2.7.39/v2.7.40 raw data is migrated automatically on restore; future reloads/build updates can reuse it without re-OCRing the 44 chapter starts.
-- Explicit Clear old OCR + restart clears the dedicated raw store.
-
-2.7.43 Stable Guided Progress:
-- Backs out the dedicated raw Paddle persistence store and does not serialize raw chapter OCR detections in the main checkpoint. This avoids the large synchronous startup payload implicated in the Chrome SIGILL crash.
-- Keeps durable repair text persistence and stable ignored-dropcap keys from 2.7.41, so the 17 already-resolved dropcaps stay resolved after reload/update.
-- Quote audit treats straight and curly double quotation marks as the same dialogue-quote family.
-- Guided Repair live status now lives in Section 6 and shows stage percentages: Rebuild, Italics (with page N/total), Cleanup, Ligatures, and Dropcaps (with chapter N/total when re-OCR is required).
-- Final Polish uses the same Section 6 progress line with stage percentages and page progress during safe cleanup.
