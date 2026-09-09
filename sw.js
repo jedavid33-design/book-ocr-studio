@@ -1,7 +1,7 @@
-const CACHE_NAME = "book-ocr-studio-shell-v2-7-49-manual-page-lock";
+const CACHE_NAME = "book-ocr-studio-shell-v2-7-49-qa-pattern-hardening";
 const APP_SHELL = [
-  "./styles.css?v=2.7.49-manual-page-lock",
-  "./epub-polish.js?v=2.7.49-manual-page-lock",
+  "./styles.css?v=2.7.49-qa-pattern-hardening",
+  "./epub-polish.js?v=2.7.49-qa-pattern-hardening",
   "./manifest.webmanifest",
   "./icon-192.png",
   "./icon-512.png",

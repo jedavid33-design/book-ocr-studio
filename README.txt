@@ -164,10 +164,8 @@ v2.6.5: Added exportable italic detection 2.0 diagnostics with per-line slant/ga
 - Explicit precedence is now OCR < automated Repair < user manual edits.
 - Existing v2.7.47 manual corrections should return automatically after Guided Repair instead of needing to be redone.
 
-2.7.49 Manual Page Lock
-- Direct Section 5 edits set a persistent manualEdited flag in the lightweight page overlay and checkpoint.
-- The flag survives reloads/version updates for the same screenshot set.
-- Guided Repair still scans those pages for italics, ligatures, Dropcap Rescue, safe cleanup, Final Polish, and Kindle Ready.
-- Only wholesale paragraph reconstruction from OCR/layout geometry is blocked on manualEdited pages.
-- Automated repairs do not create the flag; only direct Section 5 edits do.
-- For a page edited before installing 2.7.49, make one tiny edit once (typing and undoing a character is enough) to establish its persistent lock.
+2.7.49 QA PATTERN HARDENING
+- Auto-repairs source-safe recurring Paddle quote/contraction artifacts found by full-book QA.
+- Final Polish flags bare paragraph endings for source-confirmed missing-period review with one-click Add period.
+- Chapter-by-chapter safe cleanup is correctly scoped to the selected chapter.
+- Manual Review edits still win last.

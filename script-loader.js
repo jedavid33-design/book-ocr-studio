@@ -3,7 +3,7 @@
 // then runs the patched source.
 
 (async () => {
-  const response = await fetch("./script.js?v=2.7.49-manual-page-lock", { cache: "no-store" });
+  const response = await fetch("./script.js?v=2.7.49-qa-pattern-hardening", { cache: "no-store" });
   if (!response.ok) {
     throw new Error(`Could not load script.js (${response.status})`);
   }
@@ -24,7 +24,7 @@
   }
 
   source = source.replace(anchor, replacement);
-  source += "\n//# sourceURL=book-ocr-studio-2.7.49-manual-page-lock.js";
+  source += "\n//# sourceURL=book-ocr-studio-2.7.49-qa-pattern-hardening.js";
 
   (0, eval)(source);
 })().catch((err) => {

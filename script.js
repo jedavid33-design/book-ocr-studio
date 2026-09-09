@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.49-manual-page-lock";
+  const BUILD_VERSION = "2.7.49-qa-pattern-hardening";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -251,7 +251,7 @@
     }
   }
 
-  function saveRepairOverlayPage(pageIndex, { manualEdited = null } = {}) {
+  function saveRepairOverlayPage(pageIndex) {
     const page = state.pages[pageIndex];
     const file = state.files[pageIndex] || page?.file;
     if (!page || !file) return false;
@@ -262,15 +262,9 @@
       };
       if (!existing.pages || typeof existing.pages !== "object") existing.pages = {};
       const key = normalizedStem(file.name);
-      const prior = existing.pages[key] || {};
-      const manualFlag = manualEdited == null
-        ? !!(prior.manualEdited || page.manualEdited)
-        : !!manualEdited;
-      page.manualEdited = manualFlag;
       existing.pages[key] = {
         fileName: file.name,
         text: String(page.text || ""),
-        manualEdited: manualFlag,
         savedAt: Date.now()
       };
       localStorage.setItem(REPAIR_OVERLAY_KEY, JSON.stringify(existing));
@@ -294,7 +288,6 @@
       const saved = overlay.pages[normalizedStem(file.name)];
       if (!saved || typeof saved.text !== "string") return;
       page.text = saved.text;
-      page.manualEdited = !!saved.manualEdited;
       page.chapterCandidate = chapterHeuristic(page.text);
       applied++;
     });
@@ -325,7 +318,6 @@
           chapterCandidate: !!p.chapterCandidate,
           chapterStart: !!p.chapterStart,
           chapterTitle: p.chapterTitle || "",
-          manualEdited: !!p.manualEdited,
           layoutLines: Array.isArray(p.layoutLines) ? p.layoutLines : [],
           rawOcrItems: Array.isArray(p.rawOcrItems) ? p.rawOcrItems : [],
           layoutMeta: p.layoutMeta || null,
@@ -477,7 +469,6 @@
         chapterCandidate: !!page.chapterCandidate,
         chapterStart: page.chapterStart != null ? !!page.chapterStart : !!page.chapterCandidate,
         chapterTitle: page.chapterTitle || "",
-        manualEdited: !!page.manualEdited,
         layoutLines: Array.isArray(page.layoutLines) ? page.layoutLines : [],
         rawOcrItems: Array.isArray(page.rawOcrItems) ? page.rawOcrItems : [],
         layoutMeta: page.layoutMeta || null,
@@ -1454,14 +1445,13 @@
     text.setAttribute("aria-label", `OCR text for page ${index + 1}`);
     text.addEventListener("input", () => {
       state.pages[index].text = text.value;
-      state.pages[index].manualEdited = true;
       state.pages[index].chapterCandidate = chapterHeuristic(text.value);
 
       // Manual Review edits are authoritative book text. Persist the current
       // page immediately in the compact repair overlay before touching the
       // much larger whole-book checkpoint. This survives tab/window closure
       // even if the large checkpoint save hits browser storage limits.
-      saveRepairOverlayPage(index, { manualEdited: true });
+      saveRepairOverlayPage(index);
       saveCheckpoint();
     });
 
@@ -1469,9 +1459,8 @@
     // makes blur/navigation an explicit durability boundary.
     text.addEventListener("change", () => {
       state.pages[index].text = text.value;
-      state.pages[index].manualEdited = true;
       state.pages[index].chapterCandidate = chapterHeuristic(text.value);
-      saveRepairOverlayPage(index, { manualEdited: true });
+      saveRepairOverlayPage(index);
       saveCheckpoint();
     });
 
@@ -2049,9 +2038,7 @@
 
 
   function downloadLayoutDiagnostics() {
-    const eligible = state.pages.filter(page =>
-      !page.manualEdited && Array.isArray(page.layoutLines) && page.layoutLines.length
-    );
+    const eligible = state.pages.filter(page => Array.isArray(page.layoutLines) && page.layoutLines.length);
     if (!eligible.length) {
       setStatus("No saved line geometry is available to export yet.");
       return;
@@ -2108,9 +2095,6 @@
     state.bookLayoutProfile = bookProfile;
     let rebuiltCount = 0;
     state.pages.forEach(page => {
-      // Keep analyzing saved geometry elsewhere, but never wholesale rebuild
-      // text that the user has manually corrected in Section 5.
-      if (page.manualEdited) return;
       if (!Array.isArray(page.layoutLines) || !page.layoutLines.length) return;
       const rebuilt = reconstructParagraphsFromLayout(page.layoutLines, { messageMode: false, bookProfile });
       if (!rebuilt.text) return;
@@ -2131,8 +2115,7 @@
     const profileNote = bookProfile?.indentCount
       ? ` Layout profile: body ${Math.round(bookProfile.bodyLeft)} / indent ${Math.round(bookProfile.indentLeft)} from ${bookProfile.learnedFromLines} OCR lines.`
       : " Used the best available body-margin profile.";
-    const protectedManual = state.pages.filter(page => page.manualEdited).length;
-    setStatus(`Paragraph structure rebuilt on ${rebuiltCount} page${rebuiltCount === 1 ? "" : "s"} from saved OCR geometry. ${protectedManual ? `${protectedManual} manually edited page${protectedManual===1?" was":"s were"} protected from text rebuild. ` : ""}No OCR rerun was needed.${profileNote}`);
+    setStatus(`Paragraph structure rebuilt on ${rebuiltCount} page${rebuiltCount === 1 ? "" : "s"} from saved OCR geometry. No OCR rerun was needed.${profileNote}`);
     return rebuiltCount;
   }
 
@@ -3935,6 +3918,35 @@
         ? `${quoteFlags} paragraph${quoteFlags===1?"":"s"} still need quote review after cross-page continuations were reconciled.`
         : "No unresolved quote-balance issues remain after cross-page continuation checks.");
 
+    let terminalPunctuation = 0;
+    state.pages.forEach((page, pageIndex) => {
+      const paras = pageBlocks(page);
+      paras.forEach((para, paraIndex) => {
+        const plain = stripItalicMarkers(para).trim();
+        if (!plain || isStructuralBlock(plain)) return;
+        // Full-book source QA exposed systematic loss of paragraph-ending
+        // periods. Do not invent punctuation automatically. Surface prose that
+        // ends in a letter/number so the screenshot can confirm the mark.
+        if (/[A-Za-z0-9)]$/.test(plain)) {
+          addIssue({
+            type: "Terminal punctuation",
+            pageIndex,
+            paraIndex,
+            fileName: page.fileName || page.file?.name || `Page ${pageIndex + 1}`,
+            current: plain.slice(-260),
+            fullText: para,
+            suggestion: `${para}.`,
+            detail: "This prose paragraph ends without terminal punctuation. Full-book QA found Paddle systematically dropping final periods. Confirm against the screenshot, then add the period or keep as-is."
+          });
+          terminalPunctuation++;
+        }
+      });
+    });
+    addCheck("Terminal-punctuation audit", terminalPunctuation ? "warn" : "pass",
+      terminalPunctuation
+        ? `${terminalPunctuation} prose paragraph${terminalPunctuation===1?"":"s"} end without terminal punctuation and need source-image confirmation.`
+        : "No prose paragraphs end with a bare letter/number.");
+
     let fragments = 0;
     state.pages.forEach((page, pageIndex) => {
       const paras = pageBlocks(page);
@@ -4119,6 +4131,29 @@
           const report = runFinalPolish();
           if (report && els.finalPolishReview) els.finalPolishReview.open = true;
           setStatus("Quote warning saved as correct.");
+        });
+        button("Open page (optional)", "ghost", () => jumpToPage(issue.pageIndex));
+      } else if (issue.type === "Terminal punctuation") {
+        button("Add period", "secondary", () => {
+          const page = state.pages[issue.pageIndex];
+          const blocks = pageBlocks(page);
+          if (!page || !blocks[issue.paraIndex]) return;
+          const current = blocks[issue.paraIndex].trim();
+          if (/[.!?…]["”'’)]?$/.test(stripItalicMarkers(current))) return;
+          blocks[issue.paraIndex] = `${current}.`;
+          commitPageText(issue.pageIndex, blocks.filter(Boolean).join("\n\n"));
+          state.ignoredFinalPolishIssues.add(issue.key);
+          saveCheckpoint();
+          const report = runFinalPolish();
+          if (report && els.finalPolishReview) els.finalPolishReview.open = true;
+          setStatus("Added the source-confirmed paragraph-ending period and saved it.");
+        });
+        button("Looks correct", "ghost", () => {
+          state.ignoredFinalPolishIssues.add(issue.key);
+          saveCheckpoint();
+          const report = runFinalPolish();
+          if (report && els.finalPolishReview) els.finalPolishReview.open = true;
+          setStatus("Saved this paragraph ending as correct.");
         });
         button("Open page (optional)", "ghost", () => jumpToPage(issue.pageIndex));
       } else if (issue.type === "Short paragraph") {
@@ -4415,19 +4450,28 @@
     let ellipsisCount = 0;
     let sceneCount = 0;
     let quoteCount = 0;
-    for (const page of state.pages) {
+    let strayQuoteApostrophes = 0;
+    let quoteSpaces = 0;
+    let droppedPronounI = 0;
+    const selected = pageIndexes ? new Set(pageIndexes) : null;
+    for (let pageIndex = 0; pageIndex < state.pages.length; pageIndex++) {
+      if (selected && !selected.has(pageIndex)) continue;
+      const page = state.pages[pageIndex];
       const result = polish(page.text || "");
       page.text = result.text;
       fixedCount += result.fixedCount || 0;
       ellipsisCount += result.ellipsisCount || 0;
       sceneCount += result.sceneCount || 0;
       quoteCount += result.quoteCount || 0;
+      strayQuoteApostrophes += result.strayQuoteApostrophes || 0;
+      quoteSpaces += result.quoteSpaces || 0;
+      droppedPronounI += result.droppedPronounI || 0;
     }
     saveCheckpoint();
     renderReview();
     if (els.polishStatus) els.polishStatus.textContent = `${fixedCount} safe fix${fixedCount === 1 ? "" : "es"}`;
-    setStatus(`Safe text cleanup applied ${ellipsisCount} ellipsis normalization${ellipsisCount === 1 ? "" : "s"}, ${sceneCount} scene-divider normalization${sceneCount === 1 ? "" : "s"}, and ${quoteCount} obvious dialogue-quote repair${quoteCount === 1 ? "" : "s"}. No spelling or prose rewrites were performed.`);
-    return { fixedCount, ellipsisCount, sceneCount, quoteCount };
+    setStatus(`Safe text cleanup applied ${ellipsisCount} ellipsis normalization${ellipsisCount === 1 ? "" : "s"}, ${sceneCount} scene-divider normalization${sceneCount === 1 ? "" : "s"}, ${quoteCount + strayQuoteApostrophes} quote repair${quoteCount + strayQuoteApostrophes === 1 ? "" : "s"}, ${quoteSpaces} closing-quote spacing fix${quoteSpaces === 1 ? "" : "es"}, and ${droppedPronounI} dropped-I contraction repair${droppedPronounI === 1 ? "" : "s"}. No spelling or prose rewrites were performed.`);
+    return { fixedCount, ellipsisCount, sceneCount, quoteCount, strayQuoteApostrophes, quoteSpaces, droppedPronounI };
   }
 
   function repairTextNodesInParagraph(paragraph, repair) {

@@ -119,16 +119,58 @@ traffic waffle waffled waffles waffling
     return { text, fixedCount };
   }
 
+
+
+  // Patterns learned from full-book visual QA. These are deliberately limited
+  // to punctuation/quote/contraction shapes that are unambiguous without
+  // guessing the author's prose.
+  function repairQaSafePatterns(input) {
+    let text = String(input ?? "");
+    const counts = { strayQuoteApostrophes: 0, quoteSpaces: 0, droppedPronounI: 0 };
+
+    // Paddle sometimes reads a closing double quote as apostrophe + double
+    // quote:  okay.'"  ->  okay."  This shape cannot be a valid contraction.
+    text = text.replace(/([.!?…])['’](["”])/g, (m, punct, quote) => {
+      counts.strayQuoteApostrophes += 1;
+      return punct + quote;
+    });
+
+    // A source-visible closing quote is sometimes separated from its terminal
+    // punctuation by OCR whitespace:  okay. "  ->  okay."
+    text = text.replace(/([.!?…])(?:[ \t]+)(["”])/g, (m, punct, quote) => {
+      counts.quoteSpaces += 1;
+      return punct + quote;
+    });
+
+    // Paddle repeatedly drops the capital I from contractions. Restrict the
+    // automatic repair to paragraph starts or immediately after an opening
+    // dialogue quote, where 'm/'ll/'d/'ve cannot stand alone grammatically.
+    text = text.replace(/(^|\n\s*\n)(["“]?)[‘’'](m|ll|d|ve)\b/gim, (m, boundary, quote, tail) => {
+      counts.droppedPronounI += 1;
+      return `${boundary}${quote}I'${tail}`;
+    });
+    text = text.replace(/(["“])[‘’'](m|ll|d|ve)\b/gi, (m, quote, tail) => {
+      counts.droppedPronounI += 1;
+      return `${quote}I'${tail}`;
+    });
+
+    return { text, ...counts, fixedCount: counts.strayQuoteApostrophes + counts.quoteSpaces + counts.droppedPronounI };
+  }
+
   function safePolishText(input) {
     const ellipsis = normalizeEllipses(input);
     const scenes = normalizeSceneMarkers(ellipsis.text);
     const quotes = repairObviousDialogueClosers(scenes.text);
+    const qa = repairQaSafePatterns(quotes.text);
     return {
-      text: quotes.text,
-      fixedCount: ellipsis.fixedCount + scenes.fixedCount + quotes.fixedCount,
+      text: qa.text,
+      fixedCount: ellipsis.fixedCount + scenes.fixedCount + quotes.fixedCount + qa.fixedCount,
       ellipsisCount: ellipsis.fixedCount,
       sceneCount: scenes.fixedCount,
       quoteCount: quotes.fixedCount,
+      strayQuoteApostrophes: qa.strayQuoteApostrophes,
+      quoteSpaces: qa.quoteSpaces,
+      droppedPronounI: qa.droppedPronounI,
     };
   }
 
@@ -163,7 +205,7 @@ traffic waffle waffled waffles waffling
     };
   }
 
-  const api = Object.freeze({ repairSplitLigatures, listSplitLigatureCandidates, normalizeEllipses, normalizeSceneMarkers, repairObviousDialogueClosers, safePolishText, finalPolishText });
+  const api = Object.freeze({ repairSplitLigatures, listSplitLigatureCandidates, normalizeEllipses, normalizeSceneMarkers, repairObviousDialogueClosers, repairQaSafePatterns, safePolishText, finalPolishText });
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   if (typeof globalThis !== "undefined") globalThis.BookOcrEpubPolish = api;
 })();
