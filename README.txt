@@ -150,3 +150,10 @@ v2.6.5: Added exportable italic detection 2.0 diagnostics with per-line slant/ga
 - Apply edit saves corrected text immediately.
 - Looks correct saves a small stable issue key immediately.
 - No chapter/raw OCR persistence and no Dropcap Rescue changes.
+
+2.7.47 Durable Manual Edits:
+- Section 5 OCR textarea edits now save the edited page immediately into the existing compact repair overlay on every input and again on change/blur.
+- syncCurrentEditor uses the same durable overlay before navigation, Repair, Polish, or export.
+- The full whole-book checkpoint is still saved, but manual text persistence no longer depends on that large save succeeding.
+- On reload, the repair overlay is already reapplied last, so manual chapter-QC corrections override older checkpoint text.
+- Quote review workflow from v2.7.46 is unchanged. No chapter/raw OCR persistence was added.

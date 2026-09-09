@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.46-quote-review-workflow";
+  const BUILD_VERSION = "2.7.47-durable-manual-edits";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -1092,6 +1092,7 @@
     if (!editor) return;
     state.pages[state.currentPageIndex].text = editor.value;
     state.pages[state.currentPageIndex].chapterCandidate = chapterHeuristic(editor.value);
+    saveRepairOverlayPage(state.currentPageIndex);
     saveCheckpoint();
   }
 
@@ -1445,6 +1446,21 @@
     text.addEventListener("input", () => {
       state.pages[index].text = text.value;
       state.pages[index].chapterCandidate = chapterHeuristic(text.value);
+
+      // Manual Review edits are authoritative book text. Persist the current
+      // page immediately in the compact repair overlay before touching the
+      // much larger whole-book checkpoint. This survives tab/window closure
+      // even if the large checkpoint save hits browser storage limits.
+      saveRepairOverlayPage(index);
+      saveCheckpoint();
+    });
+
+    // A second synchronous save at edit completion covers paste/autofill and
+    // makes blur/navigation an explicit durability boundary.
+    text.addEventListener("change", () => {
+      state.pages[index].text = text.value;
+      state.pages[index].chapterCandidate = chapterHeuristic(text.value);
+      saveRepairOverlayPage(index);
       saveCheckpoint();
     });
 
