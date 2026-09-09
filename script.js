@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.48-manual-edits-win-last";
+  const BUILD_VERSION = "2.7.49-manual-page-lock";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -251,7 +251,7 @@
     }
   }
 
-  function saveRepairOverlayPage(pageIndex) {
+  function saveRepairOverlayPage(pageIndex, { manualEdited = null } = {}) {
     const page = state.pages[pageIndex];
     const file = state.files[pageIndex] || page?.file;
     if (!page || !file) return false;
@@ -262,9 +262,15 @@
       };
       if (!existing.pages || typeof existing.pages !== "object") existing.pages = {};
       const key = normalizedStem(file.name);
+      const prior = existing.pages[key] || {};
+      const manualFlag = manualEdited == null
+        ? !!(prior.manualEdited || page.manualEdited)
+        : !!manualEdited;
+      page.manualEdited = manualFlag;
       existing.pages[key] = {
         fileName: file.name,
         text: String(page.text || ""),
+        manualEdited: manualFlag,
         savedAt: Date.now()
       };
       localStorage.setItem(REPAIR_OVERLAY_KEY, JSON.stringify(existing));
@@ -288,6 +294,7 @@
       const saved = overlay.pages[normalizedStem(file.name)];
       if (!saved || typeof saved.text !== "string") return;
       page.text = saved.text;
+      page.manualEdited = !!saved.manualEdited;
       page.chapterCandidate = chapterHeuristic(page.text);
       applied++;
     });
@@ -318,6 +325,7 @@
           chapterCandidate: !!p.chapterCandidate,
           chapterStart: !!p.chapterStart,
           chapterTitle: p.chapterTitle || "",
+          manualEdited: !!p.manualEdited,
           layoutLines: Array.isArray(p.layoutLines) ? p.layoutLines : [],
           rawOcrItems: Array.isArray(p.rawOcrItems) ? p.rawOcrItems : [],
           layoutMeta: p.layoutMeta || null,
@@ -469,6 +477,7 @@
         chapterCandidate: !!page.chapterCandidate,
         chapterStart: page.chapterStart != null ? !!page.chapterStart : !!page.chapterCandidate,
         chapterTitle: page.chapterTitle || "",
+        manualEdited: !!page.manualEdited,
         layoutLines: Array.isArray(page.layoutLines) ? page.layoutLines : [],
         rawOcrItems: Array.isArray(page.rawOcrItems) ? page.rawOcrItems : [],
         layoutMeta: page.layoutMeta || null,
@@ -1445,13 +1454,14 @@
     text.setAttribute("aria-label", `OCR text for page ${index + 1}`);
     text.addEventListener("input", () => {
       state.pages[index].text = text.value;
+      state.pages[index].manualEdited = true;
       state.pages[index].chapterCandidate = chapterHeuristic(text.value);
 
       // Manual Review edits are authoritative book text. Persist the current
       // page immediately in the compact repair overlay before touching the
       // much larger whole-book checkpoint. This survives tab/window closure
       // even if the large checkpoint save hits browser storage limits.
-      saveRepairOverlayPage(index);
+      saveRepairOverlayPage(index, { manualEdited: true });
       saveCheckpoint();
     });
 
@@ -1459,8 +1469,9 @@
     // makes blur/navigation an explicit durability boundary.
     text.addEventListener("change", () => {
       state.pages[index].text = text.value;
+      state.pages[index].manualEdited = true;
       state.pages[index].chapterCandidate = chapterHeuristic(text.value);
-      saveRepairOverlayPage(index);
+      saveRepairOverlayPage(index, { manualEdited: true });
       saveCheckpoint();
     });
 
@@ -2038,7 +2049,9 @@
 
 
   function downloadLayoutDiagnostics() {
-    const eligible = state.pages.filter(page => Array.isArray(page.layoutLines) && page.layoutLines.length);
+    const eligible = state.pages.filter(page =>
+      !page.manualEdited && Array.isArray(page.layoutLines) && page.layoutLines.length
+    );
     if (!eligible.length) {
       setStatus("No saved line geometry is available to export yet.");
       return;
@@ -2095,6 +2108,9 @@
     state.bookLayoutProfile = bookProfile;
     let rebuiltCount = 0;
     state.pages.forEach(page => {
+      // Keep analyzing saved geometry elsewhere, but never wholesale rebuild
+      // text that the user has manually corrected in Section 5.
+      if (page.manualEdited) return;
       if (!Array.isArray(page.layoutLines) || !page.layoutLines.length) return;
       const rebuilt = reconstructParagraphsFromLayout(page.layoutLines, { messageMode: false, bookProfile });
       if (!rebuilt.text) return;
@@ -2115,7 +2131,8 @@
     const profileNote = bookProfile?.indentCount
       ? ` Layout profile: body ${Math.round(bookProfile.bodyLeft)} / indent ${Math.round(bookProfile.indentLeft)} from ${bookProfile.learnedFromLines} OCR lines.`
       : " Used the best available body-margin profile.";
-    setStatus(`Paragraph structure rebuilt on ${rebuiltCount} page${rebuiltCount === 1 ? "" : "s"} from saved OCR geometry. No OCR rerun was needed.${profileNote}`);
+    const protectedManual = state.pages.filter(page => page.manualEdited).length;
+    setStatus(`Paragraph structure rebuilt on ${rebuiltCount} page${rebuiltCount === 1 ? "" : "s"} from saved OCR geometry. ${protectedManual ? `${protectedManual} manually edited page${protectedManual===1?" was":"s were"} protected from text rebuild. ` : ""}No OCR rerun was needed.${profileNote}`);
     return rebuiltCount;
   }
 

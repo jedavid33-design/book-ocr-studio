@@ -163,3 +163,11 @@ v2.6.5: Added exportable italic detection 2.0 diagnostics with per-line slant/ga
 - Guided Repair reapplies manual overlays again after automatic dropcap work and before the final checkpoint.
 - Explicit precedence is now OCR < automated Repair < user manual edits.
 - Existing v2.7.47 manual corrections should return automatically after Guided Repair instead of needing to be redone.
+
+2.7.49 Manual Page Lock
+- Direct Section 5 edits set a persistent manualEdited flag in the lightweight page overlay and checkpoint.
+- The flag survives reloads/version updates for the same screenshot set.
+- Guided Repair still scans those pages for italics, ligatures, Dropcap Rescue, safe cleanup, Final Polish, and Kindle Ready.
+- Only wholesale paragraph reconstruction from OCR/layout geometry is blocked on manualEdited pages.
+- Automated repairs do not create the flag; only direct Section 5 edits do.
+- For a page edited before installing 2.7.49, make one tiny edit once (typing and undoing a character is enough) to establish its persistent lock.
