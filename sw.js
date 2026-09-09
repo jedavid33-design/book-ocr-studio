@@ -1,7 +1,7 @@
-const CACHE_NAME = "book-ocr-studio-shell-v2-7-45-dialogue-aware-quote-review";
+const CACHE_NAME = "book-ocr-studio-shell-v2-7-46-quote-review-workflow";
 const APP_SHELL = [
-  "./styles.css?v=2.7.45-dialogue-aware-quote-review",
-  "./epub-polish.js?v=2.7.45-dialogue-aware-quote-review",
+  "./styles.css?v=2.7.46-quote-review-workflow",
+  "./epub-polish.js?v=2.7.46-quote-review-workflow",
   "./manifest.webmanifest",
   "./icon-192.png",
   "./icon-512.png",

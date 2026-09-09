@@ -181,11 +181,10 @@ v2.6.5: Added exportable italic detection 2.0 diagnostics with per-line slant/ga
 - Fixes v2.7.40's Final Polish undefined pageIndexes bug.
 - No chapter-start OCR persistence or migration logic is included.
 
-2.7.45 Dialogue-Aware Quote Review:
-- Quote audit now tracks open dialogue across paragraphs instead of treating each paragraph's quote parity in isolation.
-- Standard fiction formatting for one speaker continuing through multiple paragraphs is recognized: intermediate paragraphs may open without closing, and the final paragraph may both open and close.
-- Cross-page continuation paragraphs can close an already-open dialogue without a fresh opening quote.
-- Only ambiguous/impossible quote-state transitions, chapter-boundary open dialogue, or end-of-book open dialogue remain for manual review.
-- Quote review decisions persist via small stable keys (type + file + page/paragraph + normalized text). "Looks correct" survives reload/version updates without storing large OCR payloads.
-- Manual paragraph edits update book text/checkpoint, rerun Final Polish, and reopen the remaining quote queue.
-- Built directly on stable v2.7.44. Dropcap Rescue, chapter-start OCR behavior, and Guided Repair progress are untouched.
+2.7.46 Quote Review Workflow
+- Direct v2.7.44 base; v2.7.45 dialogue parser discarded.
+- v2.7.44 quote detector unchanged.
+- Quote cards show previous, flagged, and next paragraphs.
+- Apply edit saves corrected text immediately.
+- Looks correct saves a small stable issue key immediately.
+- No chapter/raw OCR persistence and no Dropcap Rescue changes.

@@ -3,7 +3,7 @@
 // then runs the patched source.
 
 (async () => {
-  const response = await fetch("./script.js?v=2.7.45-dialogue-aware-quote-review", { cache: "no-store" });
+  const response = await fetch("./script.js?v=2.7.46-quote-review-workflow", { cache: "no-store" });
   if (!response.ok) {
     throw new Error(`Could not load script.js (${response.status})`);
   }
@@ -24,7 +24,7 @@
   }
 
   source = source.replace(anchor, replacement);
-  source += "\n//# sourceURL=book-ocr-studio-2.7.45-dialogue-aware-quote-review.js";
+  source += "\n//# sourceURL=book-ocr-studio-2.7.46-quote-review-workflow.js";
 
   (0, eval)(source);
 })().catch((err) => {
