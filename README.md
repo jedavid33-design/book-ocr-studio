@@ -195,3 +195,9 @@ v2.6.5: Added exportable italic detection 2.0 diagnostics with per-line slant/ga
 - The full whole-book checkpoint is still saved, but manual text persistence no longer depends on that large save succeeding.
 - On reload, the repair overlay is already reapplied last, so manual chapter-QC corrections override older checkpoint text.
 - Quote review workflow from v2.7.46 is unchanged. No chapter/raw OCR persistence was added.
+
+2.7.48 Manual Edits Win Last
+- Guided Repair reapplies the durable manual-page overlay immediately after chapter-start re-OCR and before Dropcap Rescue.
+- Guided Repair reapplies manual overlays again after automatic dropcap work and before the final checkpoint.
+- Explicit precedence is now OCR < automated Repair < user manual edits.
+- Existing v2.7.47 manual corrections should return automatically after Guided Repair instead of needing to be redone.

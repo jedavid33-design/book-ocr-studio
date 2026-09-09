@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.47-durable-manual-edits";
+  const BUILD_VERSION = "2.7.48-manual-edits-win-last";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -4316,6 +4316,12 @@
           (current, total, pct, pageNumber) =>
             setGuidedProgress("5/5 · Dropcaps", pct, `chapter ${current}/${total} · page ${pageNumber}`));
       }
+
+      // Manual Review edits are authoritative. Chapter-start re-OCR may
+      // temporarily replace page.text, so restore the durable edited-page
+      // overlay before Dropcap Rescue inspects or modifies chapter openings.
+      applyRepairOverlay();
+
       repairStage = els.geometryAssist?.checked ? "Dropcap Rescue · geometry on" : "Dropcap Rescue · geometry off";
       setGuidedProgress("5/5 · Dropcaps", 100, "reconstructing");
       scanDropcaps(pageIndexes);
@@ -4334,6 +4340,11 @@
       high.forEach(candidate => applyDropcap(candidate, candidate.proposed));
 
       repairStage = "save repaired checkpoint";
+
+      // Last writer wins: OCR < automated repair < user manual edits.
+      // Reapply once more after all automatic dropcap work, then checkpoint.
+      applyRepairOverlay();
+
       state.repairBookHasRun = true;
       saveCheckpoint();
       repairStage = "render repaired results";
