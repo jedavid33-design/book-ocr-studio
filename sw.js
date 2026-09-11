@@ -1,7 +1,7 @@
 const CACHE_NAME = "book-ocr-studio-shell-v2-7-52-opening-quote-left-shift";
 const APP_SHELL = [
-  "./styles.css?v=2.7.52-opening-quote-left-shift",
-  "./epub-polish.js?v=2.7.52-opening-quote-left-shift",
+  "./styles.css?v=2.7.53-final-polish-quote-left-shift",
+  "./epub-polish.js?v=2.7.53-final-polish-quote-left-shift",
   "./manifest.webmanifest",
   "./icon-192.png",
   "./icon-512.png",
