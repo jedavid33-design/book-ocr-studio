@@ -184,3 +184,11 @@ v2.6.5: Added exportable italic detection 2.0 diagnostics with per-line slant/ga
 - Uses saved OCR line geometry as the strongest evidence; a conservative action-verb fallback catches known cases when geometry is incomplete.
 - Adds a one-click “Move opening quote” action plus the existing editable paragraph review. Nothing is moved automatically.
 - Quote-boundary edits are persisted as manual page authority so later reconstruction cannot overwrite them.
+
+2.7.52 OPENING QUOTE LEFT-SHIFT
+- Safely normalizes the recurring OCR/reconstruction shape `Isaiah laughs." Range...` to `Isaiah laughs. "Range...` when the first sentence is a conservative narrative-action lead.
+- Fixes the upstream safe-cleanup rule that was itself collapsing valid `sentence. "Dialogue` boundaries into `sentence." Dialogue`; closing-quote whitespace cleanup now requires closing-quote context.
+- Handles the companion closing-quote OCR error in the same pattern (`Really?'` -> `Really?"`) only after a confident boundary shift.
+- Runs during safe cleanup before quote review, so repaired paragraphs no longer return as misleading quote-balance cards.
+- Keeps ambiguous quote placement review-only; this does not broadly rewrite balanced dialogue.
+
