@@ -257,7 +257,12 @@ traffic waffle waffled waffles waffling
 
 
   function finalPolishText(input) {
-    let text = String(input ?? "");
+    // Final Polish must audit the same post-repair text that Repair Book uses.
+    // Re-run the idempotent QA-safe normalizations here before building review
+    // cards so a repaired opening quote cannot reappear as a stale quote-balance
+    // warning (for example: Isaiah laughs.\" Range -> Isaiah laughs. \"Range).
+    const qa = repairQaSafePatterns(String(input ?? ""));
+    let text = qa.text;
     const counts = { punctuationSpacing: 0, quoteSpacing: 0, dashSpacing: 0 };
 
     // Remove spaces that OCR sometimes inserts immediately before closing punctuation.
@@ -281,7 +286,9 @@ traffic waffle waffled waffles waffling
 
     return {
       text,
-      fixedCount: counts.punctuationSpacing + counts.quoteSpacing + counts.dashSpacing,
+      fixedCount: (qa.fixedCount || 0) + counts.punctuationSpacing + counts.quoteSpacing + counts.dashSpacing,
+      qaSafeCount: qa.fixedCount || 0,
+      openingQuoteBoundaryShifts: qa.openingQuoteBoundaryShifts || 0,
       ...counts,
     };
   }

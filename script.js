@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.52-opening-quote-left-shift";
+  const BUILD_VERSION = "2.7.53-final-polish-quote-left-shift";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
