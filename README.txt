@@ -178,3 +178,9 @@ v2.6.5: Added exportable italic detection 2.0 diagnostics with per-line slant/ga
 - Adds geometry-based review warnings for likely lost scene-break ornaments when a large internal page gap has no semantic scene marker.
 - Adds safe cleanup for `I'1l`-style digit/l contractions, spaces after opening quotes, and missing spaces after closing dialogue quotes.
 - Keeps missing terminal punctuation review-only and preserves manual edits as authoritative text.
+
+2.7.51 QUOTE BOUNDARY DRIFT
+- Adds a review-only audit for paragraphs whose quote count is balanced but whose opening quote may have migrated ahead of a narrative action sentence during OCR/reconstruction.
+- Uses saved OCR line geometry as the strongest evidence; a conservative action-verb fallback catches known cases when geometry is incomplete.
+- Adds a one-click “Move opening quote” action plus the existing editable paragraph review. Nothing is moved automatically.
+- Quote-boundary edits are persisted as manual page authority so later reconstruction cannot overwrite them.

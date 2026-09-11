@@ -1,7 +1,7 @@
-const CACHE_NAME = "book-ocr-studio-shell-v2-7-50-regression-hardening";
+const CACHE_NAME = "book-ocr-studio-shell-v2-7-51-quote-boundary-drift";
 const APP_SHELL = [
-  "./styles.css?v=2.7.50-regression-hardening",
-  "./epub-polish.js?v=2.7.50-regression-hardening",
+  "./styles.css?v=2.7.51-quote-boundary-drift",
+  "./epub-polish.js?v=2.7.51-quote-boundary-drift",
   "./manifest.webmanifest",
   "./icon-192.png",
   "./icon-512.png",

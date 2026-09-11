@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.50-regression-hardening";
+  const BUILD_VERSION = "2.7.51-quote-boundary-drift";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -3946,6 +3946,89 @@
         ? `${quoteFlags} paragraph${quoteFlags===1?"":"s"} still need quote review after cross-page continuations were reconciled.`
         : "No unresolved quote-balance issues remain after cross-page continuation checks.");
 
+    // Quote-boundary drift audit. A paragraph can have perfectly balanced quote
+    // counts while an opening quote has migrated to the paragraph start during
+    // OCR/reconstruction. Regression case: "I toss my head from side to side.
+    // Once I came..." where the source quote actually begins before "Once".
+    // Never rewrite this automatically. Prefer source geometry as evidence, then
+    // offer a one-click relocation plus the normal paragraph editor.
+    let quoteBoundaryDrift = 0;
+    const normalizeQuoteEvidence = (value) => stripItalicMarkers(String(value || ""))
+      .replace(/[“”]/g, '"')
+      .replace(/[‘’]/g, "'")
+      .replace(/\s+/g, " ")
+      .trim();
+    const narrativeActionLead = /^(?:I|He|She|We|They|My|His|Her|Their)\s+(?:toss|tosses|shake|shakes|shrug|shrugs|nod|nods|laugh|laughs|smile|smiles|sigh|sighs|cross|crosses|turn|turns|look|looks|glance|glances|watch|watches|lean|leans|sit|sits|stand|stands|walk|walks|step|steps|move|moves|pull|pulls|push|pushes|raise|raises|lower|lowers|exhale|exhales|inhale|inhales|huff|huffs|pause|pauses|swallow|swallows|blink|blinks|grab|grabs|take|takes|set|sets|drop|drops|lift|lifts|bring|brings|run|runs|hold|holds|keep|keeps|feel|feels|hear|hears|see|sees|close|closes|open|opens|rest|rests|gesture|gestures|stare|stares|breathe|breathes)\b/i;
+
+    state.pages.forEach((page, pageIndex) => {
+      const paras = pageBlocks(page);
+      const evidenceLines = (Array.isArray(page.layoutLines) ? page.layoutLines : [])
+        .map(line => normalizeQuoteEvidence(line?.text || ""))
+        .filter(Boolean);
+      paras.forEach((para, paraIndex) => {
+        const plain = normalizeQuoteEvidence(para);
+        if (!/^["“]/.test(stripItalicMarkers(String(para || "")).trim())) return;
+        const quoteCount = (plain.match(/"/g) || []).length;
+        if (quoteCount < 2 || quoteCount % 2 !== 0) return;
+
+        const m = plain.match(/^"([^.!?]{3,180}[.!?])\s+(.+)$/);
+        if (!m) return;
+        const firstSentence = m[1].trim();
+        const remainder = m[2].trim();
+        if (!firstSentence || !remainder || !/[A-Z"“]/.test(remainder[0] || "")) return;
+
+        const probe = firstSentence.slice(0, Math.min(42, firstSentence.length)).toLowerCase();
+        let geometryEvidence = false;
+        for (let i = 0; i < evidenceLines.length; i++) {
+          const line = evidenceLines[i];
+          const withoutLeadingQuote = line.replace(/^"\s*/, "");
+          if (!withoutLeadingQuote.toLowerCase().startsWith(probe)) continue;
+          // Strong evidence when the OCR line itself begins with prose rather
+          // than a quote and shows a quote later, or the following OCR line
+          // begins with a quote.
+          const sourceStartsQuoted = /^"/.test(line);
+          const quoteLater = line.indexOf('"') > 0;
+          const nextStartsQuoted = /^"/.test(evidenceLines[i + 1] || "");
+          if (!sourceStartsQuoted && (quoteLater || nextStartsQuoted)) {
+            geometryEvidence = true;
+            break;
+          }
+        }
+
+        const actionEvidence = narrativeActionLead.test(firstSentence);
+        if (!geometryEvidence && !actionEvidence) return;
+
+        const raw = String(para || "");
+        const relocated = raw.replace(/^(\s*)["“]([^.!?]{3,180}[.!?])(\s+)(?=\S)/, (all, lead, sentence, gap) => {
+          const quote = /“/.test(all[lead.length] || "") ? "“" : '"';
+          return `${lead}${sentence}${gap}${quote}`;
+        });
+        if (relocated === raw) return;
+
+        const issue = {
+          type: "Quote boundary drift",
+          pageIndex,
+          paraIndex,
+          fileName: page.fileName || page.file?.name || `Page ${pageIndex + 1}`,
+          current: plain.slice(0, 260),
+          fullText: para,
+          suggestion: relocated,
+          evidence: geometryEvidence ? "source geometry" : "narrative-action heuristic",
+          detail: `The paragraph has balanced quotes, but its opening quote may have drifted ahead of an action sentence. Evidence: ${geometryEvidence ? "saved OCR line geometry places the quote later" : "the first sentence matches a conservative narrative-action pattern"}. Confirm against the screenshot before moving it.`
+        };
+        issue.key = finalIssueKey(issue);
+        if (!state.ignoredFinalPolishIssues.has(issue.key)) {
+          quoteBoundaryDrift++;
+          issues.push(issue);
+        }
+      });
+    });
+
+    addCheck("Quote-boundary audit", quoteBoundaryDrift ? "warn" : "pass",
+      quoteBoundaryDrift
+        ? `${quoteBoundaryDrift} paragraph${quoteBoundaryDrift===1?"":"s"} may have an opening quote attached to preceding narration/action.`
+        : "No likely quote-boundary drift detected.");
+
     let terminalPunctuation = 0;
     state.pages.forEach((page, pageIndex) => {
       const paras = pageBlocks(page);
@@ -4175,7 +4258,7 @@
           setStatus(`Kept “${issue.current}” unchanged.`);
         });
         button("Open page (optional)", "ghost", () => jumpToPage(issue.pageIndex));
-      } else if (issue.type === "Quote balance") {
+      } else if (issue.type === "Quote balance" || issue.type === "Quote boundary drift") {
         const quotePage = state.pages[issue.pageIndex];
         const quoteBlocks = pageBlocks(quotePage);
         const previousParagraph = issue.paraIndex > 0 ? quoteBlocks[issue.paraIndex - 1] : "";
@@ -4207,6 +4290,22 @@
           <textarea class="quote-inline-edit" rows="4" aria-label="Edit this quote paragraph">${escapeHtml(issue.fullText || issue.current || "")}</textarea>`;
         actions.before(editor);
 
+        if (issue.type === "Quote boundary drift" && issue.suggestion) {
+          button("Move opening quote", "secondary", () => {
+            const page = state.pages[issue.pageIndex];
+            const blocks = pageBlocks(page);
+            if (!page || !blocks[issue.paraIndex]) return;
+            blocks[issue.paraIndex] = issue.suggestion;
+            writePageBlocks(page, blocks);
+            saveRepairOverlayPage(issue.pageIndex, { manualEdited: true });
+            saveCheckpoint();
+            renderReview();
+            const report = runFinalPolish();
+            if (report && els.finalPolishReview) els.finalPolishReview.open = true;
+            setStatus("Moved the opening quote after the action sentence and saved the paragraph.");
+          });
+        }
+
         button("Apply paragraph edit", "secondary", () => {
           const page = state.pages[issue.pageIndex];
           const blocks = pageBlocks(page);
@@ -4214,6 +4313,8 @@
           if (!page || !blocks[issue.paraIndex] || !edited.trim()) return;
           blocks[issue.paraIndex] = edited.trim();
           writePageBlocks(page, blocks);
+          page.manualEdited = true;
+          saveRepairOverlayPage(issue.pageIndex, { manualEdited: true });
           saveCheckpoint();
           renderReview();
           const report = runFinalPolish();
