@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.49-qa-pattern-hardening";
+  const BUILD_VERSION = "2.7.50-regression-hardening";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -251,7 +251,7 @@
     }
   }
 
-  function saveRepairOverlayPage(pageIndex) {
+  function saveRepairOverlayPage(pageIndex, { manualEdited = null } = {}) {
     const page = state.pages[pageIndex];
     const file = state.files[pageIndex] || page?.file;
     if (!page || !file) return false;
@@ -262,9 +262,15 @@
       };
       if (!existing.pages || typeof existing.pages !== "object") existing.pages = {};
       const key = normalizedStem(file.name);
+      const prior = existing.pages[key] || {};
+      const manualFlag = manualEdited == null
+        ? !!(prior.manualEdited || page.manualEdited)
+        : !!manualEdited;
+      page.manualEdited = manualFlag;
       existing.pages[key] = {
         fileName: file.name,
         text: String(page.text || ""),
+        manualEdited: manualFlag,
         savedAt: Date.now()
       };
       localStorage.setItem(REPAIR_OVERLAY_KEY, JSON.stringify(existing));
@@ -288,6 +294,7 @@
       const saved = overlay.pages[normalizedStem(file.name)];
       if (!saved || typeof saved.text !== "string") return;
       page.text = saved.text;
+      page.manualEdited = !!saved.manualEdited;
       page.chapterCandidate = chapterHeuristic(page.text);
       applied++;
     });
@@ -318,6 +325,7 @@
           chapterCandidate: !!p.chapterCandidate,
           chapterStart: !!p.chapterStart,
           chapterTitle: p.chapterTitle || "",
+          manualEdited: !!p.manualEdited,
           layoutLines: Array.isArray(p.layoutLines) ? p.layoutLines : [],
           rawOcrItems: Array.isArray(p.rawOcrItems) ? p.rawOcrItems : [],
           layoutMeta: p.layoutMeta || null,
@@ -469,6 +477,7 @@
         chapterCandidate: !!page.chapterCandidate,
         chapterStart: page.chapterStart != null ? !!page.chapterStart : !!page.chapterCandidate,
         chapterTitle: page.chapterTitle || "",
+        manualEdited: !!page.manualEdited,
         layoutLines: Array.isArray(page.layoutLines) ? page.layoutLines : [],
         rawOcrItems: Array.isArray(page.rawOcrItems) ? page.rawOcrItems : [],
         layoutMeta: page.layoutMeta || null,
@@ -1445,13 +1454,14 @@
     text.setAttribute("aria-label", `OCR text for page ${index + 1}`);
     text.addEventListener("input", () => {
       state.pages[index].text = text.value;
+      state.pages[index].manualEdited = true;
       state.pages[index].chapterCandidate = chapterHeuristic(text.value);
 
       // Manual Review edits are authoritative book text. Persist the current
       // page immediately in the compact repair overlay before touching the
       // much larger whole-book checkpoint. This survives tab/window closure
       // even if the large checkpoint save hits browser storage limits.
-      saveRepairOverlayPage(index);
+      saveRepairOverlayPage(index, { manualEdited: true });
       saveCheckpoint();
     });
 
@@ -1459,8 +1469,9 @@
     // makes blur/navigation an explicit durability boundary.
     text.addEventListener("change", () => {
       state.pages[index].text = text.value;
+      state.pages[index].manualEdited = true;
       state.pages[index].chapterCandidate = chapterHeuristic(text.value);
-      saveRepairOverlayPage(index);
+      saveRepairOverlayPage(index, { manualEdited: true });
       saveCheckpoint();
     });
 
@@ -2038,7 +2049,9 @@
 
 
   function downloadLayoutDiagnostics() {
-    const eligible = state.pages.filter(page => Array.isArray(page.layoutLines) && page.layoutLines.length);
+    const eligible = state.pages.filter(page =>
+      !page.manualEdited && Array.isArray(page.layoutLines) && page.layoutLines.length
+    );
     if (!eligible.length) {
       setStatus("No saved line geometry is available to export yet.");
       return;
@@ -2080,7 +2093,9 @@
   }
 
   function rebuildParagraphsFromSavedGeometry({ confirmOverwrite=true } = {}) {
-    const eligible = state.pages.filter(page => Array.isArray(page.layoutLines) && page.layoutLines.length);
+    const eligible = state.pages.filter(page =>
+      !page.manualEdited && Array.isArray(page.layoutLines) && page.layoutLines.length
+    );
     if (!eligible.length) {
       setStatus("No saved line geometry is available yet. Pages OCRed with this build will save it automatically.");
       refreshParagraphRebuildUi();
@@ -2095,6 +2110,9 @@
     state.bookLayoutProfile = bookProfile;
     let rebuiltCount = 0;
     state.pages.forEach(page => {
+      // Manual Review edits are canonical. Keep scanning them, but never replace
+      // their text wholesale from OCR/layout geometry.
+      if (page.manualEdited) return;
       if (!Array.isArray(page.layoutLines) || !page.layoutLines.length) return;
       const rebuilt = reconstructParagraphsFromLayout(page.layoutLines, { messageMode: false, bookProfile });
       if (!rebuilt.text) return;
@@ -2115,7 +2133,8 @@
     const profileNote = bookProfile?.indentCount
       ? ` Layout profile: body ${Math.round(bookProfile.bodyLeft)} / indent ${Math.round(bookProfile.indentLeft)} from ${bookProfile.learnedFromLines} OCR lines.`
       : " Used the best available body-margin profile.";
-    setStatus(`Paragraph structure rebuilt on ${rebuiltCount} page${rebuiltCount === 1 ? "" : "s"} from saved OCR geometry. No OCR rerun was needed.${profileNote}`);
+    const protectedManual = state.pages.filter(page => page.manualEdited).length;
+    setStatus(`Paragraph structure rebuilt on ${rebuiltCount} page${rebuiltCount === 1 ? "" : "s"} from saved OCR geometry. ${protectedManual ? `${protectedManual} manually edited page${protectedManual===1?" was":"s were"} protected from text rebuild. ` : ""}No OCR rerun was needed.${profileNote}`);
     return rebuiltCount;
   }
 
@@ -3263,9 +3282,18 @@
         surroundingSlantLift >= 0.16 && surroundingGainLift >= 0.0060;
       const runCoverage = scored.length ? words.length / scored.length : 0;
 
-      const accepted = words.length >= 3 && runCoverage <= 0.60 &&
+      const acceptedLong = words.length >= 3 && runCoverage <= 0.60 &&
         avgGain >= 0.0140 && avgAbsSlant >= 0.32 &&
         relativeEvidence && surroundingEvidence;
+      // IHOL regression QA showed that the old 3-word minimum systematically
+      // misses real one- and two-word emphasis. Admit short runs only when the
+      // typography signal is substantially stronger than the long-run route.
+      const acceptedShort = words.length >= 1 && words.length <= 2 && runCoverage <= 0.45 &&
+        avgGain >= 0.0200 && avgAbsSlant >= 0.36 &&
+        slantLift >= 0.20 && gainLift >= 0.0090 &&
+        surroundingSlantLift >= 0.20 && surroundingGainLift >= 0.0090 &&
+        relativeEvidence && surroundingEvidence;
+      const accepted = acceptedLong || acceptedShort;
       runs.push({ startWord:i, endWord:j-1, wordCount:words.length, sign, avgGain, avgAbsSlant,
         neighborWordCount:neighbors.length, neighborAbsSlant, neighborGain, slantLift, gainLift,
         surroundingLineCount:surroundingLineResults.length, surroundingAbsSlant, surroundingGain,
@@ -3296,7 +3324,7 @@
         if (typeof progressCallback === "function") {
           progressCallback(index + 1, state.pages.length, italicPct);
         } else {
-          setStatus(`Automatic italic scan 2.4 conservative hybrid: page ${index + 1} of ${state.pages.length}…`);
+          setStatus(`Automatic italic scan 2.5 regression hybrid: page ${index + 1} of ${state.pages.length}…`);
         }
         const img = await loadImageFromFile(file);
         const canvas = makeCroppedCanvas(img);
@@ -3356,7 +3384,7 @@
       }
       saveCheckpoint();
       if (els.italicStatus) els.italicStatus.textContent = `${markedRuns} run${markedRuns === 1 ? "" : "s"} · ${markedWords} words`;
-      setStatus(`Automatic italic scan 2.4 checked ${scannedWords} words across ${scannedLines} OCR lines and marked ${markedRuns} hybrid run${markedRuns === 1 ? "" : "s"} (${markedWords} words). Full-line italics use line typography; inline runs must beat both same-line and surrounding-line baselines.`);
+      setStatus(`Automatic italic scan 2.5 checked ${scannedWords} words across ${scannedLines} OCR lines and marked ${markedRuns} hybrid run${markedRuns === 1 ? "" : "s"} (${markedWords} words). Full-line italics use line typography; inline runs must beat both same-line and surrounding-line baselines.`);
       return { markedRuns, markedWords, scannedWords, scannedLines };
     } catch (err) {
       console.error(err);
@@ -3947,6 +3975,73 @@
         ? `${terminalPunctuation} prose paragraph${terminalPunctuation===1?"":"s"} end without terminal punctuation and need source-image confirmation.`
         : "No prose paragraphs end with a bare letter/number.");
 
+    let falseWordBoundaries = 0;
+    state.pages.forEach((page, pageIndex) => {
+      const paras = pageBlocks(page);
+      paras.forEach((para, paraIndex) => {
+        const plain = stripItalicMarkers(para);
+        // Regression cases: resent. ment / expres. sion / assist. ant.
+        // Review only: lowercase after a period can occasionally be legitimate.
+        const match = /\b([A-Za-z]{2,})\.\s+([a-z]{2,})\b/.exec(plain);
+        if (!match) return;
+        const joined = `${match[1]}${match[2]}`;
+        addIssue({
+          type: "False word boundary",
+          pageIndex,
+          paraIndex,
+          fileName: page.fileName || page.file?.name || `Page ${pageIndex + 1}`,
+          current: match[0],
+          fullText: para,
+          left: match[1],
+          right: match[2],
+          suggestion: joined,
+          detail: "Possible OCR-created sentence boundary inside one word. Regression QA found examples such as resent. ment, expres. sion, and assist. ant. Confirm against the screenshot before joining."
+        });
+        falseWordBoundaries++;
+      });
+    });
+    addCheck("False-word-boundary audit", falseWordBoundaries ? "warn" : "pass",
+      falseWordBoundaries
+        ? `${falseWordBoundaries} possible split-word sentence boundar${falseWordBoundaries===1?"y":"ies"} need source confirmation.`
+        : "No likely period-inside-word splits found.");
+
+    let possibleSceneBreaks = 0;
+    state.pages.forEach((page, pageIndex) => {
+      const lines = Array.isArray(page.layoutLines) ? page.layoutLines : [];
+      if (lines.length < 3 || String(page.text || "").includes("* * *")) return;
+      const hs = lines.map(l => Number(l?.box?.h)).filter(h => Number.isFinite(h) && h > 2);
+      const typical = median(hs) || 0;
+      if (!typical) return;
+      let best = null;
+      for (let i = 1; i < lines.length; i++) {
+        const a = lines[i-1], b = lines[i];
+        if (!a?.box || !b?.box) continue;
+        const gap = Number(b.box.y) - (Number(a.box.y) + Number(a.box.h));
+        if (gap < typical * 1.75) continue;
+        const aText = String(a.text || "").trim();
+        const bText = String(b.text || "").trim();
+        if (aText.length < 8 || bText.length < 8) continue;
+        if (/^(?:chapter\b|prologue\b|epilogue\b)/i.test(aText + " " + bText)) continue;
+        if (!best || gap > best.gap) best = { gap, aText, bText };
+      }
+      if (!best) return;
+      addIssue({
+        type: "Possible scene break",
+        pageIndex,
+        paraIndex: -1,
+        fileName: page.fileName || page.file?.name || `Page ${pageIndex + 1}`,
+        current: `${best.aText.slice(-90)}  ⟂  ${best.bText.slice(0,90)}`,
+        beforeText: best.aText,
+        afterText: best.bText,
+        detail: `A ${Math.round(best.gap / typical * 10) / 10}× line-height vertical gap appears between prose lines, but no semantic scene break is stored. Baseball/ornament scene dividers were lost on multiple IHOL pages. Confirm visually.`
+      });
+      possibleSceneBreaks++;
+    });
+    addCheck("Scene-break geometry audit", possibleSceneBreaks ? "warn" : "pass",
+      possibleSceneBreaks
+        ? `${possibleSceneBreaks} page${possibleSceneBreaks===1?"":"s"} have unusually large internal gaps without a semantic scene break.`
+        : "No suspicious large internal gaps without scene markers found.");
+
     let fragments = 0;
     state.pages.forEach((page, pageIndex) => {
       const paras = pageBlocks(page);
@@ -4133,6 +4228,65 @@
           setStatus("Quote warning saved as correct.");
         });
         button("Open page (optional)", "ghost", () => jumpToPage(issue.pageIndex));
+      } else if (issue.type === "False word boundary") {
+        button("Join fragments", "secondary", () => {
+          const page = state.pages[issue.pageIndex];
+          const blocks = pageBlocks(page);
+          if (!page || !blocks[issue.paraIndex]) return;
+          const pattern = new RegExp(`\\b${String(issue.left).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\.\\s+${String(issue.right).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`);
+          blocks[issue.paraIndex] = blocks[issue.paraIndex].replace(pattern, issue.suggestion);
+          commitPageText(issue.pageIndex, blocks.filter(Boolean).join("\n\n"));
+          state.ignoredFinalPolishIssues.add(issue.key);
+          saveCheckpoint();
+          const report = runFinalPolish();
+          if (report && els.finalPolishReview) els.finalPolishReview.open = true;
+          setStatus(`Joined “${issue.current}” → “${issue.suggestion}”.`);
+        });
+        button("Looks correct", "ghost", () => {
+          state.ignoredFinalPolishIssues.add(issue.key);
+          saveCheckpoint();
+          const report = runFinalPolish();
+          if (report && els.finalPolishReview) els.finalPolishReview.open = true;
+          setStatus("Saved this possible split as correct.");
+        });
+        button("Open page (optional)", "ghost", () => jumpToPage(issue.pageIndex));
+      } else if (issue.type === "Possible scene break") {
+        button("Insert scene break", "secondary", () => {
+          const page = state.pages[issue.pageIndex];
+          const blocks = pageBlocks(page);
+          if (!page || blocks.length < 2) return;
+          const norm = (v) => stripItalicMarkers(String(v || "")).replace(/\s+/g, " ").trim();
+          const before = norm(issue.beforeText);
+          const after = norm(issue.afterText);
+          const beforeTail = before.slice(-Math.min(44, before.length));
+          const afterHead = after.slice(0, Math.min(44, after.length));
+          let insertAt = -1;
+          for (let i = 0; i < blocks.length - 1; i++) {
+            const a = norm(blocks[i]);
+            const b = norm(blocks[i + 1]);
+            if (a.includes(beforeTail) && b.includes(afterHead)) { insertAt = i + 1; break; }
+          }
+          if (insertAt < 0) {
+            setStatus("Couldn’t safely locate the two paragraphs around this possible scene break. Open the page and add it manually.");
+            jumpToPage(issue.pageIndex);
+            return;
+          }
+          blocks.splice(insertAt, 0, "* * *");
+          commitPageText(issue.pageIndex, blocks.filter(Boolean).join("\n\n"));
+          state.ignoredFinalPolishIssues.add(issue.key);
+          saveCheckpoint();
+          const report = runFinalPolish();
+          if (report && els.finalPolishReview) els.finalPolishReview.open = true;
+          setStatus("Inserted a semantic scene break between the source-confirmed paragraphs.");
+        });
+        button("Looks correct", "ghost", () => {
+          state.ignoredFinalPolishIssues.add(issue.key);
+          saveCheckpoint();
+          const report = runFinalPolish();
+          if (report && els.finalPolishReview) els.finalPolishReview.open = true;
+          setStatus("Saved this large gap as not a scene break.");
+        });
+        button("Open page", "secondary", () => jumpToPage(issue.pageIndex));
       } else if (issue.type === "Terminal punctuation") {
         button("Add period", "secondary", () => {
           const page = state.pages[issue.pageIndex];
@@ -4453,6 +4607,9 @@
     let strayQuoteApostrophes = 0;
     let quoteSpaces = 0;
     let droppedPronounI = 0;
+    let digitLContractions = 0;
+    let openingQuoteSpaces = 0;
+    let missingPostQuoteSpaces = 0;
     const selected = pageIndexes ? new Set(pageIndexes) : null;
     for (let pageIndex = 0; pageIndex < state.pages.length; pageIndex++) {
       if (selected && !selected.has(pageIndex)) continue;
@@ -4466,12 +4623,15 @@
       strayQuoteApostrophes += result.strayQuoteApostrophes || 0;
       quoteSpaces += result.quoteSpaces || 0;
       droppedPronounI += result.droppedPronounI || 0;
+      digitLContractions += result.digitLContractions || 0;
+      openingQuoteSpaces += result.openingQuoteSpaces || 0;
+      missingPostQuoteSpaces += result.missingPostQuoteSpaces || 0;
     }
     saveCheckpoint();
     renderReview();
     if (els.polishStatus) els.polishStatus.textContent = `${fixedCount} safe fix${fixedCount === 1 ? "" : "es"}`;
-    setStatus(`Safe text cleanup applied ${ellipsisCount} ellipsis normalization${ellipsisCount === 1 ? "" : "s"}, ${sceneCount} scene-divider normalization${sceneCount === 1 ? "" : "s"}, ${quoteCount + strayQuoteApostrophes} quote repair${quoteCount + strayQuoteApostrophes === 1 ? "" : "s"}, ${quoteSpaces} closing-quote spacing fix${quoteSpaces === 1 ? "" : "es"}, and ${droppedPronounI} dropped-I contraction repair${droppedPronounI === 1 ? "" : "s"}. No spelling or prose rewrites were performed.`);
-    return { fixedCount, ellipsisCount, sceneCount, quoteCount, strayQuoteApostrophes, quoteSpaces, droppedPronounI };
+    setStatus(`Safe text cleanup applied ${ellipsisCount} ellipsis normalization${ellipsisCount === 1 ? "" : "s"}, ${sceneCount} scene-divider normalization${sceneCount === 1 ? "" : "s"}, ${quoteCount + strayQuoteApostrophes} quote repair${quoteCount + strayQuoteApostrophes === 1 ? "" : "s"}, ${quoteSpaces + openingQuoteSpaces + missingPostQuoteSpaces} quote-spacing fix${quoteSpaces + openingQuoteSpaces + missingPostQuoteSpaces === 1 ? "" : "es"}, ${droppedPronounI} dropped-I repair${droppedPronounI === 1 ? "" : "s"}, and ${digitLContractions} digit/l contraction repair${digitLContractions === 1 ? "" : "s"}. No spelling or prose rewrites were performed.`);
+    return { fixedCount, ellipsisCount, sceneCount, quoteCount, strayQuoteApostrophes, quoteSpaces, droppedPronounI, digitLContractions, openingQuoteSpaces, missingPostQuoteSpaces };
   }
 
   function repairTextNodesInParagraph(paragraph, repair) {

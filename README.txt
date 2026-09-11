@@ -169,3 +169,12 @@ v2.6.5: Added exportable italic detection 2.0 diagnostics with per-line slant/ga
 - Final Polish flags bare paragraph endings for source-confirmed missing-period review with one-click Add period.
 - Chapter-by-chapter safe cleanup is correctly scoped to the selected chapter.
 - Manual Review edits still win last.
+
+
+2.7.50 REGRESSION HARDENING
+- Restores the persistent Manual Page Lock from 2.7.49 while retaining QA Pattern Hardening.
+- Adds high-confidence one- and two-word italic-run detection to address the dominant IHOL regression family.
+- Adds Final Polish review for false period-inside-word boundaries such as `resent. ment`, `expres. sion`, and `assist. ant`.
+- Adds geometry-based review warnings for likely lost scene-break ornaments when a large internal page gap has no semantic scene marker.
+- Adds safe cleanup for `I'1l`-style digit/l contractions, spaces after opening quotes, and missing spaces after closing dialogue quotes.
+- Keeps missing terminal punctuation review-only and preserves manual edits as authoritative text.

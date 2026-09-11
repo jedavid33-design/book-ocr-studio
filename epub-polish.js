@@ -126,7 +126,10 @@ traffic waffle waffled waffles waffling
   // guessing the author's prose.
   function repairQaSafePatterns(input) {
     let text = String(input ?? "");
-    const counts = { strayQuoteApostrophes: 0, quoteSpaces: 0, droppedPronounI: 0 };
+    const counts = {
+      strayQuoteApostrophes: 0, quoteSpaces: 0, droppedPronounI: 0,
+      digitLContractions: 0, openingQuoteSpaces: 0, missingPostQuoteSpaces: 0
+    };
 
     // Paddle sometimes reads a closing double quote as apostrophe + double
     // quote:  okay.'"  ->  okay."  This shape cannot be a valid contraction.
@@ -142,6 +145,26 @@ traffic waffle waffled waffles waffling
       return punct + quote;
     });
 
+    // OCR sometimes leaves a space immediately after a paragraph-opening quote.
+    text = text.replace(/(^|\n\s*\n)(["“])[ \t]+(?=\S)/gm, (m, boundary, quote) => {
+      counts.openingQuoteSpaces += 1;
+      return boundary + quote;
+    });
+
+    // Closing dialogue quote glued to the following capitalized narration.
+    // Require terminal punctuation immediately before the quote so paragraph-
+    // opening quotes are never mistaken for closers.
+    text = text.replace(/([.!?…]["”])(?=[A-Z])/g, (m, closer) => {
+      counts.missingPostQuoteSpaces += 1;
+      return closer + " ";
+    });
+
+    // Common Paddle confusion: lowercase l becomes digit 1 inside I'll/it'll/etc.
+    text = text.replace(/\b([A-Za-z]+)'1l\b/g, (m, stem) => {
+      counts.digitLContractions += 1;
+      return `${stem}'ll`;
+    });
+
     // Paddle repeatedly drops the capital I from contractions. Restrict the
     // automatic repair to paragraph starts or immediately after an opening
     // dialogue quote, where 'm/'ll/'d/'ve cannot stand alone grammatically.
@@ -154,7 +177,11 @@ traffic waffle waffled waffles waffling
       return `${quote}I'${tail}`;
     });
 
-    return { text, ...counts, fixedCount: counts.strayQuoteApostrophes + counts.quoteSpaces + counts.droppedPronounI };
+    return {
+      text, ...counts,
+      fixedCount: counts.strayQuoteApostrophes + counts.quoteSpaces + counts.droppedPronounI +
+        counts.digitLContractions + counts.openingQuoteSpaces + counts.missingPostQuoteSpaces
+    };
   }
 
   function safePolishText(input) {
@@ -171,6 +198,9 @@ traffic waffle waffled waffles waffling
       strayQuoteApostrophes: qa.strayQuoteApostrophes,
       quoteSpaces: qa.quoteSpaces,
       droppedPronounI: qa.droppedPronounI,
+      digitLContractions: qa.digitLContractions,
+      openingQuoteSpaces: qa.openingQuoteSpaces,
+      missingPostQuoteSpaces: qa.missingPostQuoteSpaces,
     };
   }
 
