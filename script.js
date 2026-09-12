@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.53-final-polish-quote-left-shift";
+  const BUILD_VERSION = "2.7.54-persistence-and-barriers";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -1248,6 +1248,110 @@
     return String(text || "").replace(/\[\[\/?i\]\]/gi, "");
   }
 
+  function parseItalicMarkedText(value) {
+    const source = String(value || "");
+    const marker = /\[\[i\]\]|\[\[\/i\]\]/gi;
+    const ranges = [];
+    let plain = "";
+    let cursor = 0;
+    let italicStart = null;
+    let match;
+    while ((match = marker.exec(source))) {
+      plain += source.slice(cursor, match.index);
+      if (/^\[\[i\]\]$/i.test(match[0])) {
+        if (italicStart == null) italicStart = plain.length;
+      } else if (italicStart != null) {
+        if (plain.length > italicStart) ranges.push({ start: italicStart, end: plain.length });
+        italicStart = null;
+      }
+      cursor = match.index + match[0].length;
+    }
+    plain += source.slice(cursor);
+    if (italicStart != null && plain.length > italicStart) ranges.push({ start: italicStart, end: plain.length });
+    return { plain, ranges };
+  }
+
+  function mergeItalicRanges(ranges, maxLength) {
+    const sorted = (ranges || [])
+      .map(r => ({ start: Math.max(0, Math.min(maxLength, Number(r.start) || 0)), end: Math.max(0, Math.min(maxLength, Number(r.end) || 0)) }))
+      .filter(r => r.end > r.start)
+      .sort((a,b) => a.start - b.start || a.end - b.end);
+    const merged = [];
+    sorted.forEach(r => {
+      const prev = merged[merged.length - 1];
+      if (prev && r.start <= prev.end) prev.end = Math.max(prev.end, r.end);
+      else merged.push({ ...r });
+    });
+    return merged;
+  }
+
+  function renderItalicRanges(plain, ranges) {
+    const merged = mergeItalicRanges(ranges, plain.length);
+    if (!merged.length) return plain;
+    let out = "", cursor = 0;
+    merged.forEach(r => {
+      out += plain.slice(cursor, r.start);
+      out += `[[i]]${plain.slice(r.start, r.end)}[[/i]]`;
+      cursor = r.end;
+    });
+    return out + plain.slice(cursor);
+  }
+
+  function flexiblePhraseMatch(haystack, needle, fromIndex = 0) {
+    const parts = String(needle || "").trim().split(/\s+/).filter(Boolean);
+    if (!parts.length) return null;
+    const escaped = parts.map(part => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    const re = new RegExp(escaped.join("\\s+"), "gu");
+    re.lastIndex = Math.max(0, fromIndex || 0);
+    const match = re.exec(haystack);
+    return match ? { start: match.index, end: match.index + match[0].length, text: match[0] } : null;
+  }
+
+  // Italic recognition is geometry-derived, but repaired/manual page text is the
+  // authority for wording and paragraph structure. Project accepted italic runs
+  // onto the current text instead of rebuilding the page from OCR geometry.
+  // Existing manual italic spans are unioned with automatic evidence, so a
+  // later scan cannot erase a user's formatting decision.
+  function projectItalicEvidenceToPage(page) {
+    if (!page || !Array.isArray(page.layoutLines) || !page.layoutLines.length) return 0;
+    const current = parseItalicMarkedText(page.text || "");
+    const plain = current.plain;
+    const ranges = [...current.ranges];
+    let searchFrom = 0;
+    let added = 0;
+
+    for (const line of page.layoutLines) {
+      const markedLine = String(line?.italicText || "");
+      if (!markedLine || !/\[\[i\]\]/i.test(markedLine)) continue;
+      const parsedLine = parseItalicMarkedText(markedLine);
+      if (!parsedLine.ranges.length || !parsedLine.plain.trim()) continue;
+
+      let whole = flexiblePhraseMatch(plain, parsedLine.plain, searchFrom);
+      if (!whole) whole = flexiblePhraseMatch(plain, parsedLine.plain, 0);
+      if (!whole) continue;
+
+      const matchedSegment = plain.slice(whole.start, whole.end);
+      for (const r of parsedLine.ranges) {
+        const italicPhrase = parsedLine.plain.slice(r.start, r.end);
+        if (!italicPhrase.trim()) continue;
+        const local = flexiblePhraseMatch(matchedSegment, italicPhrase, 0);
+        if (!local) continue;
+        ranges.push({ start: whole.start + local.start, end: whole.start + local.end });
+        added++;
+      }
+      searchFrom = Math.max(searchFrom, whole.end);
+    }
+
+    if (!added && current.ranges.length === 0) return 0;
+    const nextText = renderItalicRanges(plain, ranges);
+    if (nextText !== String(page.text || "")) {
+      page.text = nextText;
+      page.chapterCandidate = chapterHeuristic(page.text);
+      return added || 1;
+    }
+    return 0;
+  }
+
   function paragraphToEpubHtml(text) {
     const raw = String(text || "");
     if (raw.trim() === "* * *") return '<hr class="scene-break"/>';
@@ -1310,9 +1414,14 @@
     const replacement = `[[i]]${selected}[[/i]]`;
     textarea.setRangeText(replacement, start, end, "select");
     const page = state.pages[state.currentPageIndex];
-    if (page) page.text = textarea.value;
+    if (page) {
+      page.text = textarea.value;
+      page.manualEdited = true;
+      page.chapterCandidate = chapterHeuristic(page.text);
+      saveRepairOverlayPage(state.currentPageIndex, { manualEdited: true });
+    }
     saveCheckpoint();
-    setStatus(`Marked the selected text as italic on page ${state.currentPageIndex + 1}. EPUB export will preserve it as emphasis.`);
+    setStatus(`Marked the selected text as italic on page ${state.currentPageIndex + 1}. The formatting is now durable and EPUB export will preserve it as emphasis.`);
   }
 
   function clearItalicMarksOnPage() {
@@ -1326,9 +1435,14 @@
     }
     textarea.value = after;
     const page = state.pages[state.currentPageIndex];
-    if (page) page.text = after;
+    if (page) {
+      page.text = after;
+      page.manualEdited = true;
+      page.chapterCandidate = chapterHeuristic(page.text);
+      saveRepairOverlayPage(state.currentPageIndex, { manualEdited: true });
+    }
     saveCheckpoint();
-    setStatus(`Removed manual italic marks from page ${state.currentPageIndex + 1}.`);
+    setStatus(`Removed italic marks from page ${state.currentPageIndex + 1} and saved that formatting decision durably.`);
   }
 
   function updateNavigationControls() {
@@ -3313,7 +3427,7 @@
     }
     syncCurrentEditor();
     els.autoItalicScan.disabled = true;
-    let markedRuns = 0, markedWords = 0, scannedWords = 0, scannedLines = 0;
+    let markedRuns = 0, markedWords = 0, scannedWords = 0, scannedLines = 0, projectedItalicPages = 0;
     try {
       for (let index = 0; index < state.pages.length; index++) {
         const page = state.pages[index];
@@ -3373,19 +3487,24 @@
           markedWords += acceptedWords;
           line.italicAuto = acceptedRuns > 0;
         }
+        const projected = projectItalicEvidenceToPage(page);
+        if (projected) {
+          projectedItalicPages++;
+          // Save the formatted current text into the durable overlay without
+          // changing manual-page authority. Later repair stages may reapply the
+          // overlay, so it must contain the newest italic markers too.
+          saveRepairOverlayPage(index);
+        }
         canvas.width = 1; canvas.height = 1;
       }
-      if (rebuildText) {
-        rebuildParagraphsFromSavedGeometry({ confirmOverwrite: false });
-      } else {
-        // On a Repair Book rerun the current repaired text is canonical.
-        // Never regenerate it from original OCR geometry merely to rescan italics.
-        saveCheckpoint();
-      }
+      // Paragraph reconstruction already ran before the italic stage in Guided
+      // Repair. Never rebuild from OCR geometry here: doing so skipped manual
+      // pages and allowed later overlays to erase formatting. Italic evidence is
+      // projected onto the authoritative current page text instead.
       saveCheckpoint();
       if (els.italicStatus) els.italicStatus.textContent = `${markedRuns} run${markedRuns === 1 ? "" : "s"} · ${markedWords} words`;
-      setStatus(`Automatic italic scan 2.5 checked ${scannedWords} words across ${scannedLines} OCR lines and marked ${markedRuns} hybrid run${markedRuns === 1 ? "" : "s"} (${markedWords} words). Full-line italics use line typography; inline runs must beat both same-line and surrounding-line baselines.`);
-      return { markedRuns, markedWords, scannedWords, scannedLines };
+      setStatus(`Automatic italic scan 2.5 checked ${scannedWords} words across ${scannedLines} OCR lines and marked ${markedRuns} hybrid run${markedRuns === 1 ? "" : "s"} (${markedWords} words). Formatting evidence was projected onto ${projectedItalicPages} current page${projectedItalicPages === 1 ? "" : "s"} without rebuilding repaired text.`);
+      return { markedRuns, markedWords, scannedWords, scannedLines, projectedItalicPages };
     } catch (err) {
       console.error(err);
       setStatus(`Automatic italic scan failed: ${err.message || err}`);
@@ -3758,6 +3877,10 @@
           setStatus(`Correction could not be applied and durably saved on page ${candidate.pageIndex + 1}. The review item was kept open.`);
           return;
         }
+        const reviewedPage = state.pages[candidate.pageIndex];
+        if (reviewedPage) reviewedPage.manualEdited = true;
+        saveRepairOverlayPage(candidate.pageIndex, { manualEdited: true });
+        saveCheckpoint();
         refreshDownstreamRepairState();
         setStatus(`Applied and durably saved the reviewed dropcap correction on page ${candidate.pageIndex + 1}.`);
       });
@@ -3790,6 +3913,10 @@
         if (pos >= 0) {
           const nextText = text.slice(0, pos) + c.joined + text.slice(pos + c.original.length);
           commitPageText(c.pageIndex, nextText);
+          const reviewedPage = state.pages[c.pageIndex];
+          if (reviewedPage) reviewedPage.manualEdited = true;
+          saveRepairOverlayPage(c.pageIndex, { manualEdited: true });
+          saveCheckpoint();
           refreshDownstreamRepairState();
           setStatus(`Repaired “${c.original}” → “${c.joined}”. Kindle Ready will use the repaired text on its next check.`);
         }
@@ -3888,6 +4015,41 @@
         ? `${wrapHyphens} unresolved candidate${wrapHyphens===1?"":"s"} remain in repaired text; ${alreadyResolvedWrapHyphens} source wrap${alreadyResolvedWrapHyphens===1?" was":"s were"} already healed upstream.`
         : `No unresolved wrap-hyphens remain in repaired text${alreadyResolvedWrapHyphens ? `; ${alreadyResolvedWrapHyphens} source wrap${alreadyResolvedWrapHyphens===1?" was":"s were"} already healed upstream` : ""}.`);
 
+    // Quote review is intentionally evidence-first. v2.7.52/.53 tried to
+    // normalize one left-shift pattern automatically; that could hide a real
+    // review item and overfit one book. v2.7.54 surfaces both quote-balance and
+    // quote-boundary problems without silently moving quotation marks.
+    const normalizeQuoteEvidence = (value) => stripItalicMarkers(String(value || ""))
+      .replace(/[“”]/g, '"')
+      .replace(/[‘’]/g, "'")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    // Detect: narrative/action sentence." Dialogue...
+    // If the quote appears while the prefix has balanced double quotes, it is
+    // acting like a new opening quote but is attached to the preceding sentence.
+    // This is review-only. The suggested edit moves only that quote across the
+    // whitespace boundary and preserves every other character/marker.
+    const findOpeningQuoteLeftShift = (value) => {
+      const raw = String(value || "");
+      const re = /([.!?…])(["“”])([ \t]+)(?=[A-Z])/g;
+      let match;
+      while ((match = re.exec(raw))) {
+        const prefix = stripItalicMarkers(raw.slice(0, match.index + 1));
+        const priorQuotes = (prefix.match(/["“”]/g) || []).length;
+        if (priorQuotes % 2 !== 0) continue; // already inside quoted dialogue
+        const openingQuote = match[2] === '"' ? '"' : '“';
+        const suggestion = raw.slice(0, match.index) + match[1] + match[3] + openingQuote + raw.slice(match.index + match[0].length);
+        return {
+          index: match.index,
+          original: match[0],
+          suggestion,
+          current: normalizeQuoteEvidence(raw).slice(Math.max(0, match.index - 100), match.index + 180)
+        };
+      }
+      return null;
+    };
+
     let quoteFlags = 0;
     const oddQuotes = [];
     state.pages.forEach((page, pageIndex) => {
@@ -3925,6 +4087,9 @@
 
     oddQuotes.forEach(entry => {
       if (crossPageResolved.has(`${entry.pageIndex}|${entry.paraIndex}`)) return;
+      // A left-shifted opening quote frequently creates an odd quote count too.
+      // Show one boundary card, not two competing warnings for the same cause.
+      if (findOpeningQuoteLeftShift(entry.text)) return;
       const issue = {
         type: "Quote balance",
         pageIndex: entry.pageIndex,
@@ -3946,28 +4111,46 @@
         ? `${quoteFlags} paragraph${quoteFlags===1?"":"s"} still need quote review after cross-page continuations were reconciled.`
         : "No unresolved quote-balance issues remain after cross-page continuation checks.");
 
-    // Quote-boundary drift audit. A paragraph can have perfectly balanced quote
-    // counts while an opening quote has migrated to the paragraph start during
-    // OCR/reconstruction. Regression case: "I toss my head from side to side.
-    // Once I came..." where the source quote actually begins before "Once".
-    // Never rewrite this automatically. Prefer source geometry as evidence, then
-    // offer a one-click relocation plus the normal paragraph editor.
+    // Quote-boundary drift has two observed forms:
+    //   1) "I toss my head... Once I came...   (quote drifted to paragraph start)
+    //   2) Isaiah laughs." Range of motion...   (opening quote shifted left)
+    // Both stay review-only. Source geometry is supporting evidence when present.
     let quoteBoundaryDrift = 0;
-    const normalizeQuoteEvidence = (value) => stripItalicMarkers(String(value || ""))
-      .replace(/[“”]/g, '"')
-      .replace(/[‘’]/g, "'")
-      .replace(/\s+/g, " ")
-      .trim();
-    const narrativeActionLead = /^(?:I|He|She|We|They|My|His|Her|Their)\s+(?:toss|tosses|shake|shakes|shrug|shrugs|nod|nods|laugh|laughs|smile|smiles|sigh|sighs|cross|crosses|turn|turns|look|looks|glance|glances|watch|watches|lean|leans|sit|sits|stand|stands|walk|walks|step|steps|move|moves|pull|pulls|push|pushes|raise|raises|lower|lowers|exhale|exhales|inhale|inhales|huff|huffs|pause|pauses|swallow|swallows|blink|blinks|grab|grabs|take|takes|set|sets|drop|drops|lift|lifts|bring|brings|run|runs|hold|holds|keep|keeps|feel|feels|hear|hears|see|sees|close|closes|open|opens|rest|rests|gesture|gestures|stare|stares|breathe|breathes)\b/i;
+    const narrativeActionLead = /^(?:I|He|She|We|They|My|His|Her|Their)\s+(?:toss|tosses|shake|shakes|shrug|shrugs|nod|nods|laugh|laughs|smile|smiles|sigh|sighs|cross|crosses|turn|turns|look|looks|glance|glances|watch|watches|lean|leans|sit|sits|stand|stands|walk|walks|step|steps|move|moves|pull|pulls|push|pushes|raise|raises|lower|lowers|exhale|exhales|inhale|inhales|huff|huffs|pause|pauses|swallow|swallows|blink|blinks|grab|grabs|take|takes|set|sets|drop|drops|lift|lifts|bring|brings|run|runs|hold|holds|keep|keeps|feel|feels|hear|hears|see|sees|close|closes|open|opens|rest|rests|gesture|gestures|stare|stares|breathe|breathes|clear|clears)\b/i;
 
     state.pages.forEach((page, pageIndex) => {
       const paras = pageBlocks(page);
       const evidenceLines = (Array.isArray(page.layoutLines) ? page.layoutLines : [])
         .map(line => normalizeQuoteEvidence(line?.text || ""))
         .filter(Boolean);
+
       paras.forEach((para, paraIndex) => {
-        const plain = normalizeQuoteEvidence(para);
-        if (!/^["“]/.test(stripItalicMarkers(String(para || "")).trim())) return;
+        const raw = String(para || "");
+        const plain = normalizeQuoteEvidence(raw);
+
+        const leftShift = findOpeningQuoteLeftShift(raw);
+        if (leftShift) {
+          const issue = {
+            type: "Quote boundary drift",
+            pageIndex,
+            paraIndex,
+            fileName: page.fileName || page.file?.name || `Page ${pageIndex + 1}`,
+            current: plain.slice(0, 260),
+            fullText: para,
+            suggestion: leftShift.suggestion,
+            evidence: "balanced-prefix boundary",
+            detail: `An opening dialogue quote appears attached to the end of the preceding sentence (for example: action sentence.\" Dialogue). Studio has not changed it automatically. Confirm against the screenshot, then move the opening quote if needed.`
+          };
+          issue.key = finalIssueKey(issue);
+          if (!state.ignoredFinalPolishIssues.has(issue.key)) {
+            quoteBoundaryDrift++;
+            issues.push(issue);
+          }
+          return;
+        }
+
+        // Existing leading-quote drift audit.
+        if (!/^["“]/.test(stripItalicMarkers(raw).trim())) return;
         const quoteCount = (plain.match(/"/g) || []).length;
         if (quoteCount < 2 || quoteCount % 2 !== 0) return;
 
@@ -3983,9 +4166,6 @@
           const line = evidenceLines[i];
           const withoutLeadingQuote = line.replace(/^"\s*/, "");
           if (!withoutLeadingQuote.toLowerCase().startsWith(probe)) continue;
-          // Strong evidence when the OCR line itself begins with prose rather
-          // than a quote and shows a quote later, or the following OCR line
-          // begins with a quote.
           const sourceStartsQuoted = /^"/.test(line);
           const quoteLater = line.indexOf('"') > 0;
           const nextStartsQuoted = /^"/.test(evidenceLines[i + 1] || "");
@@ -3998,7 +4178,6 @@
         const actionEvidence = narrativeActionLead.test(firstSentence);
         if (!geometryEvidence && !actionEvidence) return;
 
-        const raw = String(para || "");
         const relocated = raw.replace(/^(\s*)["“]([^.!?]{3,180}[.!?])(\s+)(?=\S)/, (all, lead, sentence, gap) => {
           const quote = /“/.test(all[lead.length] || "") ? "“" : '"';
           return `${lead}${sentence}${gap}${quote}`;
@@ -4026,7 +4205,7 @@
 
     addCheck("Quote-boundary audit", quoteBoundaryDrift ? "warn" : "pass",
       quoteBoundaryDrift
-        ? `${quoteBoundaryDrift} paragraph${quoteBoundaryDrift===1?"":"s"} may have an opening quote attached to preceding narration/action.`
+        ? `${quoteBoundaryDrift} paragraph${quoteBoundaryDrift===1?"":"s"} may have a misplaced opening dialogue quote and need screenshot confirmation.`
         : "No likely quote-boundary drift detected.");
 
     let terminalPunctuation = 0;
@@ -4240,6 +4419,9 @@
           const end = start + match[0].length;
           const nextText = before.slice(0, start) + suggestion + before.slice(end);
           commitPageText(issue.pageIndex, nextText);
+          const reviewedPage = state.pages[issue.pageIndex];
+          if (reviewedPage) reviewedPage.manualEdited = true;
+          saveRepairOverlayPage(issue.pageIndex, { manualEdited: true });
 
           const joinedText = match[0];
           setStatus(`Joined “${joinedText}” → “${suggestion}”.`);
@@ -4337,6 +4519,9 @@
           const pattern = new RegExp(`\\b${String(issue.left).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\.\\s+${String(issue.right).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`);
           blocks[issue.paraIndex] = blocks[issue.paraIndex].replace(pattern, issue.suggestion);
           commitPageText(issue.pageIndex, blocks.filter(Boolean).join("\n\n"));
+          const reviewedPage = state.pages[issue.pageIndex];
+          if (reviewedPage) reviewedPage.manualEdited = true;
+          saveRepairOverlayPage(issue.pageIndex, { manualEdited: true });
           state.ignoredFinalPolishIssues.add(issue.key);
           saveCheckpoint();
           const report = runFinalPolish();
@@ -4374,6 +4559,9 @@
           }
           blocks.splice(insertAt, 0, "* * *");
           commitPageText(issue.pageIndex, blocks.filter(Boolean).join("\n\n"));
+          const reviewedPage = state.pages[issue.pageIndex];
+          if (reviewedPage) reviewedPage.manualEdited = true;
+          saveRepairOverlayPage(issue.pageIndex, { manualEdited: true });
           state.ignoredFinalPolishIssues.add(issue.key);
           saveCheckpoint();
           const report = runFinalPolish();
@@ -4397,6 +4585,9 @@
           if (/[.!?…]["”'’)]?$/.test(stripItalicMarkers(current))) return;
           blocks[issue.paraIndex] = `${current}.`;
           commitPageText(issue.pageIndex, blocks.filter(Boolean).join("\n\n"));
+          const reviewedPage = state.pages[issue.pageIndex];
+          if (reviewedPage) reviewedPage.manualEdited = true;
+          saveRepairOverlayPage(issue.pageIndex, { manualEdited: true });
           state.ignoredFinalPolishIssues.add(issue.key);
           saveCheckpoint();
           const report = runFinalPolish();
@@ -4420,6 +4611,8 @@
             blocks[i - 1] = `${blocks[i - 1]} ${blocks[i]}`.replace(/\s+/g, " ");
             blocks.splice(i, 1);
             writePageBlocks(page, blocks);
+            page.manualEdited = true;
+            saveRepairOverlayPage(issue.pageIndex, { manualEdited: true });
             saveCheckpoint();
             renderReview();
             runFinalPolish();
@@ -4433,6 +4626,8 @@
             blocks[i] = `${blocks[i]} ${blocks[i + 1]}`.replace(/\s+/g, " ");
             blocks.splice(i + 1, 1);
             writePageBlocks(page, blocks);
+            page.manualEdited = true;
+            saveRepairOverlayPage(issue.pageIndex, { manualEdited: true });
             saveCheckpoint();
             renderReview();
             runFinalPolish();
@@ -4492,8 +4687,10 @@
         ((pageIndex + 1) / Math.max(1, state.pages.length)) * 100,
         `page ${pageIndex + 1}/${state.pages.length}`);
       const page = state.pages[pageIndex];
-      const result = polish(page.text || "");
+      const beforeText = String(page.text || "");
+      const result = polish(beforeText);
       page.text = result.text;
+      if (page.text !== beforeText) saveRepairOverlayPage(pageIndex);
       fixedCount += result.fixedCount || 0;
       punctuationSpacing += result.punctuationSpacing || 0;
       quoteSpacing += result.quoteSpacing || 0;
@@ -4715,8 +4912,10 @@
     for (let pageIndex = 0; pageIndex < state.pages.length; pageIndex++) {
       if (selected && !selected.has(pageIndex)) continue;
       const page = state.pages[pageIndex];
-      const result = polish(page.text || "");
+      const beforeText = String(page.text || "");
+      const result = polish(beforeText);
       page.text = result.text;
+      if (page.text !== beforeText) saveRepairOverlayPage(pageIndex);
       fixedCount += result.fixedCount || 0;
       ellipsisCount += result.ellipsisCount || 0;
       sceneCount += result.sceneCount || 0;
@@ -4987,9 +5186,13 @@
       const paragraphs = exportParagraphs(pageText);
       if (!paragraphs.length) continue;
 
+      const firstParagraphIsSceneBreak = String(paragraphs[0] || "").trim() === "* * *";
+      const previousExportIsSceneBreak = String(out[out.length - 1]?.text || "").trim() === "* * *";
       const canJoinAcrossPage = pageIndex > section.start
         && out.length
         && !page?.chapterStart
+        && !firstParagraphIsSceneBreak
+        && !previousExportIsSceneBreak
         && page?.layoutMeta
         && page.layoutMeta.firstStartsIndented === false
         && page.layoutMeta.firstIsFurniture === false

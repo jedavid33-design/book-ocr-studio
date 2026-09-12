@@ -1,7 +1,7 @@
-const CACHE_NAME = "book-ocr-studio-shell-v2-7-52-opening-quote-left-shift";
+const CACHE_NAME = "book-ocr-studio-shell-v2-7-54-persistence-and-barriers";
 const APP_SHELL = [
-  "./styles.css?v=2.7.53-final-polish-quote-left-shift",
-  "./epub-polish.js?v=2.7.53-final-polish-quote-left-shift",
+  "./styles.css?v=2.7.54-persistence-and-barriers",
+  "./epub-polish.js?v=2.7.54-persistence-and-barriers",
   "./manifest.webmanifest",
   "./icon-192.png",
   "./icon-512.png",

@@ -165,48 +165,11 @@ traffic waffle waffled waffles waffling
     });
 
 
-    // OCR/reconstruction can slide an opening dialogue quote one character to
-    // the left across a sentence boundary:
-    //   Isaiah laughs." Range of motion? Really?'
-    // becomes:
-    //   Isaiah laughs. "Range of motion? Really?"
-    // Only normalize when the paragraph begins with a conservative narrative
-    // action lead and there is no earlier double quote in that first sentence.
-    // This keeps ordinary quoted dialogue/narration untouched.
-    const actionLead = /^(?:I|He|She|We|They|My|His|Her|Their|[A-Z][a-z]+)\s+(?:toss|tosses|shake|shakes|shrug|shrugs|nod|nods|laugh|laughs|smile|smiles|sigh|sighs|cross|crosses|turn|turns|look|looks|glance|glances|watch|watches|lean|leans|sit|sits|stand|stands|walk|walks|step|steps|move|moves|pull|pulls|push|pushes|raise|raises|lower|lowers|exhale|exhales|inhale|inhales|huff|huffs|pause|pauses|swallow|swallows|blink|blinks|grab|grabs|take|takes|set|sets|drop|drops|lift|lifts|bring|brings|run|runs|hold|holds|keep|keeps|feel|feels|hear|hears|see|sees|close|closes|open|opens|rest|rests|gesture|gestures|stare|stares|breathe|breathes|clear|clears)\b/i;
-
-    const blocks = text.split(/(\n{2,})/);
-    text = blocks.map(block => {
-      if (/^\n{2,}$/.test(block)) return block;
-      const leading = block.match(/^\s*/)?.[0] || "";
-      const trailing = block.match(/\s*$/)?.[0] || "";
-      let core = block.slice(leading.length, block.length - trailing.length || block.length);
-      if (!core || !actionLead.test(core)) return block;
-
-      // First sentence must contain no earlier double quote. The suspicious
-      // quote is immediately after its terminal punctuation and before the
-      // next capitalized dialogue token.
-      const m = core.match(/^([^"“”\n]{3,180}?[.!?])(["”])([ \t]+)(?=[A-Z])/);
-      if (!m) return block;
-
-      const before = m[1];
-      const quote = m[2];
-      const gap = m[3];
-      core = before + gap + quote + core.slice(m[0].length);
-
-      // A frequent companion OCR error reads the matching closing double quote
-      // as an apostrophe. Once this normalization has introduced the opening
-      // double quote, repair that terminal apostrophe only when it is the sole
-      // unmatched double-quote mate in the paragraph.
-      const normalizedQuotes = core.replace(/[“”]/g, '"');
-      const quoteCount = (normalizedQuotes.match(/"/g) || []).length;
-      if (quoteCount % 2 === 1 && /[.!?][’']$/.test(core)) {
-        core = core.replace(/([.!?])[’']$/, '$1"');
-      }
-
-      counts.openingQuoteBoundaryShifts += 1;
-      return leading + core + trailing;
-    }).join("");
+    // Opening-quote boundary shifts are deliberately REVIEW-ONLY in v2.7.54.
+    // A pattern such as `Isaiah laughs." Range...` is suspicious, but prose
+    // styles vary enough that Studio should surface it in Final Polish instead
+    // of silently moving quotation marks. `openingQuoteBoundaryShifts` therefore
+    // remains zero here and is counted only by the audit/review path.
 
     // Common Paddle confusion: lowercase l becomes digit 1 inside I'll/it'll/etc.
     text = text.replace(/\b([A-Za-z]+)'1l\b/g, (m, stem) => {

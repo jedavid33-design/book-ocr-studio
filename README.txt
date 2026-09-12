@@ -192,3 +192,12 @@ v2.6.5: Added exportable italic detection 2.0 diagnostics with per-line slant/ga
 - Runs during safe cleanup before quote review, so repaired paragraphs no longer return as misleading quote-balance cards.
 - Keeps ambiguous quote placement review-only; this does not broadly rewrite balanced dialogue.
 
+
+
+2.7.54 PERSISTENCE + BARRIERS
+- Italic geometry evidence is projected onto the authoritative repaired page text instead of rebuilding text from OCR geometry. Existing manual italic spans are preserved and accepted formatting is saved to the durable repair overlay.
+- Manual Mark selection italic / Remove italic marks decisions are durable manual-page authority.
+- Opening-quote left-shift patterns such as `Isaiah laughs.\" Range...` are review-only and now surface in Final Polish instead of being silently normalized. The audit also covers mid-paragraph shifts, not only paragraph-leading drift.
+- Semantic scene breaks are hard barriers during cross-page EPUB paragraph joining, preventing a scene divider from being swallowed into adjacent prose.
+- User-confirmed Repair/Polish edits (dropcaps, ligatures, false-word joins, scene breaks, terminal periods, paragraph merges) are saved as durable authoritative overlays.
+- Automatic safe-polish changes are mirrored into the durable overlay so later repair stages cannot resurrect stale pre-polish text.
