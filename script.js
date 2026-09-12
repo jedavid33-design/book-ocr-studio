@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.54-persistence-and-barriers";
+  const BUILD_VERSION = "2.7.55-italics-authority";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -1312,12 +1312,21 @@
   // onto the current text instead of rebuilding the page from OCR geometry.
   // Existing manual italic spans are unioned with automatic evidence, so a
   // later scan cannot erase a user's formatting decision.
+  //
+  // v2.7.55 hardening: repaired text often differs slightly from the original
+  // OCR line (fixed punctuation, contractions, split words, etc.). Requiring the
+  // ENTIRE OCR line to match before projecting emphasis made accepted italics
+  // disappear from export. Prefer the whole-line anchor when available, but
+  // fall back to matching each accepted italic phrase directly in authoritative
+  // page text. This preserves formatting without letting OCR geometry replace
+  // repaired wording or paragraph structure.
   function projectItalicEvidenceToPage(page) {
     if (!page || !Array.isArray(page.layoutLines) || !page.layoutLines.length) return 0;
     const current = parseItalicMarkedText(page.text || "");
     const plain = current.plain;
     const ranges = [...current.ranges];
-    let searchFrom = 0;
+    let lineSearchFrom = 0;
+    let runSearchFrom = 0;
     let added = 0;
 
     for (const line of page.layoutLines) {
@@ -1326,20 +1335,36 @@
       const parsedLine = parseItalicMarkedText(markedLine);
       if (!parsedLine.ranges.length || !parsedLine.plain.trim()) continue;
 
-      let whole = flexiblePhraseMatch(plain, parsedLine.plain, searchFrom);
+      let whole = flexiblePhraseMatch(plain, parsedLine.plain, lineSearchFrom);
       if (!whole) whole = flexiblePhraseMatch(plain, parsedLine.plain, 0);
-      if (!whole) continue;
+      const matchedSegment = whole ? plain.slice(whole.start, whole.end) : "";
 
-      const matchedSegment = plain.slice(whole.start, whole.end);
       for (const r of parsedLine.ranges) {
         const italicPhrase = parsedLine.plain.slice(r.start, r.end);
         if (!italicPhrase.trim()) continue;
-        const local = flexiblePhraseMatch(matchedSegment, italicPhrase, 0);
-        if (!local) continue;
-        ranges.push({ start: whole.start + local.start, end: whole.start + local.end });
+
+        let absolute = null;
+        if (whole) {
+          const local = flexiblePhraseMatch(matchedSegment, italicPhrase, 0);
+          if (local) absolute = { start: whole.start + local.start, end: whole.start + local.end };
+        }
+
+        // If repairs changed any non-italic text on the OCR line, the whole-line
+        // anchor may be gone. Match the accepted run itself, preserving document
+        // order to reduce accidental attachment to repeated phrases.
+        if (!absolute) {
+          let direct = flexiblePhraseMatch(plain, italicPhrase, runSearchFrom);
+          if (!direct) direct = flexiblePhraseMatch(plain, italicPhrase, 0);
+          if (direct) absolute = direct;
+        }
+
+        if (!absolute) continue;
+        ranges.push(absolute);
+        runSearchFrom = Math.max(runSearchFrom, absolute.end);
         added++;
       }
-      searchFrom = Math.max(searchFrom, whole.end);
+
+      if (whole) lineSearchFrom = Math.max(lineSearchFrom, whole.end);
     }
 
     if (!added && current.ranges.length === 0) return 0;
@@ -1350,6 +1375,22 @@
       return added || 1;
     }
     return 0;
+  }
+
+  function ensureItalicEvidenceProjected({ persist = true } = {}) {
+    let changedPages = 0;
+    let projectedRuns = 0;
+    state.pages.forEach((page, pageIndex) => {
+      const before = String(page?.text || "");
+      const added = projectItalicEvidenceToPage(page);
+      if (String(page?.text || "") !== before) {
+        changedPages++;
+        projectedRuns += Math.max(1, added || 0);
+        if (persist) saveRepairOverlayPage(pageIndex);
+      }
+    });
+    if (changedPages && persist) saveCheckpoint();
+    return { changedPages, projectedRuns };
   }
 
   function paragraphToEpubHtml(text) {
@@ -5210,6 +5251,9 @@
 
   function kindleReadyChecks() {
     syncCurrentEditor();
+    // Final authority pass: accepted geometry-derived emphasis must be present
+    // in page.text before preflight counts what the EPUB will serialize.
+    ensureItalicEvidenceProjected();
 
     const checks = [];
     const add = (name, status, detail) => checks.push({ name, status, detail });
@@ -5327,6 +5371,10 @@
       return;
     }
     syncCurrentEditor();
+    // Do not trust an earlier scan/projection to still be reflected after later
+    // Repair/Polish edits. Re-project accepted italic evidence onto the latest
+    // authoritative wording immediately before serialization.
+    ensureItalicEvidenceProjected();
     if (!state.pages.some(p => normalizedPageText(p.text))) throw new Error("There is no OCR text to export.");
 
     const title = (els.bookTitle.value || "Untitled Book").trim();

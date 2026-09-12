@@ -1,7 +1,7 @@
-const CACHE_NAME = "book-ocr-studio-shell-v2-7-54-persistence-and-barriers";
+const CACHE_NAME = "book-ocr-studio-shell-v2-7-55-italics-authority";
 const APP_SHELL = [
-  "./styles.css?v=2.7.54-persistence-and-barriers",
-  "./epub-polish.js?v=2.7.54-persistence-and-barriers",
+  "./styles.css?v=2.7.55-italics-authority",
+  "./epub-polish.js?v=2.7.55-italics-authority",
   "./manifest.webmanifest",
   "./icon-192.png",
   "./icon-512.png",

@@ -201,3 +201,8 @@ v2.6.5: Added exportable italic detection 2.0 diagnostics with per-line slant/ga
 - Semantic scene breaks are hard barriers during cross-page EPUB paragraph joining, preventing a scene divider from being swallowed into adjacent prose.
 - User-confirmed Repair/Polish edits (dropcaps, ligatures, false-word joins, scene breaks, terminal periods, paragraph merges) are saved as durable authoritative overlays.
 - Automatic safe-polish changes are mirrored into the durable overlay so later repair stages cannot resurrect stale pre-polish text.
+
+2.7.55 ITALICS AUTHORITY
+- Hardened accepted italic projection across repaired wording.
+- Added ordered run-level fallback matching when whole OCR lines no longer match.
+- Kindle Ready and EPUB export now re-project accepted italic evidence immediately before serialization.
