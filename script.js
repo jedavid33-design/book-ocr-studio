@@ -3447,15 +3447,21 @@
       const runCoverage = scored.length ? words.length / scored.length : 0;
       const adaptiveEvidence = relativeEvidence || surroundingEvidence;
 
-      const acceptedLong = words.length >= 3 && runCoverage <= 0.72 &&
-        avgGain >= 0.0070 && avgAbsSlant >= 0.20 && adaptiveEvidence;
+      const acceptedLong = words.length >= 3 && runCoverage <= 0.68 &&
+        avgGain >= 0.0100 && avgAbsSlant >= 0.24 &&
+        slantLift >= 0.12 && gainLift >= 0.0045 && adaptiveEvidence;
       // Short emphasis is common in novels. Keep it precision-biased, but no
       // longer require extreme values that real one/two-word italics rarely hit.
-      const acceptedShort = words.length >= 1 && words.length <= 2 && runCoverage <= 0.55 &&
-        avgGain >= 0.0090 && avgAbsSlant >= 0.24 &&
-        slantLift >= 0.11 && gainLift >= 0.0040 &&
-        (surroundingLineResults.length < 2 || surroundingSlantLift >= 0.08) &&
-        adaptiveEvidence;
+      const shortText = words.map(w => String(w.text || "").replace(/[^A-Za-z']/g, "")).join(" ").toLowerCase();
+      const weakSingleton = words.length === 1 && /^(?:a|an|and|as|at|be|by|for|he|her|him|his|i|in|is|it|me|my|of|on|or|she|so|the|to|we|you)$/.test(shortText);
+      const acceptedShort = !weakSingleton && words.length >= 1 && words.length <= 2 && runCoverage <= 0.45 &&
+        avgGain >= (words.length === 1 ? 0.0160 : 0.0130) &&
+        avgAbsSlant >= (words.length === 1 ? 0.30 : 0.27) &&
+        slantLift >= (words.length === 1 ? 0.17 : 0.14) &&
+        gainLift >= (words.length === 1 ? 0.0070 : 0.0055) &&
+        surroundingLineResults.length >= 2 &&
+        surroundingSlantLift >= (words.length === 1 ? 0.14 : 0.11) &&
+        surroundingGainLift >= 0.0040 && relativeEvidence && surroundingEvidence;
       const accepted = acceptedLong || acceptedShort;
       runs.push({ startWord:i, endWord:j-1, wordCount:words.length, sign, avgGain, avgAbsSlant,
         neighborWordCount:neighbors.length, neighborAbsSlant, neighborGain, slantLift, gainLift,
@@ -3487,7 +3493,7 @@
         if (typeof progressCallback === "function") {
           progressCallback(index + 1, state.pages.length, italicPct);
         } else {
-          setStatus(`Automatic italic scan 2.5 regression hybrid: page ${index + 1} of ${state.pages.length}…`);
+          setStatus(`Automatic italic scan 2.7.57 precision recovery: page ${index + 1} of ${state.pages.length}…`);
         }
         const img = await loadImageFromFile(file);
         const canvas = makeCroppedCanvas(img);
@@ -3517,8 +3523,10 @@
             // inline run in the regression corpus. Keep a permissive geometry
             // gate here; acceptance below still requires coherent directional
             // and relative evidence.
-            const minGain = letters <= 3 ? 0.0055 : 0.0040;
-            const candidate = letters >= 2 && Math.abs(r.slant) >= 0.14 && r.gain >= minGain && r.score >= 0.70;
+            const minGain = letters <= 3 ? 0.0100 : 0.0075;
+            const minSlant = letters <= 3 ? 0.24 : 0.20;
+            const candidate = letters >= 2 && Math.abs(r.slant) >= minSlant &&
+              r.gain >= minGain && r.score >= 0.74;
             return { ...w, ...r, letters, candidate, italic:false };
           });
 
@@ -3556,7 +3564,7 @@
       // projected onto the authoritative current page text instead.
       saveCheckpoint();
       if (els.italicStatus) els.italicStatus.textContent = `${markedRuns} run${markedRuns === 1 ? "" : "s"} · ${markedWords} words`;
-      setStatus(`Automatic italic scan 2.5 checked ${scannedWords} words across ${scannedLines} OCR lines and marked ${markedRuns} hybrid run${markedRuns === 1 ? "" : "s"} (${markedWords} words). Formatting evidence was projected onto ${projectedItalicPages} current page${projectedItalicPages === 1 ? "" : "s"} without rebuilding repaired text.`);
+      setStatus(`Automatic italic scan 2.7.57 checked ${scannedWords} words across ${scannedLines} OCR lines and marked ${markedRuns} hybrid run${markedRuns === 1 ? "" : "s"} (${markedWords} words). Formatting evidence was projected onto ${projectedItalicPages} current page${projectedItalicPages === 1 ? "" : "s"} without rebuilding repaired text.`);
       return { markedRuns, markedWords, scannedWords, scannedLines, projectedItalicPages };
     } catch (err) {
       console.error(err);
