@@ -206,3 +206,11 @@ v2.6.5: Added exportable italic detection 2.0 diagnostics with per-line slant/ga
 - Hardened accepted italic projection across repaired wording.
 - Added ordered run-level fallback matching when whole OCR lines no longer match.
 - Kindle Ready and EPUB export now re-project accepted italic evidence immediately before serialization.
+
+
+2.7.56 ITALICS DETECTION RECOVERY
+- Fixes the actual regression root cause: the scanner was accepting only one italic run before export, rather than export dropping accepted runs.
+- Replaces the overly strict early word gate with a permissive geometry candidate pass followed by font-adaptive relative run classification.
+- Restores automatic one- and two-word emphasis when it is typographically distinct from nearby roman text.
+- Full-line italics now require relative evidence against surrounding body lines, specifically preventing naturally slanted roman text from becoming a persistent false positive.
+- Retains the 2.7.55 final authority projection immediately before Kindle Ready and EPUB serialization.

@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.55-italics-authority";
+  const BUILD_VERSION = "2.7.56-italics-detection-recovery";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -3388,11 +3388,19 @@
     const alphaWords = scored.filter(w=>w.letters>=2);
     const allCaps = /^[^a-z]*[A-Z][^a-z]*$/.test(String(lineText||''));
 
-    // Route A: true full-line emphasis. This deliberately uses the line image
-    // rather than requiring every projected word box to score independently.
-    // It catches coherent italic sentences while excluding POV labels/headings.
+    // Route A: true full-line emphasis. Absolute slant alone produced the stale
+    // false positive seen in the IHOL regression corpus ("Ruthless but beautiful.").
+    // A full italic line must now also stand out from nearby body lines. This is
+    // font-adaptive and prevents a naturally slanted roman face from being
+    // accepted merely because it crosses a global threshold.
+    const surroundingAbsSlant = median(surroundingLineResults.map(r=>Math.abs(r?.slant||0)));
+    const surroundingGain = median(surroundingLineResults.map(r=>r?.gain||0));
+    const lineAbsSlant = Math.abs(lineResult?.slant||0);
+    const lineGain = lineResult?.gain||0;
+    const fullLineRelative = surroundingLineResults.length < 2 ||
+      (lineAbsSlant - surroundingAbsSlant >= 0.10 && lineGain - surroundingGain >= 0.0025);
     const fullLineEvidence = alphaWords.length >= 2 && !allCaps &&
-      Math.abs(lineResult?.slant||0) >= 0.30 && (lineResult?.gain||0) >= 0.0062 &&
+      lineAbsSlant >= 0.22 && lineGain >= 0.0045 && fullLineRelative &&
       String(lineText||'').replace(/[^A-Za-z]/g,'').length >= 8;
     if (fullLineEvidence) {
       alphaWords.forEach(w => { w.italic = true; });
@@ -3401,8 +3409,8 @@
         avgAbsSlant:Math.abs(lineResult?.slant||0), neighborWordCount:0,
         neighborAbsSlant:0, neighborGain:0, slantLift:0, gainLift:0,
         surroundingLineCount:surroundingLineResults.length,
-        surroundingAbsSlant:median(surroundingLineResults.map(r=>Math.abs(r?.slant||0))),
-        surroundingGain:median(surroundingLineResults.map(r=>r?.gain||0)),
+        surroundingAbsSlant,
+        surroundingGain,
         surroundingSlantLift:0, surroundingGainLift:0,
         relativeEvidence:false, surroundingEvidence:false,
         fullLineEvidence:true, accepted:true, route:'full-line' });
@@ -3412,8 +3420,6 @@
     // Route B: inline emphasis. Slant by itself proved noisy, so an inline run
     // must be exceptional relative to BOTH roman words on the same line and
     // nearby OCR lines on the page.
-    const surroundingAbsSlant = median(surroundingLineResults.map(r=>Math.abs(r?.slant||0)));
-    const surroundingGain = median(surroundingLineResults.map(r=>r?.gain||0));
     let i = 0;
     while (i < scored.length) {
       if (!scored[i].candidate) { i++; continue; }
@@ -3432,22 +3438,24 @@
       const surroundingSlantLift = avgAbsSlant - surroundingAbsSlant;
       const surroundingGainLift = avgGain - surroundingGain;
 
-      const relativeEvidence = neighbors.length >= 2 && slantLift >= 0.16 && gainLift >= 0.0060;
+      // Adaptive evidence matters more than a book-independent absolute
+      // slant number. Italic and roman glyphs from the same font can both be
+      // mildly slanted; the useful signal is the lift against nearby roman text.
+      const relativeEvidence = neighbors.length >= 2 && slantLift >= 0.09 && gainLift >= 0.0030;
       const surroundingEvidence = surroundingLineResults.length >= 2 &&
-        surroundingSlantLift >= 0.16 && surroundingGainLift >= 0.0060;
+        surroundingSlantLift >= 0.09 && surroundingGainLift >= 0.0030;
       const runCoverage = scored.length ? words.length / scored.length : 0;
+      const adaptiveEvidence = relativeEvidence || surroundingEvidence;
 
-      const acceptedLong = words.length >= 3 && runCoverage <= 0.60 &&
-        avgGain >= 0.0140 && avgAbsSlant >= 0.32 &&
-        relativeEvidence && surroundingEvidence;
-      // IHOL regression QA showed that the old 3-word minimum systematically
-      // misses real one- and two-word emphasis. Admit short runs only when the
-      // typography signal is substantially stronger than the long-run route.
-      const acceptedShort = words.length >= 1 && words.length <= 2 && runCoverage <= 0.45 &&
-        avgGain >= 0.0200 && avgAbsSlant >= 0.36 &&
-        slantLift >= 0.20 && gainLift >= 0.0090 &&
-        surroundingSlantLift >= 0.20 && surroundingGainLift >= 0.0090 &&
-        relativeEvidence && surroundingEvidence;
+      const acceptedLong = words.length >= 3 && runCoverage <= 0.72 &&
+        avgGain >= 0.0070 && avgAbsSlant >= 0.20 && adaptiveEvidence;
+      // Short emphasis is common in novels. Keep it precision-biased, but no
+      // longer require extreme values that real one/two-word italics rarely hit.
+      const acceptedShort = words.length >= 1 && words.length <= 2 && runCoverage <= 0.55 &&
+        avgGain >= 0.0090 && avgAbsSlant >= 0.24 &&
+        slantLift >= 0.11 && gainLift >= 0.0040 &&
+        (surroundingLineResults.length < 2 || surroundingSlantLift >= 0.08) &&
+        adaptiveEvidence;
       const accepted = acceptedLong || acceptedShort;
       runs.push({ startWord:i, endWord:j-1, wordCount:words.length, sign, avgGain, avgAbsSlant,
         neighborWordCount:neighbors.length, neighborAbsSlant, neighborGain, slantLift, gainLift,
@@ -3503,10 +3511,14 @@
             const r = italicSlantScore(canvas, w.box);
             scannedWords++;
             const letters = w.text.replace(/[^A-Za-z]/g, "").length;
-            // Candidate threshold is deliberately stricter than 2.0. Final
-            // acceptance additionally requires an adjacent, same-direction run.
-            const minGain = letters <= 3 ? 0.0115 : 0.0080;
-            const candidate = letters >= 2 && Math.abs(r.slant) >= 0.24 && r.gain >= minGain && r.score >= 0.95;
+            // v2.7.56: do not discard potential italics before the adaptive
+            // run classifier gets to compare them with the surrounding roman
+            // text. The former 0.24/0.008 gate eliminated nearly every real
+            // inline run in the regression corpus. Keep a permissive geometry
+            // gate here; acceptance below still requires coherent directional
+            // and relative evidence.
+            const minGain = letters <= 3 ? 0.0055 : 0.0040;
+            const candidate = letters >= 2 && Math.abs(r.slant) >= 0.14 && r.gain >= minGain && r.score >= 0.70;
             return { ...w, ...r, letters, candidate, italic:false };
           });
 
@@ -3596,22 +3608,22 @@
         markedRuns: runs.filter(x => x.accepted).length,
       },
       thresholds: {
-        wordMinAbsSlant: 0.24,
-        wordMinGainNormal: 0.0080,
-        wordMinGainShort: 0.0115,
-        wordMinScore: 0.95,
+        wordMinAbsSlant: 0.14,
+        wordMinGainNormal: 0.0040,
+        wordMinGainShort: 0.0055,
+        wordMinScore: 0.70,
         runMinWords: 3,
-        runMinAverageGain: 0.0140,
-        runMinAverageAbsSlant: 0.32,
+        runMinAverageGain: 0.0070,
+        runMinAverageAbsSlant: 0.20,
         sameSlantDirectionRequired: true,
-        relativeToLineSlantLift: 0.16,
-        relativeToLineGainLift: 0.0060,
-        surroundingLineSlantLift: 0.16,
-        surroundingLineGainLift: 0.0060,
-        inlineRunMaxCoverage: 0.60,
-        fullLineMinAbsSlant: 0.30,
-        fullLineMinGain: 0.0062,
-        automaticSingleWordItalics: false,
+        relativeToLineSlantLift: 0.09,
+        relativeToLineGainLift: 0.0030,
+        surroundingLineSlantLift: 0.09,
+        surroundingLineGainLift: 0.0030,
+        inlineRunMaxCoverage: 0.72,
+        fullLineMinAbsSlant: 0.22,
+        fullLineMinGain: 0.0045,
+        automaticSingleWordItalics: true,
       },
       topLineCandidatesByGain: rankedLines.slice(0, 100),
       topWordCandidatesByGain: rankedWords.slice(0, 250),
