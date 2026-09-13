@@ -3465,8 +3465,19 @@
     const lineGain = lineResult?.gain||0;
     const fullLineRelative = surroundingLineResults.length >= 2 &&
       (lineAbsSlant - surroundingAbsSlant >= 0.11 && lineGain - surroundingGain >= 0.0035);
+    // v2.7.60 consensus guard: a truly italic full line should not only score
+    // as slanted in aggregate; most of its word boxes should lean in the same
+    // direction too. This rejects roman lines whose aggregate silhouette happens
+    // to mimic italics (the long-lived "Ruthless but beautiful." false positive).
+    const lineSign = Math.sign(lineResult?.slant || 0);
+    const consensusWords = alphaWords.filter(w =>
+      w.candidate && Math.sign(w.slant || 0) === lineSign &&
+      Math.abs(w.slant || 0) >= 0.20 && (w.gain || 0) >= 0.0060
+    );
+    const wordConsensus = alphaWords.length ? consensusWords.length / alphaWords.length : 0;
     const fullLineEvidence = alphaWords.length >= 2 && !allCaps &&
       lineAbsSlant >= 0.23 && lineGain >= 0.0060 && fullLineRelative &&
+      wordConsensus >= 0.60 &&
       String(lineText||'').replace(/[^A-Za-z]/g,'').length >= 8;
     if (fullLineEvidence) {
       alphaWords.forEach(w => { w.italic = true; });
@@ -3479,6 +3490,7 @@
         surroundingGain,
         surroundingSlantLift:0, surroundingGainLift:0,
         relativeEvidence:false, surroundingEvidence:false,
+        wordConsensus,
         fullLineEvidence:true, accepted:true, route:'full-line' });
       return runs;
     }
@@ -3522,11 +3534,15 @@
       // word must clear both same-line and surrounding-line evidence; a two-word
       // phrase may pass with both moderate signals or one exceptionally strong
       // relative signal. This is intentionally between .56 and .57.
-      const acceptedSingleton = words.length === 1 && runCoverage <= 0.36 &&
-        avgGain >= 0.0130 && avgAbsSlant >= 0.27 &&
-        slantLift >= 0.14 && gainLift >= 0.0052 &&
+      // v2.7.60: .59's remaining false positives are dominated by isolated
+      // ordinary words. Keep one-word emphasis possible, but require an
+      // exceptionally strong, two-context typography signal. Multiword runs keep
+      // the .59 thresholds because they are already much more stable.
+      const acceptedSingleton = words.length === 1 && runCoverage <= 0.30 &&
+        avgGain >= 0.0180 && avgAbsSlant >= 0.32 &&
+        slantLift >= 0.18 && gainLift >= 0.0080 &&
         surroundingLineResults.length >= 2 &&
-        surroundingSlantLift >= 0.12 && surroundingGainLift >= 0.0042 &&
+        surroundingSlantLift >= 0.16 && surroundingGainLift >= 0.0060 &&
         relativeEvidence && surroundingEvidence;
 
       const acceptedPair = words.length === 2 && runCoverage <= 0.52 &&
@@ -3570,7 +3586,7 @@
         if (typeof progressCallback === "function") {
           progressCallback(index + 1, state.pages.length, italicPct);
         } else {
-          setStatus(`Automatic italic scan 2.7.59 ink-aligned: page ${index + 1} of ${state.pages.length}…`);
+          setStatus(`Automatic italic scan 2.7.60 consensus-guard: page ${index + 1} of ${state.pages.length}…`);
         }
         const img = await loadImageFromFile(file);
         const canvas = makeCroppedCanvas(img);
@@ -3646,7 +3662,7 @@
       // projected onto the authoritative current page text instead.
       saveCheckpoint();
       if (els.italicStatus) els.italicStatus.textContent = `${markedRuns} run${markedRuns === 1 ? "" : "s"} · ${markedWords} words`;
-      setStatus(`Automatic italic scan 2.7.59 checked ${scannedWords} words across ${scannedLines} OCR lines and marked ${markedRuns} hybrid run${markedRuns === 1 ? "" : "s"} (${markedWords} words). Formatting evidence was projected onto ${projectedItalicPages} current page${projectedItalicPages === 1 ? "" : "s"} without rebuilding repaired text.`);
+      setStatus(`Automatic italic scan 2.7.60 checked ${scannedWords} words across ${scannedLines} OCR lines and marked ${markedRuns} hybrid run${markedRuns === 1 ? "" : "s"} (${markedWords} words). Formatting evidence was projected onto ${projectedItalicPages} current page${projectedItalicPages === 1 ? "" : "s"} without rebuilding repaired text.`);
       return { markedRuns, markedWords, scannedWords, scannedLines, projectedItalicPages };
     } catch (err) {
       console.error(err);

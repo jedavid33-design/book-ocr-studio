@@ -1,7 +1,7 @@
 const CACHE_NAME = "book-ocr-studio-shell-v2-7-55-italics-authority";
 const APP_SHELL = [
-  "./styles.css?v=2.7.59-ink-aligned-italics",
-  "./epub-polish.js?v=2.7.59-ink-aligned-italics",
+  "./styles.css?v=2.7.60-italics-consensus-guard",
+  "./epub-polish.js?v=2.7.60-italics-consensus-guard",
   "./manifest.webmanifest",
   "./icon-192.png",
   "./icon-512.png",
