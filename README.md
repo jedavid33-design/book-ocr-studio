@@ -247,7 +247,7 @@ v2.6.5: Added exportable italic detection 2.0 diagnostics with per-line slant/ga
 - Manual italic markers remain authoritative and are unioned with automatic accepted evidence.
 
 
-2.7.61 ITALICS CALIBRATION
+2.7.62 ITALICS CALIBRATION
 - Fixes the actual regression root cause: the scanner was accepting only one italic run before export, rather than export dropping accepted runs.
 - Replaces the overly strict early word gate with a permissive geometry candidate pass followed by font-adaptive relative run classification.
 - Restores automatic one- and two-word emphasis when it is typographically distinct from nearby roman text.
@@ -255,22 +255,22 @@ v2.6.5: Added exportable italic detection 2.0 diagnostics with per-line slant/ga
 - Retains the 2.7.55 final authority projection immediately before Kindle Ready and EPUB serialization.
 
 
-## v2.7.61 — Italics Precision Recovery
+## v2.7.62 — Italics Precision Recovery
 
 Tightens automatic italic classification after the nine-chapter regression export produced 736 emphasis runs for a corpus with 82 source-supported runs. Weak projected-word slant no longer seeds runs; short runs require strong agreement against both same-line roman text and surrounding lines; common one-word function words are not auto-marked. The working detection-to-export path from v2.7.56 remains intact.
 
 
-## v2.7.61 — Italics Calibration
+## v2.7.62 — Italics Calibration
 
 Calibration build after the nine-chapter regression corpus produced 736 automatic emphasis runs in v2.7.56 and 15 in v2.7.57 against 82 source-confirmed runs. The detector now uses typography-only confidence tiers rather than a common-word blacklist, moderately reopens candidate geometry, requires strong dual-context evidence for single-word emphasis, allows two-word emphasis through calibrated local/surrounding contrast, and tightens full-line emphasis so it cannot pass without surrounding-line evidence. Italics persistence/export behavior remains unchanged.
 
 
-## v2.7.61 — Ink-aligned italics
+## v2.7.62 — Ink-aligned italics
 
 Replaces character-count-projected word boxes in the automatic italics scanner with image-ink-aligned word boxes when the line image can be segmented reliably. The previous projection assumed uniform character widths, which could clip glyphs or include neighboring glyphs and manufacture false slant/gain evidence. The scanner now uses the actual dark-pixel column structure of each OCR line to align word geometry, merging only the smallest internal gaps to match the OCR token count and falling back to the old projection when segmentation is ambiguous. Detection thresholds from v2.7.58 and the working export/persistence path remain otherwise unchanged.
 
 
-## v2.7.61 — Italics Consensus Guard
+## v2.7.62 — Italics Consensus Guard
 
 Precision follow-up to v2.7.59. The ink-aligned word boxes and working
 formatting/export path are unchanged.
@@ -283,9 +283,19 @@ formatting/export path are unchanged.
   detector does not collapse back toward the under-detection seen in v2.7.57.
 
 
-## v2.7.61 — Italics Lifecycle + Boundary Recovery
+## v2.7.62 — Italics Lifecycle + Boundary Recovery
 
 - Runs automatic italics immediately after a full OCR batch, so pre-Repair and post-Repair EPUB exports share the same formatting state.
 - Repairs diagnostics metadata so the JSON reports the actual runtime build and current thresholds.
 - Preserves the v2.7.60 precision guard, including the full-line consensus check.
 - Adds one-word edge expansion around already accepted inline runs when adjacent typography agrees strongly, improving recall for clipped source-supported phrases without lowering core detection thresholds.
+
+
+## v2.7.62 — Italics Context Consensus
+
+- Keeps v2.7.61 immediate post-OCR italics commit and export behavior unchanged.
+- Tightens isolated one-word italics with local-neighborhood consensus.
+- Requires a strong anchor word for two-word italic runs.
+- Allows accepted runs to expand up to two words per side when edge typography
+  strongly agrees with the accepted run.
+- Leaves the full-line consensus guard unchanged.

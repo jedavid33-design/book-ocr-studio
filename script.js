@@ -3553,30 +3553,49 @@
       // ordinary words. Keep one-word emphasis possible, but require an
       // exceptionally strong, two-context typography signal. Multiword runs keep
       // the .59 thresholds because they are already much more stable.
-      const acceptedSingleton = words.length === 1 && runCoverage <= 0.30 &&
-        avgGain >= 0.0180 && avgAbsSlant >= 0.32 &&
-        slantLift >= 0.18 && gainLift >= 0.0080 &&
-        surroundingLineResults.length >= 2 &&
-        surroundingSlantLift >= 0.16 && surroundingGainLift >= 0.0060 &&
-        relativeEvidence && surroundingEvidence;
+      // v2.7.62 context consensus: isolated one-word italics remain supported,
+      // but require a cleaner roman neighborhood in addition to strong geometry.
+      const singletonWordIndex = words.length === 1 ? words[0].wordIndex : -999;
+      const neighborPool = scored.filter(r =>
+        Math.abs((r.wordIndex ?? -999) - singletonWordIndex) <= 2 &&
+        (r.wordIndex ?? -999) !== singletonWordIndex
+      );
+      const neighborRomanCount = neighborPool.filter(r =>
+        Math.abs(r.slant || 0) < 0.16 && (r.gain || 0) < 0.0100
+      ).length;
+      const neighborItalicLikeCount = neighborPool.filter(r =>
+        Math.sign(r.slant || 0) === Math.sign(avgSlant || 0) &&
+        Math.abs(r.slant || 0) >= 0.18 && (r.gain || 0) >= 0.0065
+      ).length;
+      const singletonContextClean =
+        neighborPool.length === 0 ||
+        neighborRomanCount >= Math.max(1, neighborItalicLikeCount + 1);
 
-      const acceptedPair = words.length === 2 && runCoverage <= 0.52 &&
-        avgGain >= 0.0105 && avgAbsSlant >= 0.235 &&
-        slantLift >= 0.115 && gainLift >= 0.0042 &&
+      const acceptedSingleton = words.length === 1 && runCoverage <= 0.28 &&
+        avgGain >= 0.0190 && avgAbsSlant >= 0.33 &&
+        slantLift >= 0.19 && gainLift >= 0.0085 &&
         surroundingLineResults.length >= 2 &&
+        surroundingSlantLift >= 0.17 && surroundingGainLift >= 0.0065 &&
+        relativeEvidence && surroundingEvidence && singletonContextClean;
+
+      const pairHasAnchor = words.length === 2 && words.some(w =>
+        Math.abs(w.slant || 0) >= 0.28 && (w.gain || 0) >= 0.0120
+      );
+      const acceptedPair = words.length === 2 && runCoverage <= 0.50 &&
+        avgGain >= 0.0108 && avgAbsSlant >= 0.24 &&
+        slantLift >= 0.125 && gainLift >= 0.0046 &&
+        surroundingLineResults.length >= 2 && pairHasAnchor &&
         ((relativeEvidence && surroundingEvidence &&
-          surroundingSlantLift >= 0.095 && surroundingGainLift >= 0.0034) ||
-         (slantLift >= 0.16 && gainLift >= 0.0060 &&
-          surroundingSlantLift >= 0.08 && surroundingGainLift >= 0.0028));
+          surroundingSlantLift >= 0.10 && surroundingGainLift >= 0.0036) ||
+         (slantLift >= 0.165 && gainLift >= 0.0062 &&
+          surroundingSlantLift >= 0.085 && surroundingGainLift >= 0.0030));
 
       const acceptedShort = acceptedSingleton || acceptedPair;
       const accepted = acceptedLong || acceptedShort;
 
-      // v2.7.61 boundary recovery: once a run is confidently accepted, allow
-      // one adjacent word on either side to join when its geometry agrees with
-      // the run direction and is still meaningfully stronger than surrounding
-      // roman text. This repairs clipped true runs without lowering the core
-      // acceptance thresholds that finally suppressed broad false positives.
+      // v2.7.62 boundary recovery: allow up to two adjacent words per side,
+      // but only when each edge word agrees strongly with the accepted run's
+      // direction and magnitude.
       let expandedStart = i;
       let expandedEnd = j - 1;
       if (accepted) {
@@ -3585,12 +3604,19 @@
           if (Math.sign(w.slant || 0) !== sign) return false;
           const absSlant = Math.abs(w.slant || 0);
           const gain = w.gain || 0;
-          return absSlant >= 0.16 && gain >= 0.0045 &&
-            (absSlant - surroundingAbsSlant) >= 0.07 &&
-            (gain - surroundingGain) >= 0.0025;
+          return absSlant >= 0.17 && gain >= 0.0050 &&
+            absSlant >= avgAbsSlant * 0.75 &&
+            (absSlant - surroundingAbsSlant) >= 0.075 &&
+            (gain - surroundingGain) >= 0.0027;
         };
-        if (expandedStart > 0 && edgeEligible(scored[expandedStart - 1])) expandedStart--;
-        if (expandedEnd + 1 < scored.length && edgeEligible(scored[expandedEnd + 1])) expandedEnd++;
+        for (let step = 0; step < 2 && expandedStart > 0; step++) {
+          if (!edgeEligible(scored[expandedStart - 1])) break;
+          expandedStart--;
+        }
+        for (let step = 0; step < 2 && expandedEnd + 1 < scored.length; step++) {
+          if (!edgeEligible(scored[expandedEnd + 1])) break;
+          expandedEnd++;
+        }
       }
       runs.push({ startWord:expandedStart, endWord:expandedEnd,
         wordCount:expandedEnd - expandedStart + 1, originalStartWord:i, originalEndWord:j-1,
@@ -3625,7 +3651,7 @@
         if (typeof progressCallback === "function") {
           progressCallback(index + 1, state.pages.length, italicPct);
         } else {
-          setStatus(`Automatic italic scan 2.7.61 lifecycle-boundary: page ${index + 1} of ${state.pages.length}…`);
+          setStatus(`Automatic italic scan 2.7.62 context-consensus: page ${index + 1} of ${state.pages.length}…`);
         }
         const img = await loadImageFromFile(file);
         const canvas = makeCroppedCanvas(img);
@@ -3772,9 +3798,9 @@
         fullLineMinAbsSlant: 0.23,
         fullLineMinGain: 0.0060,
         fullLineMinWordConsensus: 0.60,
-        boundaryExpansionMaxWordsPerSide: 1,
-        boundaryExpansionMinAbsSlant: 0.16,
-        boundaryExpansionMinGain: 0.0045,
+        boundaryExpansionMaxWordsPerSide: 2,
+        boundaryExpansionMinAbsSlant: 0.17,
+        boundaryExpansionMinGain: 0.0050,
         automaticSingleWordItalics: true,
         italicsCommittedImmediatelyAfterBatchOcr: true,
       },
