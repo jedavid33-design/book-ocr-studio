@@ -247,7 +247,7 @@ v2.6.5: Added exportable italic detection 2.0 diagnostics with per-line slant/ga
 - Manual italic markers remain authoritative and are unioned with automatic accepted evidence.
 
 
-2.7.57 ITALICS PRECISION RECOVERY
+2.7.58 ITALICS CALIBRATION
 - Fixes the actual regression root cause: the scanner was accepting only one italic run before export, rather than export dropping accepted runs.
 - Replaces the overly strict early word gate with a permissive geometry candidate pass followed by font-adaptive relative run classification.
 - Restores automatic one- and two-word emphasis when it is typographically distinct from nearby roman text.
@@ -255,6 +255,11 @@ v2.6.5: Added exportable italic detection 2.0 diagnostics with per-line slant/ga
 - Retains the 2.7.55 final authority projection immediately before Kindle Ready and EPUB serialization.
 
 
-## v2.7.57 — Italics Precision Recovery
+## v2.7.58 — Italics Precision Recovery
 
 Tightens automatic italic classification after the nine-chapter regression export produced 736 emphasis runs for a corpus with 82 source-supported runs. Weak projected-word slant no longer seeds runs; short runs require strong agreement against both same-line roman text and surrounding lines; common one-word function words are not auto-marked. The working detection-to-export path from v2.7.56 remains intact.
+
+
+## v2.7.58 — Italics Calibration
+
+Calibration build after the nine-chapter regression corpus produced 736 automatic emphasis runs in v2.7.56 and 15 in v2.7.57 against 82 source-confirmed runs. The detector now uses typography-only confidence tiers rather than a common-word blacklist, moderately reopens candidate geometry, requires strong dual-context evidence for single-word emphasis, allows two-word emphasis through calibrated local/surrounding contrast, and tightens full-line emphasis so it cannot pass without surrounding-line evidence. Italics persistence/export behavior remains unchanged.

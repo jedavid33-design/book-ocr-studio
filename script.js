@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.56-italics-detection-recovery";
+  const BUILD_VERSION = "2.7.58-italics-calibration";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -3397,10 +3397,10 @@
     const surroundingGain = median(surroundingLineResults.map(r=>r?.gain||0));
     const lineAbsSlant = Math.abs(lineResult?.slant||0);
     const lineGain = lineResult?.gain||0;
-    const fullLineRelative = surroundingLineResults.length < 2 ||
-      (lineAbsSlant - surroundingAbsSlant >= 0.10 && lineGain - surroundingGain >= 0.0025);
+    const fullLineRelative = surroundingLineResults.length >= 2 &&
+      (lineAbsSlant - surroundingAbsSlant >= 0.11 && lineGain - surroundingGain >= 0.0035);
     const fullLineEvidence = alphaWords.length >= 2 && !allCaps &&
-      lineAbsSlant >= 0.22 && lineGain >= 0.0045 && fullLineRelative &&
+      lineAbsSlant >= 0.23 && lineGain >= 0.0060 && fullLineRelative &&
       String(lineText||'').replace(/[^A-Za-z]/g,'').length >= 8;
     if (fullLineEvidence) {
       alphaWords.forEach(w => { w.italic = true; });
@@ -3441,27 +3441,38 @@
       // Adaptive evidence matters more than a book-independent absolute
       // slant number. Italic and roman glyphs from the same font can both be
       // mildly slanted; the useful signal is the lift against nearby roman text.
-      const relativeEvidence = neighbors.length >= 2 && slantLift >= 0.09 && gainLift >= 0.0030;
+      const relativeEvidence = neighbors.length >= 2 && slantLift >= 0.08 && gainLift >= 0.0028;
       const surroundingEvidence = surroundingLineResults.length >= 2 &&
-        surroundingSlantLift >= 0.09 && surroundingGainLift >= 0.0030;
+        surroundingSlantLift >= 0.08 && surroundingGainLift >= 0.0028;
       const runCoverage = scored.length ? words.length / scored.length : 0;
       const adaptiveEvidence = relativeEvidence || surroundingEvidence;
 
-      const acceptedLong = words.length >= 3 && runCoverage <= 0.68 &&
-        avgGain >= 0.0100 && avgAbsSlant >= 0.24 &&
-        slantLift >= 0.12 && gainLift >= 0.0045 && adaptiveEvidence;
-      // Short emphasis is common in novels. Keep it precision-biased, but no
-      // longer require extreme values that real one/two-word italics rarely hit.
-      const shortText = words.map(w => String(w.text || "").replace(/[^A-Za-z']/g, "")).join(" ").toLowerCase();
-      const weakSingleton = words.length === 1 && /^(?:a|an|and|as|at|be|by|for|he|her|him|his|i|in|is|it|me|my|of|on|or|she|so|the|to|we|you)$/.test(shortText);
-      const acceptedShort = !weakSingleton && words.length >= 1 && words.length <= 2 && runCoverage <= 0.45 &&
-        avgGain >= (words.length === 1 ? 0.0160 : 0.0130) &&
-        avgAbsSlant >= (words.length === 1 ? 0.30 : 0.27) &&
-        slantLift >= (words.length === 1 ? 0.17 : 0.14) &&
-        gainLift >= (words.length === 1 ? 0.0070 : 0.0055) &&
+      const acceptedLong = words.length >= 3 && runCoverage <= 0.72 &&
+        avgGain >= 0.0082 && avgAbsSlant >= 0.21 &&
+        slantLift >= 0.10 && gainLift >= 0.0035 && adaptiveEvidence;
+
+      // Short emphasis is extremely common in fiction, including perfectly
+      // ordinary words. Classify by strength and local contrast only. A single
+      // word must clear both same-line and surrounding-line evidence; a two-word
+      // phrase may pass with both moderate signals or one exceptionally strong
+      // relative signal. This is intentionally between .56 and .57.
+      const acceptedSingleton = words.length === 1 && runCoverage <= 0.36 &&
+        avgGain >= 0.0130 && avgAbsSlant >= 0.27 &&
+        slantLift >= 0.14 && gainLift >= 0.0052 &&
         surroundingLineResults.length >= 2 &&
-        surroundingSlantLift >= (words.length === 1 ? 0.14 : 0.11) &&
-        surroundingGainLift >= 0.0040 && relativeEvidence && surroundingEvidence;
+        surroundingSlantLift >= 0.12 && surroundingGainLift >= 0.0042 &&
+        relativeEvidence && surroundingEvidence;
+
+      const acceptedPair = words.length === 2 && runCoverage <= 0.52 &&
+        avgGain >= 0.0105 && avgAbsSlant >= 0.235 &&
+        slantLift >= 0.115 && gainLift >= 0.0042 &&
+        surroundingLineResults.length >= 2 &&
+        ((relativeEvidence && surroundingEvidence &&
+          surroundingSlantLift >= 0.095 && surroundingGainLift >= 0.0034) ||
+         (slantLift >= 0.16 && gainLift >= 0.0060 &&
+          surroundingSlantLift >= 0.08 && surroundingGainLift >= 0.0028));
+
+      const acceptedShort = acceptedSingleton || acceptedPair;
       const accepted = acceptedLong || acceptedShort;
       runs.push({ startWord:i, endWord:j-1, wordCount:words.length, sign, avgGain, avgAbsSlant,
         neighborWordCount:neighbors.length, neighborAbsSlant, neighborGain, slantLift, gainLift,
@@ -3493,7 +3504,7 @@
         if (typeof progressCallback === "function") {
           progressCallback(index + 1, state.pages.length, italicPct);
         } else {
-          setStatus(`Automatic italic scan 2.7.57 precision recovery: page ${index + 1} of ${state.pages.length}…`);
+          setStatus(`Automatic italic scan 2.7.58 calibrated: page ${index + 1} of ${state.pages.length}…`);
         }
         const img = await loadImageFromFile(file);
         const canvas = makeCroppedCanvas(img);
@@ -3523,10 +3534,15 @@
             // inline run in the regression corpus. Keep a permissive geometry
             // gate here; acceptance below still requires coherent directional
             // and relative evidence.
-            const minGain = letters <= 3 ? 0.0100 : 0.0075;
-            const minSlant = letters <= 3 ? 0.24 : 0.20;
+            // v2.7.58 calibration: .56 was too permissive (736 runs) and
+            // .57 too strict (15 runs). Keep the candidate gate moderately
+            // permissive, then let the run-level relative evidence do the real
+            // filtering. No lexical/common-word blacklist: novels legitimately
+            // italicize short function words, so typography must decide.
+            const minGain = letters <= 3 ? 0.0085 : 0.0060;
+            const minSlant = letters <= 3 ? 0.20 : 0.17;
             const candidate = letters >= 2 && Math.abs(r.slant) >= minSlant &&
-              r.gain >= minGain && r.score >= 0.74;
+              r.gain >= minGain && r.score >= 0.72;
             return { ...w, ...r, letters, candidate, italic:false };
           });
 
@@ -3564,7 +3580,7 @@
       // projected onto the authoritative current page text instead.
       saveCheckpoint();
       if (els.italicStatus) els.italicStatus.textContent = `${markedRuns} run${markedRuns === 1 ? "" : "s"} · ${markedWords} words`;
-      setStatus(`Automatic italic scan 2.7.57 checked ${scannedWords} words across ${scannedLines} OCR lines and marked ${markedRuns} hybrid run${markedRuns === 1 ? "" : "s"} (${markedWords} words). Formatting evidence was projected onto ${projectedItalicPages} current page${projectedItalicPages === 1 ? "" : "s"} without rebuilding repaired text.`);
+      setStatus(`Automatic italic scan 2.7.58 checked ${scannedWords} words across ${scannedLines} OCR lines and marked ${markedRuns} hybrid run${markedRuns === 1 ? "" : "s"} (${markedWords} words). Formatting evidence was projected onto ${projectedItalicPages} current page${projectedItalicPages === 1 ? "" : "s"} without rebuilding repaired text.`);
       return { markedRuns, markedWords, scannedWords, scannedLines, projectedItalicPages };
     } catch (err) {
       console.error(err);
