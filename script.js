@@ -3361,6 +3361,72 @@
     });
   }
 
+  function estimateInkAlignedWordBoxes(canvas, line) {
+    const projected = estimateWordBoxes(line);
+    if (!projected.length || !canvas || !line?.box) return projected;
+    const tokenCount = projected.length;
+    const b = line.box;
+    const padX = 2, padY = 1;
+    const x0 = Math.max(0, Math.floor(b.x - padX));
+    const y0 = Math.max(0, Math.floor(b.y - padY));
+    const w = Math.min(canvas.width - x0, Math.max(8, Math.ceil(b.w + padX * 2)));
+    const h = Math.min(canvas.height - y0, Math.max(8, Math.ceil(b.h + padY * 2)));
+    if (w < 20 || h < 10) return projected;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    const data = ctx.getImageData(x0, y0, w, h).data;
+    let sum = 0;
+    const gray = new Uint8Array(w*h);
+    for (let i=0,j=0;i<data.length;i+=4,j++) {
+      const g = Math.round(data[i]*0.299 + data[i+1]*0.587 + data[i+2]*0.114);
+      gray[j]=g; sum += g;
+    }
+    const mean = sum / gray.length;
+    const threshold = Math.max(70, Math.min(205, mean - 38));
+    const active = new Array(w).fill(false);
+    const minDark = Math.max(1, Math.floor(h * 0.045));
+    for (let x=0;x<w;x++) {
+      let dark=0;
+      for (let y=0;y<h;y++) if (gray[y*w+x] < threshold) dark++;
+      active[x] = dark >= minDark;
+    }
+    // Bridge tiny internal glyph gaps, but keep real inter-word whitespace.
+    for (let x=1;x<w-1;x++) {
+      if (!active[x] && active[x-1] && active[x+1]) active[x]=true;
+    }
+    let clusters=[];
+    for (let x=0;x<w;) {
+      while (x<w && !active[x]) x++;
+      if (x>=w) break;
+      let a=x;
+      while (x<w && active[x]) x++;
+      clusters.push([a,x-1]);
+    }
+    if (!clusters.length) return projected;
+    // OCR words can contain letters separated by small blank columns. Merge the
+    // smallest visual gaps until the number of ink groups matches the OCR token
+    // count. If we have fewer groups than tokens, projection is safer.
+    while (clusters.length > tokenCount) {
+      let best=-1, bestGap=Infinity;
+      for (let i=0;i<clusters.length-1;i++) {
+        const gap=clusters[i+1][0]-clusters[i][1]-1;
+        if (gap < bestGap) { bestGap=gap; best=i; }
+      }
+      if (best < 0) break;
+      clusters.splice(best,2,[clusters[best][0],clusters[best+1][1]]);
+    }
+    if (clusters.length !== tokenCount) return projected;
+    return projected.map((tok,i) => {
+      const [a,z]=clusters[i];
+      const inset=Math.min(1.5, Math.max(0,(z-a+1)*0.025));
+      return { ...tok, box:{
+        x:x0+a+inset,
+        y:b.y,
+        w:Math.max(6,z-a+1-inset*2),
+        h:b.h
+      }};
+    });
+  }
+
   function buildItalicText(text, wordResults) {
     if (!wordResults?.length) return text;
     let out = "", pos = 0, inItalic = false;
@@ -3504,7 +3570,7 @@
         if (typeof progressCallback === "function") {
           progressCallback(index + 1, state.pages.length, italicPct);
         } else {
-          setStatus(`Automatic italic scan 2.7.58 calibrated: page ${index + 1} of ${state.pages.length}…`);
+          setStatus(`Automatic italic scan 2.7.59 ink-aligned: page ${index + 1} of ${state.pages.length}…`);
         }
         const img = await loadImageFromFile(file);
         const canvas = makeCroppedCanvas(img);
@@ -3523,7 +3589,7 @@
           const lineResult = lineScores[lineIndex];
           line.italicMeta = lineResult;
 
-          const words = estimateWordBoxes(line);
+          const words = estimateInkAlignedWordBoxes(canvas, line);
           const prelim = words.map(w => {
             const r = italicSlantScore(canvas, w.box);
             scannedWords++;
@@ -3580,7 +3646,7 @@
       // projected onto the authoritative current page text instead.
       saveCheckpoint();
       if (els.italicStatus) els.italicStatus.textContent = `${markedRuns} run${markedRuns === 1 ? "" : "s"} · ${markedWords} words`;
-      setStatus(`Automatic italic scan 2.7.58 checked ${scannedWords} words across ${scannedLines} OCR lines and marked ${markedRuns} hybrid run${markedRuns === 1 ? "" : "s"} (${markedWords} words). Formatting evidence was projected onto ${projectedItalicPages} current page${projectedItalicPages === 1 ? "" : "s"} without rebuilding repaired text.`);
+      setStatus(`Automatic italic scan 2.7.59 checked ${scannedWords} words across ${scannedLines} OCR lines and marked ${markedRuns} hybrid run${markedRuns === 1 ? "" : "s"} (${markedWords} words). Formatting evidence was projected onto ${projectedItalicPages} current page${projectedItalicPages === 1 ? "" : "s"} without rebuilding repaired text.`);
       return { markedRuns, markedWords, scannedWords, scannedLines, projectedItalicPages };
     } catch (err) {
       console.error(err);
