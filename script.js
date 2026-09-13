@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.61-italics-lifecycle-boundary";
+  const BUILD_VERSION = "2.7.63-italics-expansion-safety";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -3604,10 +3604,25 @@
           if (Math.sign(w.slant || 0) !== sign) return false;
           const absSlant = Math.abs(w.slant || 0);
           const gain = w.gain || 0;
-          return absSlant >= 0.17 && gain >= 0.0050 &&
-            absSlant >= avgAbsSlant * 0.75 &&
-            (absSlant - surroundingAbsSlant) >= 0.075 &&
-            (gain - surroundingGain) >= 0.0027;
+
+          // v2.7.63 expansion safety:
+          // an edge word must have its OWN positive italic evidence.
+          // Do not allow an accepted neighboring run to "pull in" flat roman text.
+          const ownEvidence =
+            w.candidate === true &&
+            (w.score || 0) >= 0.72 &&
+            absSlant >= 0.18 &&
+            gain >= 0.0060;
+
+          const agreesWithRun =
+            absSlant >= avgAbsSlant * 0.78 &&
+            Math.sign(w.slant || 0) === sign;
+
+          const separatesFromRoman =
+            (absSlant - surroundingAbsSlant) >= 0.08 &&
+            (gain - surroundingGain) >= 0.0030;
+
+          return ownEvidence && agreesWithRun && separatesFromRoman;
         };
         for (let step = 0; step < 2 && expandedStart > 0; step++) {
           if (!edgeEligible(scored[expandedStart - 1])) break;
@@ -3651,7 +3666,7 @@
         if (typeof progressCallback === "function") {
           progressCallback(index + 1, state.pages.length, italicPct);
         } else {
-          setStatus(`Automatic italic scan 2.7.62 context-consensus: page ${index + 1} of ${state.pages.length}…`);
+          setStatus(`Automatic italic scan 2.7.63 expansion-safety: page ${index + 1} of ${state.pages.length}…`);
         }
         const img = await loadImageFromFile(file);
         const canvas = makeCroppedCanvas(img);
@@ -3799,8 +3814,10 @@
         fullLineMinGain: 0.0060,
         fullLineMinWordConsensus: 0.60,
         boundaryExpansionMaxWordsPerSide: 2,
-        boundaryExpansionMinAbsSlant: 0.17,
-        boundaryExpansionMinGain: 0.0050,
+        boundaryExpansionMinAbsSlant: 0.18,
+        boundaryExpansionMinGain: 0.0060,
+      boundaryExpansionRequiresCandidateWord: true,
+      boundaryExpansionMinScore: 0.72,
         automaticSingleWordItalics: true,
         italicsCommittedImmediatelyAfterBatchOcr: true,
       },
