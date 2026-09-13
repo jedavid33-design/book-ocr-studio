@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.58-italics-calibration";
+  const BUILD_VERSION = "2.7.61-italics-lifecycle-boundary";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -2327,13 +2327,28 @@
     state.bookLayoutProfile = buildBookLayoutProfile(state.pages);
     rebuildParagraphsFromSavedGeometry({ confirmOverwrite: false });
     const detectedChapters = redetectAutomaticChapterStarts();
+
+    // v2.7.61 lifecycle fix: italics are formatting evidence from OCR geometry,
+    // not a side effect of Guided Repair. Commit them immediately once the full
+    // OCR batch and paragraph profile exist, so an EPUB exported before Repair
+    // contains the same detected emphasis as one exported afterward.
+    let initialItalics = null;
+    try {
+      initialItalics = await autoScanItalics({ rebuildText: false });
+    } catch (err) {
+      console.warn("Initial italic scan after OCR failed", err);
+    }
+
     state.currentPageIndex = 0;
     state.reviewMode = "chapters";
     saveCheckpoint();
     renderReview();
     refreshParagraphRebuildUi();
     const chapters = state.pages.filter(page => page.chapterStart).length;
-    setStatus(`Batch OCR complete: ${state.pages.length} pages processed. Book-level paragraph profile applied automatically. Strict chapter detection found ${chapters} chapter start page${chapters === 1 ? "" : "s"} for review.`);
+    const italicNote = initialItalics
+      ? ` Italics committed at OCR completion: ${initialItalics.markedRuns} run${initialItalics.markedRuns === 1 ? "" : "s"}.`
+      : "";
+    setStatus(`Batch OCR complete: ${state.pages.length} pages processed. Book-level paragraph profile applied automatically. Strict chapter detection found ${chapters} chapter start page${chapters === 1 ? "" : "s"} for review.${italicNote}`);
   }
 
   async function goToPreviousPage() {
@@ -3556,13 +3571,37 @@
 
       const acceptedShort = acceptedSingleton || acceptedPair;
       const accepted = acceptedLong || acceptedShort;
-      runs.push({ startWord:i, endWord:j-1, wordCount:words.length, sign, avgGain, avgAbsSlant,
+
+      // v2.7.61 boundary recovery: once a run is confidently accepted, allow
+      // one adjacent word on either side to join when its geometry agrees with
+      // the run direction and is still meaningfully stronger than surrounding
+      // roman text. This repairs clipped true runs without lowering the core
+      // acceptance thresholds that finally suppressed broad false positives.
+      let expandedStart = i;
+      let expandedEnd = j - 1;
+      if (accepted) {
+        const edgeEligible = (w) => {
+          if (!w || w.letters < 2) return false;
+          if (Math.sign(w.slant || 0) !== sign) return false;
+          const absSlant = Math.abs(w.slant || 0);
+          const gain = w.gain || 0;
+          return absSlant >= 0.16 && gain >= 0.0045 &&
+            (absSlant - surroundingAbsSlant) >= 0.07 &&
+            (gain - surroundingGain) >= 0.0025;
+        };
+        if (expandedStart > 0 && edgeEligible(scored[expandedStart - 1])) expandedStart--;
+        if (expandedEnd + 1 < scored.length && edgeEligible(scored[expandedEnd + 1])) expandedEnd++;
+      }
+      runs.push({ startWord:expandedStart, endWord:expandedEnd,
+        wordCount:expandedEnd - expandedStart + 1, originalStartWord:i, originalEndWord:j-1,
+        boundaryExpanded: accepted && (expandedStart !== i || expandedEnd !== j - 1),
+        sign, avgGain, avgAbsSlant,
         neighborWordCount:neighbors.length, neighborAbsSlant, neighborGain, slantLift, gainLift,
         surroundingLineCount:surroundingLineResults.length, surroundingAbsSlant, surroundingGain,
         surroundingSlantLift, surroundingGainLift, runCoverage,
         relativeEvidence, surroundingEvidence, fullLineEvidence:false,
         accepted, route:'inline' });
-      if (accepted) for (let k=i;k<j;k++) scored[k].italic = true;
+      if (accepted) for (let k=expandedStart;k<=expandedEnd;k++) scored[k].italic = true;
       i = j;
     }
     return runs;
@@ -3586,7 +3625,7 @@
         if (typeof progressCallback === "function") {
           progressCallback(index + 1, state.pages.length, italicPct);
         } else {
-          setStatus(`Automatic italic scan 2.7.60 consensus-guard: page ${index + 1} of ${state.pages.length}…`);
+          setStatus(`Automatic italic scan 2.7.61 lifecycle-boundary: page ${index + 1} of ${state.pages.length}…`);
         }
         const img = await loadImageFromFile(file);
         const canvas = makeCroppedCanvas(img);
@@ -3662,7 +3701,7 @@
       // projected onto the authoritative current page text instead.
       saveCheckpoint();
       if (els.italicStatus) els.italicStatus.textContent = `${markedRuns} run${markedRuns === 1 ? "" : "s"} · ${markedWords} words`;
-      setStatus(`Automatic italic scan 2.7.60 checked ${scannedWords} words across ${scannedLines} OCR lines and marked ${markedRuns} hybrid run${markedRuns === 1 ? "" : "s"} (${markedWords} words). Formatting evidence was projected onto ${projectedItalicPages} current page${projectedItalicPages === 1 ? "" : "s"} without rebuilding repaired text.`);
+      setStatus(`Automatic italic scan 2.7.61 checked ${scannedWords} words across ${scannedLines} OCR lines and marked ${markedRuns} hybrid run${markedRuns === 1 ? "" : "s"} (${markedWords} words). Formatting evidence was projected onto ${projectedItalicPages} current page${projectedItalicPages === 1 ? "" : "s"} without rebuilding repaired text.`);
       return { markedRuns, markedWords, scannedWords, scannedLines, projectedItalicPages };
     } catch (err) {
       console.error(err);
@@ -3714,22 +3753,30 @@
         markedRuns: runs.filter(x => x.accepted).length,
       },
       thresholds: {
-        wordMinAbsSlant: 0.14,
-        wordMinGainNormal: 0.0040,
-        wordMinGainShort: 0.0055,
-        wordMinScore: 0.70,
-        runMinWords: 3,
-        runMinAverageGain: 0.0070,
-        runMinAverageAbsSlant: 0.20,
+        candidateWordMinAbsSlantNormal: 0.17,
+        candidateWordMinAbsSlantShort: 0.20,
+        candidateWordMinGainNormal: 0.0060,
+        candidateWordMinGainShort: 0.0085,
+        candidateWordMinScore: 0.72,
+        longRunMinWords: 3,
+        longRunMinAverageGain: 0.0082,
+        longRunMinAverageAbsSlant: 0.21,
+        longRunMinSlantLift: 0.10,
+        longRunMinGainLift: 0.0035,
+        singletonMinAverageGain: 0.0180,
+        singletonMinAverageAbsSlant: 0.32,
+        pairMinAverageGain: 0.0105,
+        pairMinAverageAbsSlant: 0.235,
         sameSlantDirectionRequired: true,
-        relativeToLineSlantLift: 0.09,
-        relativeToLineGainLift: 0.0030,
-        surroundingLineSlantLift: 0.09,
-        surroundingLineGainLift: 0.0030,
         inlineRunMaxCoverage: 0.72,
-        fullLineMinAbsSlant: 0.22,
-        fullLineMinGain: 0.0045,
+        fullLineMinAbsSlant: 0.23,
+        fullLineMinGain: 0.0060,
+        fullLineMinWordConsensus: 0.60,
+        boundaryExpansionMaxWordsPerSide: 1,
+        boundaryExpansionMinAbsSlant: 0.16,
+        boundaryExpansionMinGain: 0.0045,
         automaticSingleWordItalics: true,
+        italicsCommittedImmediatelyAfterBatchOcr: true,
       },
       topLineCandidatesByGain: rankedLines.slice(0, 100),
       topWordCandidatesByGain: rankedWords.slice(0, 250),
