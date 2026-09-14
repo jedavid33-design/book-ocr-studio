@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.69-cloudlibrary-iowan-ocr-cleanup";
+  const BUILD_VERSION = "2.8.0-cloudlibrary-iowan-italics";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -3605,13 +3605,13 @@
   }
 
   function italicSlantScore(canvas, box) {
-    if (!canvas || !box) return { italic: false, slant: 0, gain: 0 };
+    if (!canvas || !box) return { italic: false, slant: 0, gain: 0, shear: 0, shearStrength: 0 };
     const padX = 2, padY = 1;
     const x0 = Math.max(0, Math.floor(box.x - padX));
     const y0 = Math.max(0, Math.floor(box.y - padY));
     const w = Math.min(canvas.width - x0, Math.max(8, Math.ceil(box.w + padX * 2)));
     const h = Math.min(canvas.height - y0, Math.max(8, Math.ceil(box.h + padY * 2)));
-    if (w < 20 || h < 10) return { italic: false, slant: 0, gain: 0 };
+    if (w < 20 || h < 10) return { italic: false, slant: 0, gain: 0, shear: 0, shearStrength: 0 };
     const ctx = canvas.getContext("2d", { willReadFrequently: true });
     const data = ctx.getImageData(x0, y0, w, h).data;
     const gray = new Uint8Array(w * h);
@@ -3631,7 +3631,7 @@
       }
       rows.push(xs);
     }
-    if (darkCount < Math.max(40, w * h * 0.01)) return { italic: false, slant: 0, gain: 0 };
+    if (darkCount < Math.max(40, w * h * 0.01)) return { italic: false, slant: 0, gain: 0, shear: 0, shearStrength: 0 };
     const mid = (h - 1) / 2;
     const candidates = [-0.32,-0.28,-0.24,-0.20,-0.16,-0.12,-0.08,-0.04,0,0.04,0.08,0.12,0.16,0.20,0.24,0.28,0.32];
     const scoreFor = (slant) => {
@@ -3657,17 +3657,41 @@
       if (score > bestScore) { bestScore = score; bestSlant = slant; }
     }
     const gain = bestScore - zeroScore;
-    // Conservative by design: this is meant to catch obviously slanted full
-    // OCR lines, not guess at ordinary prose or mixed roman/italic lines.
+
+    // v2.8.0 CloudLibrary/Iowan: overlap-gain is weak on Iowan Old Style,
+    // especially for short inline emphasis. Add an independent shear signal
+    // from the horizontal movement of each ink row's center. The signal is
+    // intentionally exported even when it is not strong enough to mark text so
+    // the frozen benchmark can calibrate future builds without another OCR pass.
+    const rowCenters = [];
+    for (let y = 0; y < h; y++) {
+      if (rows[y].length < 2) continue;
+      const center = rows[y].reduce((a,x)=>a+x,0) / rows[y].length;
+      rowCenters.push({ y, center });
+    }
+    let shear = 0;
+    if (rowCenters.length >= 6) {
+      const third = Math.max(2, Math.floor(rowCenters.length / 3));
+      const top = median(rowCenters.slice(0, third).map(r=>r.center));
+      const bottom = median(rowCenters.slice(-third).map(r=>r.center));
+      const topY = median(rowCenters.slice(0, third).map(r=>r.y));
+      const bottomY = median(rowCenters.slice(-third).map(r=>r.y));
+      const dy = Math.max(1, bottomY - topY);
+      shear = (top - bottom) / dy;
+    }
+    const shearStrength = Math.abs(shear);
+
+    // Conservative by design: this legacy flag still describes only the old
+    // overlap-based full-line signal. Iowan inline acceptance happens later.
     const italic = Math.abs(bestSlant) >= 0.12 && gain >= 0.018 && bestScore >= 0.38;
-    return { italic, slant: bestSlant, gain, score: bestScore, zeroScore };
+    return { italic, slant: bestSlant, gain, score: bestScore, zeroScore, shear, shearStrength };
   }
 
   function estimateWordBoxes(line) {
     const text = String(line?.text || "");
     const box = line?.box;
     if (!text.trim() || !box || box.w < 12) return [];
-    const matches = [...text.matchAll(/\S+/g)];
+    const matches = [...text.matchAll(/[^\s—–]+/g)];
     if (!matches.length) return [];
     // Character-position projection is intentionally simple: Paddle gives us
     // a line box, so project token offsets across that box and leave a small
@@ -3771,7 +3795,7 @@
     return a.length % 2 ? a[m] : (a[m-1]+a[m])/2;
   }
 
-  function groupItalicRuns(scored, lineResult, lineText, surroundingLineResults = []) {
+  function groupItalicRuns(scored, lineResult, lineText, surroundingLineResults = [], profile = "") {
     const runs = [];
     const alphaWords = scored.filter(w=>w.letters>=2);
     const allCaps = /^[^a-z]*[A-Z][^a-z]*$/.test(String(lineText||''));
@@ -3815,6 +3839,52 @@
         wordConsensus,
         fullLineEvidence:true, accepted:true, route:'full-line' });
       return runs;
+    }
+
+    // v2.8.0 Route I: CloudLibrary / Iowan Old Style. The multi-font benchmark
+    // showed that true Iowan italics can have essentially zero overlap gain.
+    // Use a second, independent row-shear signal and accept only coherent
+    // multiword windows that stand out from the rest of the line. This route is
+    // profile-specific so Kindle/Georgia keeps its existing classifier.
+    if (profile === "cloud-iowan" && alphaWords.length >= 2) {
+      const lineRoman = alphaWords;
+      const baseShear = median(lineRoman.map(w=>Math.abs(w.shear || 0)));
+      const candidateWindows = [];
+      for (let start = 0; start < scored.length; start++) {
+        if ((scored[start]?.letters || 0) < 2) continue;
+        for (let len = 2; len <= 5 && start + len <= scored.length; len++) {
+          const ws = scored.slice(start, start + len);
+          if (ws.some(w => (w.letters || 0) < 2)) continue;
+          const shears = ws.map(w => w.shear || 0);
+          const absShears = shears.map(Math.abs);
+          const avgAbsShear = absShears.reduce((a,b)=>a+b,0) / len;
+          const sign = Math.sign(median(shears.filter(v=>Math.abs(v)>=0.02)));
+          const signAgree = sign ? shears.filter(v=>Math.sign(v)===sign && Math.abs(v)>=0.06).length / len : 0;
+          const outside = scored.filter((_,k)=>k<start || k>=start+len).filter(w=>(w.letters||0)>=2);
+          const outsideShear = median(outside.map(w=>Math.abs(w.shear||0)));
+          const shearLift = avgAbsShear - outsideShear;
+          const avgGain = ws.reduce((a,w)=>a+(w.gain||0),0)/len;
+          const avgAbsSlant = ws.reduce((a,w)=>a+Math.abs(w.slant||0),0)/len;
+          const typographySupport = avgGain >= 0.0015 || avgAbsSlant >= 0.14;
+          const accepted = len >= 2 && signAgree >= 0.66 &&
+            avgAbsShear >= Math.max(0.12, baseShear + 0.035) &&
+            shearLift >= 0.035 && typographySupport;
+          if (accepted) candidateWindows.push({ start, end:start+len-1, len, sign, avgAbsShear, shearLift, avgGain, avgAbsSlant });
+        }
+      }
+      // Prefer the strongest non-overlapping windows.
+      candidateWindows.sort((a,b)=>(b.shearLift*2+b.avgAbsShear)-(a.shearLift*2+a.avgAbsShear));
+      const occupied = new Set();
+      for (const win of candidateWindows) {
+        let overlaps = false;
+        for (let k=win.start;k<=win.end;k++) if (occupied.has(k)) overlaps = true;
+        if (overlaps) continue;
+        for (let k=win.start;k<=win.end;k++) { scored[k].italic = true; occupied.add(k); }
+        runs.push({ startWord:win.start, endWord:win.end, wordCount:win.len, sign:win.sign,
+          avgGain:win.avgGain, avgAbsSlant:win.avgAbsSlant, avgAbsShear:win.avgAbsShear,
+          shearLift:win.shearLift, baseShear, accepted:true, route:'iowan-shear' });
+      }
+      if (runs.length) return runs;
     }
 
     // Route B: inline emphasis. Slant by itself proved noisy, so an inline run
@@ -3871,7 +3941,7 @@
         Math.abs(r.slant || 0) < 0.16 && (r.gain || 0) < 0.0100
       ).length;
       const neighborItalicLikeCount = neighborPool.filter(r =>
-        Math.sign(r.slant || 0) === Math.sign(avgSlant || 0) &&
+        Math.sign(r.slant || 0) === Math.sign((words.reduce((a,w)=>a+(w.slant||0),0) / Math.max(1,words.length)) || 0) &&
         Math.abs(r.slant || 0) >= 0.18 && (r.gain || 0) >= 0.0065
       ).length;
       const singletonContextClean =
@@ -3973,7 +4043,7 @@
         if (typeof progressCallback === "function") {
           progressCallback(index + 1, state.pages.length, italicPct);
         } else {
-          setStatus(`Automatic italic scan 2.7.69 ${state.sourceProfile === "cloud-iowan" ? "CloudLibrary/Iowan" : "profile"}: page ${index + 1} of ${state.pages.length}…`);
+          setStatus(`Automatic italic scan 2.8.0 ${state.sourceProfile === "cloud-iowan" ? "CloudLibrary/Iowan" : "profile"}: page ${index + 1} of ${state.pages.length}…`);
         }
         const img = await loadImageFromFile(file);
         const canvas = makeCroppedCanvas(img);
@@ -4010,8 +4080,11 @@
             // italicize short function words, so typography must decide.
             const minGain = letters <= 3 ? 0.0085 : 0.0060;
             const minSlant = letters <= 3 ? 0.20 : 0.17;
-            const candidate = letters >= 2 && Math.abs(r.slant) >= minSlant &&
+            const legacyCandidate = letters >= 2 && Math.abs(r.slant) >= minSlant &&
               r.gain >= minGain && r.score >= 0.72;
+            const iowanShearCandidate = state.sourceProfile === "cloud-iowan" && letters >= 2 &&
+              (r.shearStrength || 0) >= 0.12 && r.score >= 0.72;
+            const candidate = legacyCandidate || iowanShearCandidate;
             return { ...w, ...r, letters, candidate, italic:false };
           });
 
@@ -4023,9 +4096,9 @@
             if (!otherText || isSceneMarkerText(otherText) || /^[^a-z]*[A-Z][^a-z]*$/.test(otherText)) continue;
             surroundingLineResults.push(lineScores[otherIndex]);
           }
-          const runs = groupItalicRuns(prelim, lineResult, text, surroundingLineResults);
+          const runs = groupItalicRuns(prelim, lineResult, text, surroundingLineResults, state.sourceProfile);
           line.italicRunMeta = runs;
-          line.italicWordMeta = prelim.map(({text,start,end,letters,candidate,italic,slant,gain,score,zeroScore}) => ({text,start,end,letters,candidate,italic,slant,gain,score,zeroScore}));
+          line.italicWordMeta = prelim.map(({text,start,end,letters,candidate,italic,slant,gain,score,zeroScore,shear,shearStrength}) => ({text,start,end,letters,candidate,italic,slant,gain,score,zeroScore,shear,shearStrength}));
           line.italicText = buildItalicText(text, prelim);
           const acceptedRuns = runs.filter(r=>r.accepted).length;
           const acceptedWords = prelim.filter(x=>x.italic).length;
@@ -4049,7 +4122,7 @@
       // projected onto the authoritative current page text instead.
       saveCheckpoint();
       if (els.italicStatus) els.italicStatus.textContent = `${markedRuns} run${markedRuns === 1 ? "" : "s"} · ${markedWords} words`;
-      setStatus(`Automatic italic scan 2.7.61 checked ${scannedWords} words across ${scannedLines} OCR lines and marked ${markedRuns} hybrid run${markedRuns === 1 ? "" : "s"} (${markedWords} words). Formatting evidence was projected onto ${projectedItalicPages} current page${projectedItalicPages === 1 ? "" : "s"} without rebuilding repaired text.`);
+      setStatus(`Automatic italic scan 2.8.0 checked ${scannedWords} words across ${scannedLines} OCR lines and marked ${markedRuns} hybrid run${markedRuns === 1 ? "" : "s"} (${markedWords} words). Formatting evidence was projected onto ${projectedItalicPages} current page${projectedItalicPages === 1 ? "" : "s"} without rebuilding repaired text.`);
       return { markedRuns, markedWords, scannedWords, scannedLines, projectedItalicPages };
     } catch (err) {
       console.error(err);
@@ -4088,7 +4161,7 @@
     const rankedLines = [...lines].sort((a,b) => (b.gain || 0) - (a.gain || 0));
     const rankedWords = [...words].sort((a,b) => (b.gain || 0) - (a.gain || 0));
     const payload = {
-      format: "book-ocr-studio-italic-diagnostics-v5",
+      format: "book-ocr-studio-italic-diagnostics-v6",
       buildVersion: BUILD_VERSION,
       exportedAt: new Date().toISOString(),
       summary: {
@@ -4127,6 +4200,8 @@
       boundaryExpansionMinScore: 0.72,
         automaticSingleWordItalics: true,
         italicsCommittedImmediatelyAfterBatchOcr: true,
+        cloudIowanShearDetector: true,
+        cloudIowanTokenSplitAtDash: true,
       },
       topLineCandidatesByGain: rankedLines.slice(0, 100),
       topWordCandidatesByGain: rankedWords.slice(0, 250),
