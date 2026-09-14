@@ -328,3 +328,11 @@ Surgical follow-up to v2.7.62.
 - Adds a syntax-aware continuation guard so an indented OCR continuation line does not become a false paragraph after words such as `and`, `but`, `because`, or punctuation that clearly continues a sentence.
 - Expands CloudLibrary chapter-opening rescue for Iowan Old Style, including `ou` → `You`, `few days after` → `A few days after`, detached decorative-glyph removal, and conservative restoration of a lost opening dialogue quote when a closing quote + attribution proves the paragraph begins in dialogue.
 - Leaves the conservative Iowan italic acceptance thresholds unchanged in this build; the current screenshots show true italic text can be nearly geometry-indistinguishable from roman text, so lowering thresholds here would trade missed italics for known false positives.
+
+## v2.7.66 — CloudLibrary dropcap ownership
+
+- Adds geometry-backed ownership for composite CloudLibrary/Iowan chapter openings such as `“S he's...` and `“Y ou...`.
+- A tall left-side decorative capital is now treated as one logical character with the adjacent lowercase remainder before Dropcap Rescue decides whether a review is needed.
+- Preserves article/pronoun spacing for openings such as `A few days...` so semantic initial recovery cannot create `Afew`.
+- Keeps this behavior scoped to the CloudLibrary / Iowan production profile; Kindle/Georgia is unchanged.
+- Leaves paragraph-continuation and italics thresholds unchanged from v2.7.65.

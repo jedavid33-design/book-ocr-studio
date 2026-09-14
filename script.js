@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.65-cloudlibrary-iowan-reconstruction";
+  const BUILD_VERSION = "2.7.66-cloudlibrary-dropcap-ownership";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -2852,7 +2852,94 @@
     }
   }
 
+  function compositeDropcapPrefixRepair(opening) {
+    // v2.7.66 CloudLibrary/Iowan: Paddle often returns the oversized opening
+    // glyph as its own OCR item, but paragraph reconstruction can still place
+    // it directly before the lowercase remainder: “S he's..., “Y ou..., etc.
+    // Treat that as one logical opening only when raw geometry proves that the
+    // single capital is a tall, left-side decorative glyph beside the remainder.
+    if (state.sourceProfile !== "cloud-iowan" || state.importedEpub) return null;
+    const text = String(opening?.text || "");
+    const match = text.match(/^([“"'‘’]?)([A-Z])\s+(\p{Ll}[\p{Ll}’'-]*)(\b|(?=[,.;:!?]))/u);
+    if (!match) return null;
+
+    const [, prefix, initial, remainderWord] = match;
+    const page = opening?.page;
+    const items = (Array.isArray(page?.rawOcrItems) && page.rawOcrItems.length
+      ? page.rawOcrItems : (Array.isArray(page?.layoutLines) ? page.layoutLines : []))
+      .map(item => ({
+        text: String(item?.text || "").trim(),
+        box: item?.box ? {
+          x:Number(item.box.x), y:Number(item.box.y), w:Number(item.box.w), h:Number(item.box.h),
+          cx:Number(item.box.cx), cy:Number(item.box.cy)
+        } : null
+      }))
+      .filter(item => item.text && item.box && [item.box.x,item.box.y,item.box.w,item.box.h,item.box.cx,item.box.cy].every(Number.isFinite));
+    if (!items.length) return null;
+
+    const typicalH = median(items.map(item => item.box.h).filter(h => h > 2)) || 28;
+    const target = items.find(item => {
+      const t = item.text.replace(/^[“”"'‘’([{—–-]+/u, "").toLowerCase();
+      return t.startsWith(remainderWord.toLowerCase());
+    });
+    const glyph = items.find(item => {
+      const stripped = item.text.replace(/[“”"'‘’]/gu, "").trim();
+      if (stripped !== initial || item === target) return false;
+      if (!target) return item.box.h >= typicalH * 1.55;
+      const leftGap = target.box.x - (item.box.x + item.box.w);
+      const verticalOverlap = Math.max(0,
+        Math.min(item.box.y + item.box.h, target.box.y + target.box.h * 2.8) -
+        Math.max(item.box.y, target.box.y - target.box.h * 1.3));
+      return item.box.h >= typicalH * 1.45 && item.box.x < target.box.x &&
+        leftGap >= -typicalH * 0.8 && leftGap <= typicalH * 4.5 && verticalOverlap > 0;
+    });
+    if (!glyph || !target) return null;
+
+    let replacementHead;
+    const lowerRemainder = remainderWord.toLowerCase();
+    // An opening article/pronoun A/I remains a separate word. This protects
+    // the known CloudLibrary shape "A few days..." from becoming "Afew".
+    if ((initial === "A" && /^(?:few|couple)\b/i.test(remainderWord)) ||
+        (initial === "I" && /^(?:am|have|had|was|will|can|do|did|don't|dont)\b/i.test(remainderWord))) {
+      replacementHead = `${initial} ${remainderWord}`;
+    } else {
+      replacementHead = `${initial}${remainderWord}`;
+    }
+
+    const quote = prefix ? '"' : '';
+    const consumed = match[0].length;
+    const proposed = `${quote}${replacementHead}${text.slice(consumed)}`
+      .replace(/^"([A-Z])\s+(?=\p{Ll})/u, '"$1');
+
+    return {
+      proposed,
+      initial,
+      remainderWord: lowerRemainder,
+      fragment: {
+        value: initial, source: "raw-geometry", distance: 0, geometryScore: 20,
+        geometry: { targetText: target.text, targetBox: target.box, fragmentBox: glyph.box, typicalH, raw: true }
+      }
+    };
+  }
+
   function buildDropcapCandidate(opening, id, { legacyRetry = false } = {}) {
+    const composite = compositeDropcapPrefixRepair(opening);
+    if (composite) {
+      return {
+        id, ...opening,
+        info: firstWordInfo(opening.text),
+        fragment: composite.fragment,
+        confidence: "high",
+        reason: `Raw Paddle geometry shows decorative “${composite.initial}” as a tall left-side glyph beside the lowercase opening remainder. Studio will treat them as one logical opening character.`,
+        before: opening.fullText || opening.text,
+        proposed: opening.fullText && opening.startOffset > 0
+          ? `${opening.fullText.slice(0, opening.startOffset)}${composite.proposed}`
+          : composite.proposed,
+        status: "pending",
+        rawDiagnostic: dropcapRawDiagnostic(opening)
+      };
+    }
+
     const info = firstWordInfo(opening.text);
     if (!info) return null;
 
@@ -3731,7 +3818,7 @@
         if (typeof progressCallback === "function") {
           progressCallback(index + 1, state.pages.length, italicPct);
         } else {
-          setStatus(`Automatic italic scan 2.7.65 ${state.sourceProfile === "cloud-iowan" ? "CloudLibrary/Iowan" : "profile"}: page ${index + 1} of ${state.pages.length}…`);
+          setStatus(`Automatic italic scan 2.7.66 ${state.sourceProfile === "cloud-iowan" ? "CloudLibrary/Iowan" : "profile"}: page ${index + 1} of ${state.pages.length}…`);
         }
         const img = await loadImageFromFile(file);
         const canvas = makeCroppedCanvas(img);

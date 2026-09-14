@@ -1,7 +1,7 @@
-const CACHE_NAME = "book-ocr-studio-shell-v2-7-65-cloudlibrary-iowan-reconstruction";
+const CACHE_NAME = "book-ocr-studio-shell-v2-7-66-cloudlibrary-dropcap-ownership";
 const APP_SHELL = [
-  "./styles.css?v=2.7.65-cloudlibrary-iowan-reconstruction",
-  "./epub-polish.js?v=2.7.65-cloudlibrary-iowan-reconstruction",
+  "./styles.css?v=2.7.66-cloudlibrary-dropcap-ownership",
+  "./epub-polish.js?v=2.7.66-cloudlibrary-dropcap-ownership",
   "./manifest.webmanifest",
   "./icon-192.png",
   "./icon-512.png",
