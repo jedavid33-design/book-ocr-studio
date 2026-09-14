@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.68-cloudlibrary-geometry-dropcap-assembly";
+  const BUILD_VERSION = "2.7.69-cloudlibrary-iowan-ocr-cleanup";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -2413,6 +2413,7 @@
       // conservative cleanup after reconstruction so button order is harmless.
       const safePolish = globalThis.BookOcrEpubPolish?.safePolishText;
       if (typeof safePolish === "function") page.text = safePolish(page.text).text;
+      page.text = applyProfileKnownOcrCleanup(page.text).text;
       page.layoutMeta = rebuilt.meta;
       page.chapterCandidate = chapterHeuristic(page.text);
       if (!page.chapterTitle) page.chapterTitle = detectChapterTitle(page.text, rebuiltCount + 1);
@@ -3972,7 +3973,7 @@
         if (typeof progressCallback === "function") {
           progressCallback(index + 1, state.pages.length, italicPct);
         } else {
-          setStatus(`Automatic italic scan 2.7.68 ${state.sourceProfile === "cloud-iowan" ? "CloudLibrary/Iowan" : "profile"}: page ${index + 1} of ${state.pages.length}…`);
+          setStatus(`Automatic italic scan 2.7.69 ${state.sourceProfile === "cloud-iowan" ? "CloudLibrary/Iowan" : "profile"}: page ${index + 1} of ${state.pages.length}…`);
         }
         const img = await loadImageFromFile(file);
         const canvas = makeCroppedCanvas(img);
@@ -5244,7 +5245,9 @@
       const page = state.pages[pageIndex];
       const beforeText = String(page.text || "");
       const result = polish(beforeText);
-      page.text = result.text;
+      const profileResult = applyProfileKnownOcrCleanup(result.text);
+      page.text = profileResult.text;
+      result.fixedCount = (result.fixedCount || 0) + (profileResult.fixedCount || 0);
       if (page.text !== beforeText) saveRepairOverlayPage(pageIndex);
       fixedCount += result.fixedCount || 0;
       punctuationSpacing += result.punctuationSpacing || 0;
@@ -5447,6 +5450,17 @@
     }
   }
 
+  function applyProfileKnownOcrCleanup(text) {
+    if (state.sourceProfile !== "cloud-iowan") {
+      return { text: String(text ?? ""), fixedCount: 0, knownWordOcr: 0, stackedDashArtifacts: 0, exactPunctuationArtifacts: 0 };
+    }
+    const repair = globalThis.BookOcrEpubPolish?.repairCloudIowanKnownArtifacts;
+    if (typeof repair !== "function") {
+      return { text: String(text ?? ""), fixedCount: 0, knownWordOcr: 0, stackedDashArtifacts: 0, exactPunctuationArtifacts: 0 };
+    }
+    return repair(text);
+  }
+
   function applySafePolishToProject(pageIndexes = null) {
     const polish = globalThis.BookOcrEpubPolish?.safePolishText;
     if (typeof polish !== "function") {
@@ -5470,7 +5484,9 @@
       const page = state.pages[pageIndex];
       const beforeText = String(page.text || "");
       const result = polish(beforeText);
-      page.text = result.text;
+      const profileResult = applyProfileKnownOcrCleanup(result.text);
+      page.text = profileResult.text;
+      result.fixedCount = (result.fixedCount || 0) + (profileResult.fixedCount || 0);
       if (page.text !== beforeText) saveRepairOverlayPage(pageIndex);
       fixedCount += result.fixedCount || 0;
       ellipsisCount += result.ellipsisCount || 0;
