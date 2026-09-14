@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.67-cloudlibrary-quoted-dropcap-ownership";
+  const BUILD_VERSION = "2.7.68-cloudlibrary-geometry-dropcap-assembly";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -633,7 +633,7 @@
       }
     }
 
-    return groups.map(group => {
+    let rows = groups.map(group => {
       const row = group.items.slice().sort((a,b) => a.box.x - b.box.x);
       const left = Math.min(...row.map(x => x.box.x));
       const top = Math.min(...row.map(x => x.box.y));
@@ -645,6 +645,88 @@
         box: { x:left, y:top, w:right-left, h:bottom-top, cx:(left+right)/2, cy:(top+bottom)/2 }
       };
     }).sort((a,b) => a.box.y - b.box.y || a.box.x - b.box.x);
+
+    // v2.7.68 CloudLibrary/Iowan: resolve decorative-initial ownership while
+    // geometry is still authoritative. Paddle intentionally keeps a very tall
+    // dropcap in its own row; the neighboring normal-height row contains the
+    // lowercase remainder. If we wait until prose cleanup, both fragments have
+    // already become independent text. Merge them here into one logical line.
+    //
+    // Examples from the frozen Legacy regression set:
+    //   “S  + he's totally...  -> “She's totally...
+    //   “Y  + ou really...     -> “You really...
+    //   A   + few days...      -> A few days...
+    if (state.sourceProfile === "cloud-iowan" && rows.length > 1) {
+      const consumed = new Set();
+      const merged = [];
+      const bodyH = median(rows.map(r => r.box.h).filter(h => h > 2 && h < typicalH * 1.6)) || typicalH;
+
+      const glyphInfo = (text) => {
+        const m = String(text || "").trim().match(/^([“"'‘’]?)([A-Z])$/u);
+        return m ? { prefix:m[1] || "", initial:m[2] } : null;
+      };
+      const startsLower = (text) => /^\p{Ll}[\p{Ll}’'-]*/u.test(String(text || "").trim());
+
+      for (let i = 0; i < rows.length; i++) {
+        if (consumed.has(i)) continue;
+        const glyphRow = rows[i];
+        const info = glyphInfo(glyphRow.text);
+        if (!info || glyphRow.box.h < bodyH * 1.8) continue;
+
+        let best = -1;
+        let bestScore = Infinity;
+        for (let j = 0; j < rows.length; j++) {
+          if (j === i || consumed.has(j)) continue;
+          const target = rows[j];
+          if (!startsLower(target.text)) continue;
+          if (target.box.x <= glyphRow.box.x) continue;
+          if (target.box.h > bodyH * 1.6) continue;
+
+          const leftGap = target.box.x - (glyphRow.box.x + glyphRow.box.w);
+          if (leftGap < -bodyH * 0.9 || leftGap > bodyH * 5.0) continue;
+          const targetMid = target.box.cy;
+          const glyphTop = glyphRow.box.y;
+          const glyphBottom = glyphRow.box.y + glyphRow.box.h;
+          if (targetMid < glyphTop - bodyH * 0.4 || targetMid > glyphBottom + bodyH * 0.4) continue;
+
+          const yDistance = Math.abs(target.box.cy - (glyphRow.box.y + glyphRow.box.h * 0.28));
+          const score = Math.max(0, leftGap) + yDistance * 0.45;
+          if (score < bestScore) { bestScore = score; best = j; }
+        }
+        if (best < 0) continue;
+
+        const target = rows[best];
+        const targetText = String(target.text || "").trim();
+        const firstWord = targetText.match(/^(\p{Ll}[\p{Ll}’'-]*)/u)?.[1] || "";
+        let head;
+        // Some decorative initials are whole-word initials rather than the
+        // first letter of the following OCR token. Preserve that space.
+        if ((info.initial === "A" && /^(?:few|couple)$/i.test(firstWord)) ||
+            (info.initial === "I" && /^(?:am|have|had|was|will|can|do|did|don't|dont)$/i.test(firstWord))) {
+          head = `${info.prefix}${info.initial} ${targetText}`;
+        } else {
+          head = `${info.prefix}${info.initial}${targetText}`;
+        }
+
+        const left = Math.min(glyphRow.box.x, target.box.x);
+        const top = Math.min(glyphRow.box.y, target.box.y);
+        const right = Math.max(glyphRow.box.x + glyphRow.box.w, target.box.x + target.box.w);
+        const bottom = Math.max(glyphRow.box.y + glyphRow.box.h, target.box.y + target.box.h);
+        merged.push({
+          text: head,
+          score: Math.min(glyphRow.score, target.score),
+          box: { x:left, y:target.box.y, w:right-left, h:target.box.h, cx:(left+right)/2, cy:target.box.cy },
+          decorativeInitialOwned: true
+        });
+        consumed.add(i);
+        consumed.add(best);
+      }
+
+      rows.forEach((row, index) => { if (!consumed.has(index)) merged.push(row); });
+      rows = merged.sort((a,b) => a.box.y - b.box.y || a.box.x - b.box.x);
+    }
+
+    return rows;
   }
 
   function dominantBodyLeft(lines, typicalH, pageWidth) {

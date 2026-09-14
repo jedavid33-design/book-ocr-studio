@@ -343,3 +343,11 @@ Surgical follow-up to v2.7.62.
 - Applies quoted decorative-initial ownership directly to chapter-start text before Dropcap Rescue review generation.
 - Geometry-backed `“S he…` and `“Y ou…` shapes are now normalized to `“She…` and `“You…` without requiring a review card.
 - Keeps the existing paragraph continuation and italic thresholds unchanged.
+
+
+## v2.7.68 — CloudLibrary geometry-stage dropcap assembly
+
+- Moves CloudLibrary/Iowan decorative-initial ownership into geometry-to-line assembly.
+- Tall quoted initials such as `“S` + `he's…` and `“Y` + `ou…` are merged before paragraph reconstruction.
+- Preserves whole-word decorative initials such as `A` + `few…` as `A few…`.
+- Leaves the improved paragraph-continuation logic and italics thresholds unchanged.

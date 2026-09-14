@@ -3,7 +3,7 @@
 // then runs the patched source.
 
 (async () => {
-  const response = await fetch("./script.js?v=2.7.67-cloudlibrary-quoted-dropcap-ownership", { cache: "no-store" });
+  const response = await fetch("./script.js?v=2.7.68-cloudlibrary-geometry-dropcap-assembly", { cache: "no-store" });
   if (!response.ok) {
     throw new Error(`Could not load script.js (${response.status})`);
   }
@@ -24,7 +24,7 @@
   }
 
   source = source.replace(anchor, replacement);
-  source += "\n//# sourceURL=book-ocr-studio-2.7.67-cloudlibrary-quoted-dropcap-ownership.js";
+  source += "\n//# sourceURL=book-ocr-studio-2.7.68-cloudlibrary-geometry-dropcap-assembly.js";
 
   (0, eval)(source);
 })().catch((err) => {
