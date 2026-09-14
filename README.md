@@ -311,3 +311,11 @@ Surgical follow-up to v2.7.62.
   as an italic candidate with its own minimum score/slant/gain.
 - This prevents accepted runs from pulling flat roman neighbors into italics.
 - Diagnostics runtime build metadata is corrected for this build.
+
+
+## v2.7.64 — CloudLibrary / Iowan production profile
+- Adds explicit source profiles so CloudLibrary/Iowan and Kindle/Georgia can evolve independently instead of sharing every renderer-specific assumption.
+- Makes CloudLibrary + Iowan Old Style the current production-first profile.
+- Crop preview now starts on a representative mid-book page and has Previous/Next sample controls, avoiding misleading chapter-opening geometry.
+- Extends decorative-initial cleanup so a semantic initial restored from raw geometry can consume one duplicated standalone decorative glyph in the reconstructed paragraph.
+- Keeps italic persistence/export unchanged; the multi-font corpus showed the remaining italics problem is detection, not serialization.

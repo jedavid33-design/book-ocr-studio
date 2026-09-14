@@ -888,3 +888,8 @@ dialog::backdrop { background: rgba(30,25,20,.48); backdrop-filter: blur(5px); }
 .quote-context-part.flagged{background:rgba(122,91,153,.08);border-color:rgba(122,91,153,.24)}
 .quote-context-label{font-size:.76rem;font-weight:700;margin-bottom:4px;opacity:.72}
 .quote-context-text{white-space:pre-wrap;line-height:1.42}
+
+.preview-sample-row{display:flex;align-items:center;gap:10px;padding:10px 12px;background:rgba(255,255,255,.6);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.preview-sample-label{flex:1;min-width:0;font-size:.8rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.compact-button{width:auto;padding:7px 10px;font-size:.78rem}
+select{width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:var(--card);color:var(--text);font:inherit}

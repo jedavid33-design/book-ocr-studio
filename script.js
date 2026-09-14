@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.63-italics-expansion-safety";
+  const BUILD_VERSION = "2.7.64-cloudlibrary-profile";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -29,6 +29,8 @@
     repairBookHasRun: false,
     guidedRepairMode: "whole",
     guidedRepairChapterIndex: 0,
+    sourceProfile: "cloud-iowan",
+    cropPreviewIndex: 0,
   };
 
   let PaddleOCRClass = null;
@@ -92,6 +94,10 @@
     cropTop: $("cropTop"),
     cropBottom: $("cropBottom"),
     cropSides: $("cropSides"),
+    sourceProfile: $("sourceProfile"),
+    previewPrev: $("previewPrev"),
+    previewNext: $("previewNext"),
+    previewSample: $("previewSample"),
     previewCanvas: $("previewCanvas"),
     previewDims: $("previewDims"),
     processBtn: $("processBtn"),
@@ -309,6 +315,7 @@
         cropTop: Number(els.cropTop.value) || 0,
         cropBottom: Number(els.cropBottom.value) || 0,
         cropSides: Number(els.cropSides.value) || 0,
+        sourceProfile: state.sourceProfile || "cloud-iowan",
         currentPageIndex: state.currentPageIndex,
         bookTitle: els.bookTitle?.value || "",
         bookAuthor: els.bookAuthor?.value || "",
@@ -454,6 +461,10 @@
     if (Number.isFinite(saved.cropTop)) els.cropTop.value = saved.cropTop;
     if (Number.isFinite(saved.cropBottom)) els.cropBottom.value = saved.cropBottom;
     if (Number.isFinite(saved.cropSides)) els.cropSides.value = saved.cropSides;
+    if (typeof saved.sourceProfile === "string") {
+      state.sourceProfile = saved.sourceProfile;
+      if (els.sourceProfile) els.sourceProfile.value = saved.sourceProfile;
+    }
 
     const byName = new Map(state.files.map(f => [f.name, f]));
     const byStem = new Map(state.files.map(f => [normalizedStem(f.name), f]));
@@ -936,7 +947,9 @@
       return;
     }
 
-    const img = await loadImageFromFile(state.files[0]);
+    state.cropPreviewIndex = clamp(Number(state.cropPreviewIndex) || 0, 0, state.files.length - 1);
+    const file = state.files[state.cropPreviewIndex];
+    const img = await loadImageFromFile(file);
     const crop = getCropSettings(img);
     const maxW = 1000;
     const scale = Math.min(1, maxW / crop.sw);
@@ -946,6 +959,7 @@
     const ctx = c.getContext("2d", { alpha: false });
     ctx.drawImage(img, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, c.width, c.height);
     els.previewDims.textContent = `${crop.sw} × ${crop.sh} px`;
+    if (els.previewSample) els.previewSample.textContent = `Sample ${state.cropPreviewIndex + 1} of ${state.files.length} · ${file.name}`;
   }
 
   function renderThumbs() {
@@ -2586,11 +2600,19 @@
   function removeDetachedToken(text, fragment, firstWordEnd) {
     if (!fragment?.value) return text;
     const escaped = fragment.value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    if (fragment.source === "token") {
-      const tail = text.slice(firstWordEnd);
-      return text.slice(0, firstWordEnd) + tail
+    const head = text.slice(0, firstWordEnd);
+    const tail = text.slice(firstWordEnd);
+
+    // v2.7.64: CloudLibrary decorative initials are often recovered from raw
+    // geometry rather than a reconstructed text token. Once the semantic
+    // initial has been restored, remove one later standalone copy of that same
+    // glyph from the paragraph. This prevents shapes such as “R Hearing...”
+    // or “Y hood...” from surviving alongside the corrected opening.
+    if (["token", "line", "geometry-line", "raw-geometry"].includes(fragment.source)) {
+      const cleanedTail = tail
         .replace(new RegExp(`(^|\\s)[“”"'‘’]?${escaped}[“”"'‘’]?(?=\\s|[.,!?;:]|$)`, "u"), "$1")
         .replace(/ {2,}/g, " ");
+      return head + cleanedTail;
     }
     return text;
   }
@@ -3666,7 +3688,7 @@
         if (typeof progressCallback === "function") {
           progressCallback(index + 1, state.pages.length, italicPct);
         } else {
-          setStatus(`Automatic italic scan 2.7.63 expansion-safety: page ${index + 1} of ${state.pages.length}…`);
+          setStatus(`Automatic italic scan 2.7.64 ${state.sourceProfile === "cloud-iowan" ? "CloudLibrary/Iowan" : "profile"}: page ${index + 1} of ${state.pages.length}…`);
         }
         const img = await loadImageFromFile(file);
         const canvas = makeCroppedCanvas(img);
@@ -5755,6 +5777,33 @@ ${coverSpine}${spine.join("\n")}
   }
 
 
+  function applySourceProfile(profile, { preserveCrop = false } = {}) {
+    const next = profile === "kindle-georgia" ? "kindle-georgia" : profile === "custom" ? "custom" : "cloud-iowan";
+    state.sourceProfile = next;
+    if (els.sourceProfile && els.sourceProfile.value !== next) els.sourceProfile.value = next;
+    if (!preserveCrop) {
+      if (next === "cloud-iowan") {
+        els.cropTop.value = 0;
+        els.cropBottom.value = 75;
+        els.cropSides.value = 0;
+      } else if (next === "kindle-georgia") {
+        els.cropTop.value = 130;
+        els.cropBottom.value = 0;
+        els.cropSides.value = 0;
+      }
+    }
+    syncCropPresetUi();
+    updatePreview().catch(err => console.warn("Could not refresh profile crop preview", err));
+    if (state.files.length) saveCheckpoint();
+  }
+
+  function defaultPreviewIndex() {
+    if (!state.files.length) return 0;
+    // Prefer a representative middle page instead of page 1, which is often a
+    // chapter opener with title whitespace/dropcap geometry.
+    return clamp(Math.floor(state.files.length * 0.45), 0, state.files.length - 1);
+  }
+
   function syncCropPresetUi() {
     const top = Number(els.cropTop?.value || 0);
     const bottom = Number(els.cropBottom?.value || 0);
@@ -5802,6 +5851,18 @@ ${coverSpine}${spine.join("\n")}
     if (state.files.length) saveCheckpoint();
   }));
 
+  els.sourceProfile?.addEventListener("change", () => applySourceProfile(els.sourceProfile.value));
+  els.previewPrev?.addEventListener("click", () => {
+    if (!state.files.length) return;
+    state.cropPreviewIndex = clamp(state.cropPreviewIndex - 1, 0, state.files.length - 1);
+    updatePreview().catch(err => console.warn("Could not render previous crop sample", err));
+  });
+  els.previewNext?.addEventListener("click", () => {
+    if (!state.files.length) return;
+    state.cropPreviewIndex = clamp(state.cropPreviewIndex + 1, 0, state.files.length - 1);
+    updatePreview().catch(err => console.warn("Could not render next crop sample", err));
+  });
+
   els.coverInput.addEventListener("change", () => {
     const file = els.coverInput.files?.[0] || null;
     state.coverFile = file;
@@ -5824,6 +5885,7 @@ ${coverSpine}${spine.join("\n")}
     state.files = Array.from(els.imageInput.files || []).sort(naturalSort);
     state.pages = [];
     state.currentPageIndex = -1;
+    state.cropPreviewIndex = defaultPreviewIndex();
     const restored = state.files.length ? restoreCheckpointIfMatching() : 0;
     if (restored && state.currentPageIndex < 0) state.currentPageIndex = restored - 1;
     els.fileCount.textContent = `${state.files.length} page${state.files.length === 1 ? "" : "s"} loaded`;

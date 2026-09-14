@@ -13,12 +13,12 @@
 <link href="manifest.webmanifest" rel="manifest"/>
 <link href="apple-touch-icon.png" rel="apple-touch-icon"/>
 <link href="icon-192.png" rel="icon" sizes="192x192" type="image/png"/>
-<link href="styles.css?v=2.7.63-italics-expansion-safety" rel="stylesheet"/>
+<link href="styles.css?v=2.7.64-cloudlibrary-profile" rel="stylesheet"/>
 </head>
 <body>
 <header class="topbar">
 <div>
-<div class="build-identifier" id="buildIdentifier">BUILD 2.7.63 · ITALICS LIFECYCLE + BOUNDARY · KINDLE-FIRST</div>
+<div class="build-identifier" id="buildIdentifier">BUILD 2.7.64 · SOURCE PROFILES · CLOUDLIBRARY / IOWAN FIRST</div>
 <h1>Book OCR Studio</h1>
 <p class="subhead">Crop screenshots, OCR them one page at a time, batch OCR the whole book, review chapter starts or any page, and export TXT or EPUB.</p>
 </div>
@@ -34,6 +34,15 @@
 </div></details></section>
 <section class="card">
 <h2>1. Book info</h2>
+<label>
+<span>OCR source profile</span>
+<select id="sourceProfile">
+<option value="cloud-iowan" selected>CloudLibrary · Iowan Old Style</option>
+<option value="kindle-georgia">Kindle · Georgia</option>
+<option value="custom">Custom / other</option>
+</select>
+</label>
+<p class="hint">Profiles keep renderer-specific crop and repair behavior separate. Current production focus: CloudLibrary with Iowan Old Style.</p>
 <div class="grid two">
 <label>
 <span>Title</span>
@@ -89,8 +98,13 @@
 <p class="hint">Presets are based on your 1488 × 2266 screenshots: CloudLibrary removes 75 px from the bottom; Kindle removes 130 px from the top. You can adjust either value.</p>
 <div class="preview-panel">
 <div class="preview-head">
-<strong>Crop preview</strong>
+<strong>Crop preview · representative mid-book sample</strong>
 <span id="previewDims"></span>
+</div>
+<div class="preview-sample-row">
+<button class="button ghost compact-button" id="previewPrev" type="button">Previous sample</button>
+<span class="preview-sample-label" id="previewSample">Add screenshots to choose a sample</span>
+<button class="button ghost compact-button" id="previewNext" type="button">Next sample</button>
 </div>
 <canvas id="previewCanvas"></canvas>
 </div>
@@ -153,7 +167,7 @@
 </details>
 </div><div class="subcard final-polish-card">
 <h3>✨ Final Polish</h3>
-<p class="hint">Kindle-first cleanup after Repair Book. Applies only low-risk punctuation and spacing fixes, then audits wrap-hyphens, quote balance, paragraph fragments, chapter structure, and remaining review items. Ambiguous text is never changed automatically.</p>
+<p class="hint">Profile-aware cleanup after Repair Book. Applies only low-risk punctuation and spacing fixes, then audits wrap-hyphens, quote balance, paragraph fragments, chapter structure, and remaining review items. Ambiguous text is never changed automatically.</p>
 <div class="actions">
 <button class="button primary" id="finalPolish" type="button">Final Polish</button>
 <span class="progress-pill" id="finalPolishStatus">Ready after Repair Book</span>
@@ -230,8 +244,8 @@
 </div>
 </dialog>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
-<script src="epub-polish.js?v=2.7.63-italics-expansion-safety"></script>
-<script src="script-loader.js?v=2.7.63-italics-expansion-safety"></script>
+<script src="epub-polish.js?v=2.7.64-cloudlibrary-profile"></script>
+<script src="script-loader.js?v=2.7.64-cloudlibrary-profile"></script>
 <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
