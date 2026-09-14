@@ -336,3 +336,10 @@ Surgical follow-up to v2.7.62.
 - Preserves article/pronoun spacing for openings such as `A few days...` so semantic initial recovery cannot create `Afew`.
 - Keeps this behavior scoped to the CloudLibrary / Iowan production profile; Kindle/Georgia is unchanged.
 - Leaves paragraph-continuation and italics thresholds unchanged from v2.7.65.
+
+
+## v2.7.67 — CloudLibrary quoted dropcap ownership
+
+- Applies quoted decorative-initial ownership directly to chapter-start text before Dropcap Rescue review generation.
+- Geometry-backed `“S he…` and `“Y ou…` shapes are now normalized to `“She…` and `“You…` without requiring a review card.
+- Keeps the existing paragraph continuation and italic thresholds unchanged.

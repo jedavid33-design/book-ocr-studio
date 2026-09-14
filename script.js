@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.66-cloudlibrary-dropcap-ownership";
+  const BUILD_VERSION = "2.7.67-cloudlibrary-quoted-dropcap-ownership";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -2922,6 +2922,78 @@
     };
   }
 
+  function applyCloudIowanQuotedDropcapOwnership(pageIndexes = null) {
+    // v2.7.67: perform the quoted decorative-initial ownership repair directly
+    // on chapter-start text before Dropcap Rescue builds review candidates.
+    // This is intentionally narrow: CloudLibrary/Iowan only, quoted composite
+    // initials only, and only when saved geometry proves the capital is a tall
+    // left-side glyph beside the lowercase remainder.
+    if (state.sourceProfile !== "cloud-iowan" || state.importedEpub) return 0;
+    const allowed = pageIndexes ? new Set(pageIndexes) : null;
+    let fixed = 0;
+
+    state.pages.forEach((page, pageIndex) => {
+      if (allowed && !allowed.has(pageIndex)) return;
+      if (!(page?.chapterStart || page?.chapterCandidate || pageIndex === 0)) return;
+
+      const opening = openingFromPage(page, pageIndex);
+      if (!opening) return;
+      const text = String(opening.text || "");
+      const match = text.match(/^([“"'‘’])([A-Z])\s+(\p{Ll}[\p{Ll}’'-]*)(\b|(?=[,.;:!?]))/u);
+      if (!match) return;
+
+      const [, prefix, initial, remainderWord] = match;
+      const items = (Array.isArray(page.rawOcrItems) && page.rawOcrItems.length
+        ? page.rawOcrItems : (Array.isArray(page.layoutLines) ? page.layoutLines : []))
+        .map(item => ({
+          text:String(item?.text || "").trim(),
+          box:item?.box ? {
+            x:Number(item.box.x), y:Number(item.box.y), w:Number(item.box.w), h:Number(item.box.h),
+            cx:Number(item.box.cx), cy:Number(item.box.cy)
+          } : null
+        }))
+        .filter(item => item.text && item.box &&
+          [item.box.x,item.box.y,item.box.w,item.box.h,item.box.cx,item.box.cy].every(Number.isFinite));
+      if (!items.length) return;
+
+      const typicalH = median(items.map(item => item.box.h).filter(h => h > 2)) || 28;
+      const target = items.find(item => {
+        const normalized = item.text.replace(/^[“”"'‘’([{—–-]+/u, "").toLowerCase();
+        return normalized.startsWith(remainderWord.toLowerCase());
+      });
+      if (!target) return;
+
+      const glyph = items.find(item => {
+        const stripped = item.text.replace(/[“”"'‘’]/gu, "").trim();
+        if (stripped !== initial || item === target) return false;
+        const leftGap = target.box.x - (item.box.x + item.box.w);
+        const overlapsY = item.box.y <= target.box.y + target.box.h * 1.5 &&
+          (item.box.y + item.box.h) >= target.box.y - target.box.h * 0.5;
+        return item.box.h >= typicalH * 1.45 && item.box.x < target.box.x &&
+          leftGap >= -typicalH * 1.0 && leftGap <= typicalH * 4.5 && overlapsY;
+      });
+      if (!glyph) return;
+
+      // Preserve the source quote style and consume only the artificial space
+      // between the decorative initial and the lowercase remainder.
+      const consumed = match[0].length;
+      const repairedOpening = `${prefix}${initial}${remainderWord}${text.slice(consumed)}`;
+      const replacement = opening.fullText && opening.startOffset > 0
+        ? `${opening.fullText.slice(0, opening.startOffset)}${repairedOpening}`
+        : repairedOpening;
+
+      const pseudoCandidate = {
+        ...opening,
+        text: opening.text,
+        before: opening.fullText || opening.text,
+        fragment: { value: initial, source:"raw-geometry" }
+      };
+      if (replaceLocalParagraph(pseudoCandidate, replacement)) fixed += 1;
+    });
+
+    return fixed;
+  }
+
   function buildDropcapCandidate(opening, id, { legacyRetry = false } = {}) {
     const composite = compositeDropcapPrefixRepair(opening);
     if (composite) {
@@ -5229,6 +5301,7 @@
 
       repairStage = els.geometryAssist?.checked ? "Dropcap Rescue · geometry on" : "Dropcap Rescue · geometry off";
       setGuidedProgress("5/5 · Dropcaps", 100, "reconstructing");
+      const quotedDropcapsFixed = applyCloudIowanQuotedDropcapOwnership(pageIndexes);
       scanDropcaps(pageIndexes);
 
       const dropcapAudit = state.lastDropcapAudit || { expected:0, evaluated:0, missedPages:[] };
