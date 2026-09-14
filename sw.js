@@ -1,7 +1,7 @@
-const CACHE_NAME = "book-ocr-studio-shell-v2-7-66-cloudlibrary-dropcap-ownership";
+const CACHE_NAME = "book-ocr-studio-shell-v2-7-68-cloudlibrary-geometry-dropcap-assembly";
 const APP_SHELL = [
-  "./styles.css?v=2.7.66-cloudlibrary-dropcap-ownership",
-  "./epub-polish.js?v=2.7.66-cloudlibrary-dropcap-ownership",
+  "./styles.css?v=2.7.68-cloudlibrary-geometry-dropcap-assembly",
+  "./epub-polish.js?v=2.7.68-cloudlibrary-geometry-dropcap-assembly",
   "./manifest.webmanifest",
   "./icon-192.png",
   "./icon-512.png",
