@@ -319,3 +319,12 @@ Surgical follow-up to v2.7.62.
 - Crop preview now starts on a representative mid-book page and has Previous/Next sample controls, avoiding misleading chapter-opening geometry.
 - Extends decorative-initial cleanup so a semantic initial restored from raw geometry can consume one duplicated standalone decorative glyph in the reconstructed paragraph.
 - Keeps italic persistence/export unchanged; the multi-font corpus showed the remaining italics problem is detection, not serialization.
+
+
+## v2.7.65 — CloudLibrary / Iowan reconstruction
+
+- Orders same-row Paddle fragments by visual x-position before joining, preventing detached punctuation from migrating to the start of a line.
+- Keeps oversized decorative drop-cap glyphs out of normal same-row text merges.
+- Adds a syntax-aware continuation guard so an indented OCR continuation line does not become a false paragraph after words such as `and`, `but`, `because`, or punctuation that clearly continues a sentence.
+- Expands CloudLibrary chapter-opening rescue for Iowan Old Style, including `ou` → `You`, `few days after` → `A few days after`, detached decorative-glyph removal, and conservative restoration of a lost opening dialogue quote when a closing quote + attribution proves the paragraph begins in dialogue.
+- Leaves the conservative Iowan italic acceptance thresholds unchanged in this build; the current screenshots show true italic text can be nearly geometry-indistinguishable from roman text, so lowering thresholds here would trade missed italics for known false positives.

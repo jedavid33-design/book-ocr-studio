@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.7.64-cloudlibrary-profile";
+  const BUILD_VERSION = "2.7.65-cloudlibrary-iowan-reconstruction";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -610,23 +610,41 @@
     const lines = normalizePaddleItems(items);
     if (!lines.length) return [];
     const typicalH = median(lines.map(x => x.box.h).filter(h => h > 2)) || 28;
-    const merged=[];
-    for (const line of lines) {
-      const prev = merged[merged.length - 1];
-      if (prev && Math.abs(line.box.cy - prev.box.cy) <= typicalH * 0.48) {
-        const right = Math.max(prev.box.x + prev.box.w, line.box.x + line.box.w);
-        const bottom = Math.max(prev.box.y + prev.box.h, line.box.y + line.box.h);
-        prev.text = `${prev.text} ${line.text}`.replace(/\s{2,}/g, " ").trim();
-        prev.box.w = right - prev.box.x;
-        prev.box.h = bottom - prev.box.y;
-        prev.box.cx = prev.box.x + prev.box.w / 2;
-        prev.box.cy = prev.box.y + prev.box.h / 2;
-        prev.score = Math.min(prev.score, line.score);
+
+    // v2.7.65: Paddle does not guarantee that fragments on the same visual row
+    // arrive left-to-right. A detached punctuation glyph at the far right could
+    // therefore be prepended to the line it belonged to (the Iowan regression
+    // moved an em dash from "it—giving" to the beginning of the sentence).
+    // Cluster rows first, then sort each row strictly by x before joining.
+    // Also keep unusually tall decorative initials out of ordinary body rows so
+    // a drop cap cannot become an inline orphan such as “Y or A.
+    const ordered = lines.slice().sort((a,b) => a.box.cy - b.box.cy || a.box.x - b.box.x);
+    const groups = [];
+    for (const line of ordered) {
+      let group = groups[groups.length - 1];
+      const groupH = group ? median(group.items.map(x => x.box.h)) || typicalH : typicalH;
+      const heightRatio = group ? Math.max(groupH, line.box.h) / Math.max(1, Math.min(groupH, line.box.h)) : 1;
+      if (!group || Math.abs(line.box.cy - group.cy) > typicalH * 0.48 || heightRatio > 1.65) {
+        group = { items:[line], cy:line.box.cy };
+        groups.push(group);
       } else {
-        merged.push({ text: line.text, score: line.score, box: { ...line.box } });
+        group.items.push(line);
+        group.cy = median(group.items.map(x => x.box.cy));
       }
     }
-    return merged;
+
+    return groups.map(group => {
+      const row = group.items.slice().sort((a,b) => a.box.x - b.box.x);
+      const left = Math.min(...row.map(x => x.box.x));
+      const top = Math.min(...row.map(x => x.box.y));
+      const right = Math.max(...row.map(x => x.box.x + x.box.w));
+      const bottom = Math.max(...row.map(x => x.box.y + x.box.h));
+      return {
+        text: row.map(x => x.text).join(" ").replace(/\s{2,}/g, " ").trim(),
+        score: Math.min(...row.map(x => x.score)),
+        box: { x:left, y:top, w:right-left, h:bottom-top, cx:(left+right)/2, cy:(top+bottom)/2 }
+      };
+    }).sort((a,b) => a.box.y - b.box.y || a.box.x - b.box.x);
   }
 
   function dominantBodyLeft(lines, typicalH, pageWidth) {
@@ -773,6 +791,24 @@
     };
   }
 
+  function lineStronglyContinuesParagraph(prevText, currentText) {
+    const prev = stripItalicMarkers(String(prevText || "")).trim();
+    const current = stripItalicMarkers(String(currentText || "")).trim();
+    if (!prev || !current) return false;
+    if (isSceneMarkerText(prev) || isSceneMarkerText(current)) return false;
+
+    // An ebook paragraph virtually never ends grammatically on these tokens.
+    // Treat the following OCR line as continuation even when its x-coordinate
+    // happens to fall on the learned first-line-indent lane.
+    const barePrev = prev.replace(/[”"'’)]*$/u, "").trim();
+    const continuationTail = /(?:[,;:—–-]|\b(?:and|but|or|nor|so|yet|because|although|though|while|when|if|that|which|who|whose|with|to|of|for|from|in|on|at|as|than))$/i.test(barePrev);
+    if (!continuationTail) return false;
+
+    // Do not bridge into unmistakable new dialogue or scene furniture.
+    if (/^[“"]/.test(current) && /[.!?][”"]?$/.test(prev)) return false;
+    return true;
+  }
+
   function reconstructParagraphsFromLayout(layoutLines, { messageMode=false, bookProfile=null } = {}) {
     const lines = Array.isArray(layoutLines) ? layoutLines.filter(line => line?.text && line?.box) : [];
     if (!lines.length) return { text: "", paragraphs: [], meta: null };
@@ -816,9 +852,13 @@
       const largeGap = !!prev && verticalGap > gapThreshold;
       const chapterish = /^(?:chapter\b|prologue\b|epilogue\b|interlude\b|\d{1,3}$)/i.test(text);
 
-      // A visible first-line indent is primary paragraph evidence. Do not make
-      // it depend on OCR punctuation from the preceding line.
-      const startsParagraph = !current.length || largeGap || scene || chapterish || centered || stronglyIndented || (indented && text.length > 1);
+      // Indentation is strong evidence, not absolute authority. CloudLibrary
+      // can place a continuation line on the paragraph-start lane. Protect
+      // syntactically incomplete lines (for example a line ending in "and")
+      // from being split into a false new paragraph.
+      const continuationGuard = !!prev && lineStronglyContinuesParagraph(prev.text, text);
+      const geometricStart = largeGap || stronglyIndented || (indented && text.length > 1);
+      const startsParagraph = !current.length || scene || chapterish || centered || (geometricStart && !continuationGuard);
 
       if (startsParagraph && current.length) flush();
       if (!current.length) {
@@ -2397,12 +2437,13 @@
     ["hen", "When"], ["hat", "What"], ["n", "On"], ["h", "Oh"],
     ["ittle", "Little"], ["otherhood", "Motherhood"], ["here", "There"],
     ["eese", "Reese"], ["his", "This"],
-    ["kay", "Okay"], ["ucker's", "Tucker's"]
+    ["kay", "Okay"], ["ucker's", "Tucker's"], ["ou", "You"]
   ]);
 
   const COMMON_DROPCAP_PHRASES = [
     { pattern: /^e suck\b/i, missing: "W", replace: text => text.replace(/^e\b/i, "We") },
     { pattern: /^couple days\b/i, missing: "A", replace: text => `A ${text}` },
+    { pattern: /^few days after\b/i, missing: "A", replace: text => `A ${text}` },
     { pattern: /^always thought\b/i, missing: "I", replace: text => `I ${text}` }
   ];
 
@@ -2425,17 +2466,19 @@
 
   function repairOpeningDialogueQuote(text, info, proposedWord) {
     let value = String(text || "");
-    if (!proposedWord || !/^This$/i.test(proposedWord) || /[“"]/.test(info?.prefix || "")) return value;
-    // OCR can miss the opening quote beside a decorative dropcap but still
-    // capture the closing quote immediately before a dialogue tag:
-    //   his is the training room, " I tell Milo.
-    // Reconstruct that as "This is the training room," I tell Milo.
-    const re = /^(This\b[^.!?\n]{0,180}),\s*([“"])\s*(I\s+(?:tell|told|say|said|ask|asked|add|added|reply|replied|answer|answered)\b)/i;
-    const m = value.match(re);
-    if (!m) return value;
-    const quote = m[2] === "“" ? "“" : "\"";
-    const close = quote === "“" ? "”" : "\"";
-    return value.replace(re, `${quote}$1,${close} $3`);
+    if (!proposedWord || /[“"]/.test(info?.prefix || "")) return value;
+
+    // A decorative opening quote often disappears with the drop cap. Restore it
+    // only when the paragraph itself contains strong evidence that the opening
+    // clause is dialogue: a closing quote followed by a dialogue attribution.
+    // This generalizes the earlier This/I-tell special case to openings such as
+    // "You really didn't have to do this," Grace's father insists...
+    const attribution = /[”"]\s+(?:(?:I|he|she)\s+|(?:[A-Z][\p{L}’'-]*(?:'s|’s)?(?:\s+[A-Z][\p{L}’'-]*)?)\s+)(?:say|says|said|ask|asks|asked|tell|tells|told|reply|replies|replied|answer|answers|answered|insist|insists|insisted|murmur|murmurs|murmured|whisper|whispers|whispered|add|adds|added|explain|explains|explained|admit|admits|admitted|announce|announces|announced)\b/iu;
+    const early = value.slice(0, 280);
+    if (attribution.test(early) && /^[A-Z]/u.test(value)) {
+      return `"${value}`;
+    }
+    return value;
   }
 
   function excerpt(text, limit = 150) {
@@ -3688,7 +3731,7 @@
         if (typeof progressCallback === "function") {
           progressCallback(index + 1, state.pages.length, italicPct);
         } else {
-          setStatus(`Automatic italic scan 2.7.64 ${state.sourceProfile === "cloud-iowan" ? "CloudLibrary/Iowan" : "profile"}: page ${index + 1} of ${state.pages.length}…`);
+          setStatus(`Automatic italic scan 2.7.65 ${state.sourceProfile === "cloud-iowan" ? "CloudLibrary/Iowan" : "profile"}: page ${index + 1} of ${state.pages.length}…`);
         }
         const img = await loadImageFromFile(file);
         const canvas = makeCroppedCanvas(img);
