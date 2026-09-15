@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "68";
+  const BUILD_VERSION = "69";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -143,6 +143,8 @@
     italicReviewLearnedBtn: $("italicReviewLearnedBtn"),
     italicReviewRandomBtn: $("italicReviewRandomBtn"),
     italicReviewHuntBtn: $("italicReviewHuntBtn"),
+    italicValidationBtn: $("italicValidationBtn"),
+    exportItalicValidation: $("exportItalicValidation"),
     italicCalibrationProgress: $("italicCalibrationProgress"),
     italicStatus: $("italicStatus"),
     polishStatus: $("polishStatus"),
@@ -4748,7 +4750,7 @@
     });
     const supervisedReviewSet=[...dedupedByPhysicalWord.values()];
 
-    if(state.italicReviewSelectionMode==="learned" && learnedExamples.filter(x=>x.label==="ITALIC").length>=2){
+    if((state.italicReviewSelectionMode==="learned"||state.italicReviewSelectionMode==="validation") && learnedExamples.filter(x=>x.label==="ITALIC").length>=2){
       supervisedReviewSet.sort((a,b)=>{
         const ap=Number.isFinite(a.learnedItalicProbability)?a.learnedItalicProbability:-1;
         const bp=Number.isFinite(b.learnedItalicProbability)?b.learnedItalicProbability:-1;
@@ -5213,14 +5215,18 @@
           <button class="button secondary" data-label="UNSURE">Unsure</button>
           ${Array.isArray(run.splitChildren)&&run.splitChildren.length>1?'<button class="button secondary" data-split="words">Split</button>':''}
         </div>`;
+      if(state.italicReviewSelectionMode==="validation"){
+        const ib=card.querySelector('[data-label="ITALIC"]'), rb=card.querySelector('[data-label="ROMAN"]'), ub=card.querySelector('[data-label="UNSURE"]');
+        if(ib) ib.textContent="Known italic"; if(rb) rb.textContent="Not a control"; if(ub) ub.textContent="Skip";
+      }
       card.querySelectorAll("[data-label]").forEach(btn => btn.addEventListener("click", () => {
         if (state.italicCalibrationLabels[key]) return;
         const label=btn.dataset.label;
         state.italicCalibrationLabels[key] = label;
         if(!Array.isArray(state.italicReviewHistory)) state.italicReviewHistory=[];
         state.italicReviewHistory.push(run);
-        saveItalicTrainingExample(run, label);
-        updateItalicLearningUi();
+        if(state.italicReviewSelectionMode==="validation"){ run.validationLabel=label; }
+        else { saveItalicTrainingExample(run,label); updateItalicLearningUi(); }
         renderItalicCalibrationReview();
       }));
       card.querySelector("[data-previous]")?.addEventListener("click",()=>{
@@ -7780,44 +7786,19 @@ ${coverSpine}${spine.join("\n")}
   });
 
   async function launchItalicLearningReview(mode) {
-    if (state.sourceProfile !== "cloud-iowan") {
-      setStatus("Italic learning review currently uses the CloudLibrary / Iowan Old Style profile.");
-      return;
-    }
-    if (!state.pages?.length || !state.files?.length) {
-      setStatus("Load the saved screenshot/OCR project before starting italic review.");
-      return;
-    }
-
-    state.italicReviewSelectionMode = mode;
-    state.italicReviewHistory = [];
-
-    // v64 deliberately reuses the exact specimen-population builder that powered
-    // the successful v57/v58 review. That builder consumes italicWordMeta created
-    // by the typography measurement pass. Fresh app builds may have saved OCR/layout
-    // but no in-memory italicWordMeta, so regenerate ONLY those visual measurements
-    // when needed. This does not rerun OCR, Repair Book, or Final Polish.
-    const hasMeasurements = state.pages.some(page =>
-      (page.layoutLines || []).some(line =>
-        line.italicMeta || (Array.isArray(line.italicWordMeta) && line.italicWordMeta.length)
-      )
-    );
-
-    if (!hasMeasurements) {
-      setStatus("Preparing spoiler-safe typography measurements from the saved screenshots…");
-      await autoScanItalics({ rebuildText: false });
-    }
-
-    // Proven v57/v58 population builder + v59 learned/random ranking.
-    downloadItalicDiagnostics(false);
-    renderItalicCalibrationReview();
-
-    const queue = state.italicCalibrationReviewSet || [];
-    setStatus(queue.length
-      ? `Built ${mode === "learned" ? "learned-ranked" : mode === "hunt" ? "diversity-ranked Italic Hunt" : "random"} spoiler-safe review from ${queue.length} unique measured OCR specimens.`
-      : "No eligible review specimens were produced. Typography measurements are present, but the review population is empty.");
-
-    els.italicCalibrationReview?.scrollIntoView({behavior:"smooth", block:"start"});
+    if(state.sourceProfile!=="cloud-iowan"){setStatus("Italic learning review currently uses the CloudLibrary / Iowan Old Style profile.");return;}
+    if(!state.pages?.length||!state.files?.length){setStatus("Load the saved screenshot/OCR project before starting italic review.");return;}
+    const now=()=>globalThis.performance?.now?.()??Date.now(), t0=now(), timing={mode,startedAt:new Date().toISOString()};
+    state.italicReviewSelectionMode=mode; state.italicReviewHistory=[];
+    let t=now();
+    const hasMeasurements=state.pages.some(page=>(page.layoutLines||[]).some(line=>line.italicMeta||(Array.isArray(line.italicWordMeta)&&line.italicWordMeta.length)));
+    if(!hasMeasurements){setStatus("Preparing spoiler-safe typography measurements…");await autoScanItalics({rebuildText:false});}
+    timing.measurementPrepMs=Math.round(now()-t);
+    t=now(); downloadItalicDiagnostics(false); timing.populationBuildRankMs=Math.round(now()-t);
+    t=now(); renderItalicCalibrationReview(); timing.renderMs=Math.round(now()-t);
+    timing.totalMs=Math.round(now()-t0); timing.queueSize=(state.italicCalibrationReviewSet||[]).length; state.italicReviewTiming=timing;
+    setStatus(`Built ${mode} review from ${timing.queueSize} unique specimens in ${(timing.totalMs/1000).toFixed(1)}s.`);
+    els.italicCalibrationReview?.scrollIntoView({behavior:"smooth",block:"start"});
   }
 
   els.italicReviewLearnedBtn?.addEventListener("click", async () => {
@@ -7834,6 +7815,13 @@ ${coverSpine}${spine.join("\n")}
     els.italicReviewHuntBtn.disabled=true;
     try { await launchItalicLearningReview("hunt"); }
     finally { els.italicReviewHuntBtn.disabled=false; }
+  });
+  els.italicValidationBtn?.addEventListener("click",async()=>{els.italicValidationBtn.disabled=true;try{await launchItalicLearningReview("validation");}finally{els.italicValidationBtn.disabled=false;}});
+  els.exportItalicValidation?.addEventListener("click",()=>{
+    const queue=state.italicCalibrationReviewSet||[];
+    const controls=queue.filter(r=>r.validationLabel==="ITALIC").map(r=>({queueRank:queue.indexOf(r)+1,specimenKey:italicCalibrationKey(r),learnedProbability:r.learnedItalicProbability,glyphClass:italicGlyphClassFromRun(r),vector:italicLearningVector(r),slantSignal:italicSlantSignal(r),reviewBox:r.reviewBox}));
+    const payload={build:BUILD_VERSION,sourceProfile:state.sourceProfile,timing:state.italicReviewTiming,queueSize:queue.length,knownItalicControls:controls,note:"Ground-truth validation only; controls were not added to training."};
+    downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),`italic-validation-v${BUILD_VERSION}.json`);
   });
   updatePreview();
 })();
