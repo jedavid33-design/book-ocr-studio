@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "52";
+  const BUILD_VERSION = "53";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -4888,6 +4888,30 @@
     return `${run.pageIndex}:${run.lineIndex}:${run.startWordIndex}:${run.endWordIndex}`;
   }
 
+  // Build 53: once a spoiler-safe specimen is judged, consume its underlying
+  // OCR words for this review session. Any overlapping candidate is skipped so
+  // the same pixels cannot immediately come back in a differently sized run.
+  function italicCalibrationWordKeys(run) {
+    const pageIndex = Number(run?.pageIndex);
+    const lineIndex = Number(run?.lineIndex);
+    const start = Number(run?.startWordIndex);
+    const end = Number(run?.endWordIndex);
+    if (![pageIndex,lineIndex,start,end].every(Number.isFinite)) return [italicCalibrationKey(run)];
+    const lo=Math.min(start,end), hi=Math.max(start,end), out=[];
+    for(let i=lo;i<=hi;i++) out.push(`${pageIndex}:${lineIndex}:${i}`);
+    return out;
+  }
+  function consumedItalicCalibrationWords() {
+    const consumed=new Set();
+    const runs=state.italicCalibrationReviewSet||[];
+    runs.forEach(run=>{
+      if(state.italicCalibrationLabels[italicCalibrationKey(run)]) {
+        italicCalibrationWordKeys(run).forEach(k=>consumed.add(k));
+      }
+    });
+    return consumed;
+  }
+
   async function renderSpoilerSafeItalicCrop(canvasHost, run) {
     if (!canvasHost || !run?.reviewBox) return;
     const pageIndex = Number(run.pageIndex);
@@ -4925,39 +4949,54 @@
     const runs = state.italicCalibrationReviewSet || [];
     els.italicCalibrationReview.classList.toggle("hidden", !runs.length);
     els.italicCalibrationReviewList.innerHTML = "";
-    // Build 51: spoiler-safe review. Random order prevents page/chapter progression
-    // from leaking story sequence. Cards expose only the source-image pixels inside
-    // the candidate box. OCR text, page number, line text, context, and metrics stay hidden.
+
+    const consumedWords = consumedItalicCalibrationWords();
     const reviewRuns = [...runs].sort((a,b) => {
       const ak = italicCalibrationKey(a), bk = italicCalibrationKey(b);
       const ah = [...ak].reduce((n,c)=>((n*33)^c.charCodeAt(0))>>>0,5381);
       const bh = [...bk].reduce((n,c)=>((n*33)^c.charCodeAt(0))>>>0,5381);
       return ah-bh;
+    }).filter(run => {
+      const key=italicCalibrationKey(run);
+      if(state.italicCalibrationLabels[key]) return false;
+      return !italicCalibrationWordKeys(run).some(k=>consumedWords.has(k));
     });
-    reviewRuns.forEach((run, displayIndex) => {
+
+    // Keep the interaction deliberately one-at-a-time: a judgment consumes the
+    // current specimen, rerenders, and the next unseen/non-overlapping specimen
+    // takes its place. This prevents accidental double-labeling.
+    const run = reviewRuns[0] || null;
+    if (run) {
       const key = italicCalibrationKey(run);
-      const label = state.italicCalibrationLabels[key] || null;
       const card = document.createElement("div");
       card.className = "italic-calibration-card spoiler-safe-italic-card";
       card.innerHTML = `
-        <div class="italic-calibration-title"><strong>Specimen ${displayIndex + 1}</strong><span class="badge">spoiler-safe</span>${run.learnedItalicProbability==null?"":`<span class="badge">learned ${Math.round(run.learnedItalicProbability*100)}%</span>`}</div>
+        <div class="italic-calibration-title"><strong>Next specimen</strong><span class="badge">spoiler-safe</span>${run.learnedItalicProbability==null?"":`<span class="badge">learned ${Math.round(run.learnedItalicProbability*100)}%</span>`}</div>
         <div class="italic-spoiler-specimen" aria-label="Isolated typography specimen"><span class="hint">Loading isolated specimen…</span></div>
         <div class="italic-calibration-actions">
-          <button class="button ${label==='ITALIC'?'primary':'secondary'}" data-label="ITALIC">Italic</button>
-          <button class="button ${label==='ROMAN'?'primary':'secondary'}" data-label="ROMAN">Roman</button>
-          <button class="button ${label==='UNSURE'?'primary':'secondary'}" data-label="UNSURE">Unsure</button>
+          <button class="button secondary" data-label="ITALIC">Italic</button>
+          <button class="button secondary" data-label="ROMAN">Roman</button>
+          <button class="button secondary" data-label="UNSURE">Unsure</button>
         </div>`;
       card.querySelectorAll("[data-label]").forEach(btn => btn.addEventListener("click", () => {
-        state.italicCalibrationLabels[key] = btn.dataset.label;
-        saveItalicTrainingExample(run, btn.dataset.label);
+        if (state.italicCalibrationLabels[key]) return;
+        const label=btn.dataset.label;
+        state.italicCalibrationLabels[key] = label;
+        saveItalicTrainingExample(run, label);
         updateItalicLearningUi();
         renderItalicCalibrationReview();
       }));
       els.italicCalibrationReviewList.appendChild(card);
       renderSpoilerSafeItalicCrop(card.querySelector(".italic-spoiler-specimen"), run);
-    });
+    } else if (runs.length) {
+      const done=document.createElement("div");
+      done.className="italic-calibration-card";
+      done.innerHTML='<strong>Review queue complete.</strong><div class="hint">No unseen, non-overlapping spoiler-safe specimens remain in this scan.</div>';
+      els.italicCalibrationReviewList.appendChild(done);
+    }
+
     const labeled = runs.filter(r => state.italicCalibrationLabels[italicCalibrationKey(r)]).length;
-    if (els.italicCalibrationProgress) els.italicCalibrationProgress.textContent = `${labeled} / ${runs.length} labeled`;
+    if (els.italicCalibrationProgress) els.italicCalibrationProgress.textContent = `${labeled} labeled · ${reviewRuns.length} remaining`;
     if (els.exportItalicCalibrationLabels) els.exportItalicCalibrationLabels.disabled = labeled === 0;
   }
 
