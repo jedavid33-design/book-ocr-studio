@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "55";
+  const BUILD_VERSION = "56";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -4659,7 +4659,38 @@
         }
       }
     });
-    // Build 54: active learning. Search the full generic supervised-run pool,
+    // Build 56: positive-example hunt. The older supervised pool intentionally
+    // discarded visually quiet words, which means an italic the hand-built detector
+    // failed to notice could never be reviewed. Add a spoiler-safe singleton for
+    // EVERY OCR word that has a box. This is generic typography acquisition only:
+    // no word text, book location, or known answer influences eligibility/ranking.
+    const supervisedSingletonKeys=new Set(supervisedRuns.filter(r=>r.wordCount===1)
+      .map(r=>`${r.pageIndex}:${r.lineIndex}:${r.startWordIndex}`));
+    calibrationWords.forEach(w=>{
+      const sk=`${w.pageIndex}:${w.lineIndex}:${w.wordIndex}`;
+      if(supervisedSingletonKeys.has(sk) || !w.box) return;
+      const structural=structuralWordScore(w);
+      supervisedRuns.push({
+        pageIndex:w.pageIndex,pageNumber:w.pageNumber,fileName:w.fileName,lineIndex:w.lineIndex,
+        startWordIndex:w.wordIndex,endWordIndex:w.wordIndex,wordCount:1,text:w.text||"",
+        leftContext:"",rightContext:"",fullLineText:"",reviewBox:{...w.box},
+        supervisedScore:structural,structuralAverage:structural,structuralMinimum:structural,structuralConsistency:structural>=0.10?1:0,
+        slantSupport:Math.max(0,Number(w.calibrationStructural?.localSlantLift||w.localSlantLift||0)),
+        gainSupport:Math.max(0,Number(w.calibrationStructural?.localGainLift||w.localGainLift||0)),
+        shearSupport:Math.max(0,Number(w.calibrationStructural?.localShearLift||w.localShearLift||0)),
+        corroborationSignals:wordCorroboration(w),sampleKind:alphaCount(w.text)<=1?'short-single':'lexical-single',
+        words:[{wordIndex:w.wordIndex,text:w.text||"",structuralScore:structural,
+          inkDensityZ:w.calibrationLineNormalized?.inkDensity?.z||0,edgeDelta:w.calibrationStructural?.edgeDelta||0,
+          widthRatioDelta:w.calibrationStructural?.widthRatioDelta||0,localSlantLift:w.calibrationStructural?.localSlantLift||w.localSlantLift||0,
+          localGainLift:w.calibrationStructural?.localGainLift||w.localGainLift||0,localShearLift:w.calibrationStructural?.localShearLift||w.localShearLift||0,
+          corroborationSignals:wordCorroboration(w)}]
+      });
+      supervisedSingletonKeys.add(sk);
+    });
+
+    // Build 56 active hunt: search the full OCR-word population, not merely the
+    // legacy detector candidate pool. Until ten clean italic examples exist, favor
+    // visual similarity to learned italics plus broad exploration.
     // then ask the human about a small batch chosen from three useful regions:
     // likely italic, decision-boundary uncertainty, and visual exploration.
     // Labels/words/book locations are never used as predictive features.
@@ -4675,7 +4706,7 @@
       run.alreadyTrained=previouslyTrainedIds.has(sid);
     });
 
-    const eligibleRuns=supervisedRuns.filter(r=>!r.alreadyTrained && r.reviewBox);
+    const eligibleRuns=supervisedRuns.filter(r=>!r.alreadyTrained && r.reviewBox && !state.italicCalibrationLabels[italicCalibrationKey(r)]);
     const supervisedReviewSet=[];
     const usedWords=new Set();
     const normalizedSeen=new Map();
@@ -4697,19 +4728,32 @@
     };
 
     if(activeLearningReady){
-      // Class-balanced kNN probability is calculated by italicLearnedProbability;
-      // candidate selection itself does not mirror the 2:117 class imbalance.
+      // Class-balanced kNN probability is calculated by italicLearnedProbability.
       const likely=[...eligibleRuns].filter(r=>r.learnedItalicProbability!=null)
         .sort((a,b)=>(b.learnedItalicProbability-a.learnedItalicProbability)||b.supervisedScore-a.supervisedScore);
       const boundary=[...eligibleRuns].filter(r=>r.learnedItalicProbability!=null)
         .sort((a,b)=>Math.abs(a.learnedItalicProbability-.5)-Math.abs(b.learnedItalicProbability-.5)||b.supervisedScore-a.supervisedScore);
-      const explore=[...eligibleRuns].sort((a,b)=>b.supervisedScore-a.supervisedScore);
-      // 15 specimens max: seek positives, learn the boundary, and retain a small
-      // exploration lane so a novel italic shape can still enter the training set.
-      for(const [pool,target,reason] of [[likely,7,'likely-italic'],[boundary,5,'decision-boundary'],[explore,3,'exploration']]){
-        let n=0; for(const run of pool){ if(supervisedReviewSet.length>=15||n>=target) break; if(addRun(run,reason)) n++; }
+      // Exploration is intentionally deterministic-but-dispersed across the full
+      // OCR population rather than just "highest old detector score".
+      const explore=[...eligibleRuns].sort((a,b)=>{
+        const ha=((Number(a.pageIndex||0)+1)*73856093 ^ (Number(a.lineIndex||0)+1)*19349663 ^ (Number(a.startWordIndex||0)+1)*83492791)>>>0;
+        const hb=((Number(b.pageIndex||0)+1)*73856093 ^ (Number(b.lineIndex||0)+1)*19349663 ^ (Number(b.startWordIndex||0)+1)*83492791)>>>0;
+        return ha-hb;
+      });
+      const italicCount=learnedExamples.filter(x=>x.label==='ITALIC').length;
+      if(italicCount<10){
+        // Bootstrap mode: Romans are already abundant. Spend most review slots on
+        // likely positives and unseen typography, not decision-boundary Romans.
+        for(const [pool,target,reason] of [[likely,10,'positive-hunt'],[explore,5,'full-ocr-exploration']]){
+          let n=0; for(const run of pool){ if(supervisedReviewSet.length>=15||n>=target) break; if(addRun(run,reason)) n++; }
+        }
+      } else {
+        for(const [pool,target,reason] of [[likely,7,'likely-italic'],[boundary,5,'decision-boundary'],[explore,3,'exploration']]){
+          let n=0; for(const run of pool){ if(supervisedReviewSet.length>=15||n>=target) break; if(addRun(run,reason)) n++; }
+        }
       }
       for(const run of likely){ if(supervisedReviewSet.length>=15) break; addRun(run,'active-backfill'); }
+      for(const run of explore){ if(supervisedReviewSet.length>=15) break; addRun(run,'exploration-backfill'); }
     } else {
       // Cold start remains diverse until both classes have at least one label.
       const sorted=[...eligibleRuns].sort((a,b)=>b.supervisedScore-a.supervisedScore);
@@ -4790,7 +4834,7 @@
         cloudIowanSupervisedReviewSetDiagnosticOnly: true,
         cloudIowanLocalTypographyChangeDiagnosticOnly: true,
         cloudIowanGlyphMatchedRomanBaselineDiagnosticOnly: true,
-        cloudIowanSupervisedRankingOrder: "v54-active-learning/15-batch/likely-italic+boundary+exploration/persistent-label-exclusion",
+        cloudIowanSupervisedRankingOrder: "v56-full-ocr-positive-hunt/15-batch/likely-italic+dispersed-exploration/persistent-training+session-label-exclusion",
         calibrationFeatures: ["slant","gain","score","shear","shearStrength","inkDensity","medianRowWidth","upperMedianWidth","lowerMedianWidth","topBottomWidthRatio","leftEdgeShear","rightEdgeShear","aspectRatio","bandOccupancy","leftEdgeBands","rightEdgeBands","orientationHistogram","componentCount","componentWidthMedian","componentWidthSpread","localSlantLift","localGainLift","localShearLift"],
         cloudIowanTokenSplitAtDash: true,
       },
