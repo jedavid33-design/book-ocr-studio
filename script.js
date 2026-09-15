@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "62";
+  const BUILD_VERSION = "63";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -7610,6 +7610,99 @@ ${coverSpine}${spine.join("\n")}
     console.error("Book OCR Studio promise error", event.reason);
   });
 
+  function buildIndependentItalicReviewQueue(mode) {
+    const profile=currentItalicLearningProfile();
+    const examples=(profile.examples||[]).filter(x=>Array.isArray(x.vector)&&x.vector.length===ITALIC_FEATURE_NAMES.length);
+    const sessionSignature=checkpointSignature().map(signatureFileName).join("|");
+    const trainedIds=new Set(examples.map(x=>String(x.id||"")));
+    const labels=state.italicCalibrationLabels||{};
+
+    const words=[];
+    (state.pages||[]).forEach((page,pageIndex)=>{
+      const geo=page?.ocrGeometry||page?.geometry||page?.layoutGeometry||null;
+      const lines=geo?.lines||page?.lines||[];
+      (lines||[]).forEach((line,lineIndex)=>{
+        const lineWords=line?.words||[];
+        lineWords.forEach((word,wordIndex)=>{
+          const text=String(word?.text||word?.value||"").trim();
+          const box=word?.box||word?.bbox||word?.rect||null;
+          if(!text || !box) return;
+          const x=Number(box.x??box.left??box.x0), y=Number(box.y??box.top??box.y0);
+          const width=Number(box.width??((box.x1??0)-(box.x0??0)));
+          const height=Number(box.height??((box.y1??0)-(box.y0??0)));
+          if(![x,y,width,height].every(Number.isFinite)||width<=0||height<=0) return;
+          const run={
+            pageIndex,lineIndex,startWord:wordIndex,endWord:wordIndex,
+            words:[word], text, reviewBox:{x,y,width,height},
+            lineRef:line, pageRef:page, splitChildren:null,
+            activeLearningReason:mode==="learned"?"learned-independent":"random-independent"
+          };
+          // Reuse the established generic visual feature extractor only. No text/book/location enters scoring.
+          try{
+            if(typeof enrichItalicRunMetrics==="function") enrichItalicRunMetrics(run,page,line);
+          }catch(_){}
+          const key=italicCalibrationKey(run);
+          const id=`${sessionSignature}::${key}`;
+          if(trainedIds.has(id)||labels[key]) return;
+          words.push(run);
+        });
+      });
+    });
+
+    // PaddleOCR row fallback: saved row geometry is enough; no OCR rerun.
+    if(!words.length){
+      (state.pages||[]).forEach((page,pageIndex)=>{
+        const rows=page?.ocrRows||page?.rows||page?.paddleRows||page?.layoutRows||[];
+        (rows||[]).forEach((row,lineIndex)=>{
+          const rowWords=row?.words||row?.tokens||[];
+          (rowWords||[]).forEach((word,wordIndex)=>{
+            const text=String(word?.text||word?.value||"").trim();
+            const box=word?.box||word?.bbox||word?.rect||word?.boundingBox;
+            if(!text||!box) return;
+            let x,y,width,height;
+            if(Array.isArray(box)&&box.length>=4&&typeof box[0]==="number"){
+              [x,y,width,height]=box;
+            } else {
+              x=Number(box.x??box.left??box.x0); y=Number(box.y??box.top??box.y0);
+              width=Number(box.width??((box.x1??0)-(box.x0??0)));
+              height=Number(box.height??((box.y1??0)-(box.y0??0)));
+            }
+            if(![x,y,width,height].every(Number.isFinite)||width<=0||height<=0) return;
+            const run={pageIndex,lineIndex,startWord:wordIndex,endWord:wordIndex,words:[word],text,
+              reviewBox:{x,y,width,height},lineRef:row,pageRef:page,splitChildren:null,
+              activeLearningReason:mode==="learned"?"learned-independent":"random-independent"};
+            const key=italicCalibrationKey(run), id=`${sessionSignature}::${key}`;
+            if(trainedIds.has(id)||labels[key]) return;
+            words.push(run);
+          });
+        });
+      });
+    }
+
+    // If the page model stores the established diagnostic runs, use those as a geometry fallback.
+    if(!words.length && Array.isArray(state.lastItalicSupervisedRuns)){
+      state.lastItalicSupervisedRuns.forEach(run=>{
+        const key=italicCalibrationKey(run), id=`${sessionSignature}::${key}`;
+        if(run.reviewBox && !trainedIds.has(id) && !labels[key]) words.push({...run});
+      });
+    }
+
+    words.forEach(run=>{ run.learnedItalicProbability=italicLearnedProbability(run); });
+    if(mode==="learned"){
+      words.sort((a,b)=>{
+        const ap=Number.isFinite(a.learnedItalicProbability)?a.learnedItalicProbability:-1;
+        const bp=Number.isFinite(b.learnedItalicProbability)?b.learnedItalicProbability:-1;
+        return bp-ap;
+      });
+    } else {
+      for(let i=words.length-1;i>0;i--){
+        const j=Math.floor(Math.random()*(i+1));
+        [words[i],words[j]]=[words[j],words[i]];
+      }
+    }
+    return words;
+  }
+
   function launchItalicLearningReview(mode) {
     if (state.sourceProfile !== "cloud-iowan") {
       setStatus("Italic learning review currently uses the CloudLibrary / Iowan Old Style profile.");
@@ -7619,11 +7712,15 @@ ${coverSpine}${spine.join("\n")}
       setStatus("Load a project with saved OCR pages before starting italic review.");
       return;
     }
-    state.italicReviewSelectionMode = mode;
-    state.italicReviewHistory = [];
-    downloadItalicDiagnostics(false); // rebuilds queue from saved OCR; does not re-OCR
+    state.italicReviewSelectionMode=mode;
+    state.italicReviewHistory=[];
+    const queue=buildIndependentItalicReviewQueue(mode);
+    state.italicCalibrationReviewSet=queue;
     renderItalicCalibrationReview();
-    els.italicCalibrationReview?.scrollIntoView({behavior:"smooth", block:"start"});
+    setStatus(queue.length
+      ? `Built ${mode==="learned"?"learned-ranked":"random"} spoiler-safe review directly from ${queue.length} saved OCR specimens.`
+      : "No eligible saved OCR specimens were found for italic review.");
+    els.italicCalibrationReview?.scrollIntoView({behavior:"smooth",block:"start"});
   }
 
   els.italicReviewLearnedBtn?.addEventListener("click", () => launchItalicLearningReview("learned"));
