@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "54";
+  const BUILD_VERSION = "55";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -4715,6 +4715,22 @@
       const sorted=[...eligibleRuns].sort((a,b)=>b.supervisedScore-a.supervisedScore);
       for(const run of sorted){ if(supervisedReviewSet.length>=15) break; addRun(run,'cold-start'); }
     }
+    // Build 55: mixed-style review specimens can be split into their existing
+    // one-word OCR candidates. This is a training-data acquisition tool only:
+    // the split is driven solely by OCR word boundaries, never book text or
+    // known answers. It lets the human create clean Roman/Italic examples from
+    // a mixed crop without teaching the classifier the surrounding story.
+    const singletonByWord=new Map();
+    supervisedRuns.filter(r=>r.wordCount===1 && r.reviewBox).forEach(r=>singletonByWord.set(`${r.pageIndex}:${r.lineIndex}:${r.startWordIndex}`,r));
+    supervisedReviewSet.forEach(r=>{
+      r.splitChildren=[];
+      if(r.wordCount>1){
+        for(let wi=Number(r.startWordIndex);wi<=Number(r.endWordIndex);wi++){
+          const child=singletonByWord.get(`${r.pageIndex}:${r.lineIndex}:${wi}`);
+          if(child) r.splitChildren.push({...child,activeLearningReason:'human-split',reviewLabel:null});
+        }
+      }
+    });
     supervisedReviewSet.forEach((r,i)=>r.supervisedRank=i+1);
     state.italicCalibrationReviewSet = supervisedReviewSet;
     renderItalicCalibrationReview();
@@ -4988,6 +5004,7 @@
           <button class="button secondary" data-label="ITALIC">Italic</button>
           <button class="button secondary" data-label="ROMAN">Roman</button>
           <button class="button secondary" data-label="UNSURE">Unsure</button>
+          ${Array.isArray(run.splitChildren)&&run.splitChildren.length>1?'<button class="button secondary" data-split="words">Split</button>':''}
         </div>`;
       card.querySelectorAll("[data-label]").forEach(btn => btn.addEventListener("click", () => {
         if (state.italicCalibrationLabels[key]) return;
@@ -4997,6 +5014,18 @@
         updateItalicLearningUi();
         renderItalicCalibrationReview();
       }));
+      card.querySelector("[data-split]")?.addEventListener("click",()=>{
+        const children=(run.splitChildren||[]).filter(child=>!state.italicCalibrationLabels[italicCalibrationKey(child)]);
+        if(children.length<2) return;
+        // Replace only this mixed review card with clean OCR-word specimens.
+        // Do not label or train on the mixed parent.
+        const queue=state.italicCalibrationReviewSet||[];
+        const idx=queue.indexOf(run);
+        if(idx>=0) queue.splice(idx,1,...children);
+        else state.italicCalibrationReviewSet=[...children,...queue];
+        setStatus(`Split mixed typography specimen into ${children.length} spoiler-safe word specimens.`);
+        renderItalicCalibrationReview();
+      });
       els.italicCalibrationReviewList.appendChild(card);
       renderSpoilerSafeItalicCrop(card.querySelector(".italic-spoiler-specimen"), run);
     } else if (runs.length) {
