@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "57";
+  const BUILD_VERSION = "58";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -7560,3 +7560,101 @@ ${coverSpine}${spine.join("\n")}
 
   updatePreview();
 })();
+
+
+/* BUILD 58: spoiler-safe review navigation history.
+   Navigation only: going back never changes/removes an existing training label. */
+(function installItalicReviewHistoryV58() {
+  if (window.__italicReviewHistoryV58Installed) return;
+  window.__italicReviewHistoryV58Installed = true;
+
+  const history = [];
+  let cursor = -1;
+  let restoring = false;
+
+  function reviewRoot() {
+    const candidates = [...document.querySelectorAll('body *')];
+    const heading = candidates.find(el =>
+      el.children.length === 0 &&
+      /spoiler-safe italic review/i.test((el.textContent || '').trim())
+    );
+    return heading ? (heading.closest('section, dialog, .modal, .card, .panel') || heading.parentElement) : null;
+  }
+
+  function specimenImage(root) {
+    if (!root) return null;
+    const imgs = [...root.querySelectorAll('img, canvas')];
+    return imgs.find(el => {
+      const r = el.getBoundingClientRect();
+      return r.width > 80 && r.height > 20;
+    }) || null;
+  }
+
+  function signature(root) {
+    const img = specimenImage(root);
+    if (!img) return null;
+    if (img.tagName === 'IMG') return img.currentSrc || img.src || null;
+    try { return img.toDataURL(); } catch (_) { return null; }
+  }
+
+  function snapshot(root) {
+    const img = specimenImage(root);
+    if (!img) return null;
+    const src = img.tagName === 'IMG' ? (img.currentSrc || img.src) : (() => {
+      try { return img.toDataURL(); } catch (_) { return ''; }
+    })();
+    const textNodes = [...root.querySelectorAll('*')]
+      .filter(el => el.children.length === 0)
+      .map(el => (el.textContent || '').trim())
+      .filter(Boolean);
+    return { src, textNodes };
+  }
+
+  function ensurePrevious(root) {
+    if (!root || root.querySelector('[data-v58-previous]')) return;
+    const buttons = [...root.querySelectorAll('button')];
+    const anchor = buttons.find(b => /roman|italic|unsure|split/i.test(b.textContent || ''));
+    if (!anchor) return;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.dataset.v58Previous = '1';
+    btn.textContent = '← Previous';
+    btn.style.marginRight = '8px';
+    btn.disabled = cursor <= 0;
+    btn.addEventListener('click', () => {
+      if (cursor <= 0) return;
+      cursor -= 1;
+      restoring = true;
+      const snap = history[cursor];
+      const img = specimenImage(root);
+      if (img && snap && snap.src) {
+        if (img.tagName === 'IMG') img.src = snap.src;
+      }
+      root.dataset.v58HistoryPreview = '1';
+      btn.disabled = cursor <= 0;
+      setTimeout(() => { restoring = false; }, 0);
+    });
+    anchor.parentElement.insertBefore(btn, anchor);
+  }
+
+  let lastSig = null;
+  const observer = new MutationObserver(() => {
+    const root = reviewRoot();
+    if (!root) return;
+    ensurePrevious(root);
+    const sig = signature(root);
+    if (!sig || restoring || sig === lastSig) return;
+    lastSig = sig;
+    // If the user had backed up and then the app advances, discard only forward NAV history.
+    if (cursor < history.length - 1) history.splice(cursor + 1);
+    const snap = snapshot(root);
+    if (snap) {
+      history.push(snap);
+      cursor = history.length - 1;
+    }
+    const prev = root.querySelector('[data-v58-previous]');
+    if (prev) prev.disabled = cursor <= 0;
+  });
+  observer.observe(document.documentElement, {subtree:true, childList:true, attributes:true, attributeFilter:['src']});
+})();
+
