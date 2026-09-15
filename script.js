@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "33";
+  const BUILD_VERSION = "34";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -5770,9 +5770,15 @@
 
       repairStage = "save repaired checkpoint";
 
-      // Last writer wins: OCR < automated repair < user manual edits.
-      // Reapply once more after all automatic dropcap work, then checkpoint.
+      // Last writer wins for substantive text: OCR < automated repair < user manual edits.
+      // Reapply once more after all automatic dropcap work. Then run one final
+      // deterministic QA sweep over that restored text. This catches OCR-era
+      // artifacts preserved inside a durable manual overlay (for example
+      // `fi rst`, `dificult`, or `days.. .`) without rewriting prose.
       applyRepairOverlay();
+      repairStage = "final deterministic QA sweep";
+      const finalQaCleanup = applySafePolishToProject(pageIndexes) || { fixedCount:0 };
+      const finalQaLigatures = runSplitLigaturePolish(pageIndexes) || { fixedCount:0, ambiguousCount:0 };
 
       state.repairBookHasRun = true;
       saveCheckpoint();
