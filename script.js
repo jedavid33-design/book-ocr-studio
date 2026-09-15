@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "37";
+  const BUILD_VERSION = "38";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -4254,8 +4254,31 @@
     }
     const rankedLines = [...lines].sort((a,b) => (b.gain || 0) - (a.gain || 0));
     const rankedWords = [...words].sort((a,b) => (b.gain || 0) - (a.gain || 0));
+
+    // v38 calibration shortlist: raw Iowan shear is too noisy to classify by
+    // itself. Rank words by how unusual they are relative to their immediate
+    // same-line neighbors instead. This remains diagnostic-only and cannot add
+    // italic markup. The shortlist makes visual ground-truth checks practical.
+    const calibrationWords = words.map(word => {
+      const slantLift = Number(word.localSlantLift || 0);
+      const gainLift = Number(word.localGainLift || 0);
+      const shearLift = Number(word.localShearLift || 0);
+      const density = Number(word.inkDensity || 0);
+      const edgeDelta = Math.abs(Number(word.leftEdgeShear || 0) - Number(word.rightEdgeShear || 0));
+      const widthRatioDelta = Math.abs(Number(word.topBottomWidthRatio || 1) - 1);
+      // Positive local lifts dominate. Structural terms are deliberately weak
+      // tie-breakers until labeled italic/roman examples tell us their direction.
+      const calibrationScore =
+        Math.max(0, slantLift) * 4.0 +
+        Math.max(0, gainLift) * 55.0 +
+        Math.max(0, shearLift) * 0.12 +
+        Math.min(edgeDelta, 10) * 0.01 +
+        Math.min(widthRatioDelta, 1) * 0.04;
+      return { ...word, calibrationScore, calibrationStructural: { density, edgeDelta, widthRatioDelta } };
+    }).sort((a,b) => b.calibrationScore - a.calibrationScore);
+
     const payload = {
-      format: "book-ocr-studio-italic-calibration-v7",
+      format: "book-ocr-studio-italic-calibration-v8",
       buildVersion: BUILD_VERSION,
       exportedAt: new Date().toISOString(),
       summary: {
@@ -4297,11 +4320,13 @@
         cloudIowanShearDetector: false,
         cloudIowanShearDiagnosticOnly: true,
         cloudIowanAutomaticItalicsDisabledForCalibration: true,
+        cloudIowanCalibrationRankingDiagnosticOnly: true,
         calibrationFeatures: ["slant","gain","score","shear","shearStrength","inkDensity","medianRowWidth","upperMedianWidth","lowerMedianWidth","topBottomWidthRatio","leftEdgeShear","rightEdgeShear","aspectRatio","localSlantLift","localGainLift","localShearLift"],
         cloudIowanTokenSplitAtDash: true,
       },
       topLineCandidatesByGain: rankedLines.slice(0, 100),
       topWordCandidatesByGain: rankedWords.slice(0, 250),
+      topLocalCalibrationCandidates: calibrationWords.slice(0, 300),
       acceptedRuns: runs.filter(x => x.accepted),
       rejectedRuns: runs.filter(x => !x.accepted),
       lines,
