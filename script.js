@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "32";
+  const BUILD_VERSION = "33";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -4068,7 +4068,7 @@
         if (typeof progressCallback === "function") {
           progressCallback(index + 1, state.pages.length, italicPct);
         } else {
-          setStatus(`Automatic italic scan 32 ${state.sourceProfile === "cloud-iowan" ? "CloudLibrary/Iowan" : "profile"}: page ${index + 1} of ${state.pages.length}…`);
+          setStatus(`Automatic italic scan ${BUILD_VERSION} ${state.sourceProfile === "cloud-iowan" ? "CloudLibrary/Iowan" : "profile"}: page ${index + 1} of ${state.pages.length}…`);
         }
         const img = await loadImageFromFile(file);
         const canvas = makeCroppedCanvas(img);
@@ -4147,7 +4147,7 @@
       // projected onto the authoritative current page text instead.
       saveCheckpoint();
       if (els.italicStatus) els.italicStatus.textContent = `${markedRuns} run${markedRuns === 1 ? "" : "s"} · ${markedWords} words`;
-      setStatus(`Automatic italic scan 32 checked ${scannedWords} words across ${scannedLines} OCR lines and marked ${markedRuns} hybrid run${markedRuns === 1 ? "" : "s"} (${markedWords} words). Formatting evidence was projected onto ${projectedItalicPages} current page${projectedItalicPages === 1 ? "" : "s"} without rebuilding repaired text.`);
+      setStatus(`Automatic italic scan ${BUILD_VERSION} checked ${scannedWords} words across ${scannedLines} OCR lines and marked ${markedRuns} hybrid run${markedRuns === 1 ? "" : "s"} (${markedWords} words). Formatting evidence was projected onto ${projectedItalicPages} current page${projectedItalicPages === 1 ? "" : "s"} without rebuilding repaired text.`);
       return { markedRuns, markedWords, scannedWords, scannedLines, projectedItalicPages };
     } catch (err) {
       console.error(err);
@@ -5742,10 +5742,12 @@
       // overlay before Dropcap Rescue inspects or modifies chapter openings.
       applyRepairOverlay();
 
-      // v32: overlays/manual-safe stages can reintroduce an OCR-era blank-line split.
-      // Reconcile only source-proven adjacent lowercase continuations before Review/Polish.
+      // v33: overlays/manual-safe stages can reintroduce an OCR-era blank-line split.
+      // Whole-book mode intentionally uses null pageIndexes, so normalize it to
+      // an iterable list here without changing the established Dropcap APIs.
       let sourceContinuationMerges = 0;
-      for (const pageIndex of pageIndexes) sourceContinuationMerges += mergeSourceAdjacentOpenParagraphs(state.pages[pageIndex]);
+      const continuationPageIndexes = pageIndexes || state.pages.map((_, pageIndex) => pageIndex);
+      for (const pageIndex of continuationPageIndexes) sourceContinuationMerges += mergeSourceAdjacentOpenParagraphs(state.pages[pageIndex]);
       if (sourceContinuationMerges) saveCheckpoint();
 
       repairStage = els.geometryAssist?.checked ? "Dropcap Rescue · geometry on" : "Dropcap Rescue · geometry off";
