@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.8.3";
+  const BUILD_VERSION = "29";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -938,7 +938,30 @@
       // can place a continuation line on the paragraph-start lane. Protect
       // syntactically incomplete lines (for example a line ending in "and")
       // from being split into a false new paragraph.
-      const continuationGuard = !!prev && lineStronglyContinuesParagraph(prev.text, text);
+      const syntaxContinuationGuard = !!prev && lineStronglyContinuesParagraph(prev.text, text);
+
+      // v29: CloudLibrary/Iowan can occasionally place a wrapped continuation
+      // line directly on the learned paragraph-start lane. Do not split merely
+      // because of that x-position when the source geometry and wording both say
+      // the sentence is still running. This stays deliberately contextual: the
+      // previous line must lack terminal punctuation, the next visual line must
+      // begin lowercase (and not with a dialogue quote), and the lines must be
+      // vertically adjacent. Real indented paragraph/dialogue starts remain
+      // authoritative. Kindle and other profiles keep their existing behavior.
+      let geometryContinuationGuard = false;
+      if (state.sourceProfile === "cloud-iowan" && prev && !largeGap && !scene && !chapterish && !centered) {
+        const prevText = stripItalicMarkers(String(prev.text || "")).trim();
+        const currentText = stripItalicMarkers(String(text || "")).trim();
+        const prevHasTerminal = /[.!?…][”"'’)]*$/.test(prevText);
+        const beginsLowercase = /^[a-z]/.test(currentText);
+        const beginsDialogue = /^[“"‘']/.test(currentText);
+        const prevBottom = Number(prev.box?.y) + Number(prev.box?.h);
+        const sourceGap = Number(line.box?.y) - prevBottom;
+        const verticallyAdjacent = Number.isFinite(sourceGap) && sourceGap >= -6 && sourceGap <= Math.max(typicalH * 0.72, 30);
+        geometryContinuationGuard = !prevHasTerminal && beginsLowercase && !beginsDialogue && verticallyAdjacent;
+      }
+
+      const continuationGuard = syntaxContinuationGuard || geometryContinuationGuard;
       const geometricStart = largeGap || stronglyIndented || (indented && text.length > 1);
       const startsParagraph = !current.length || scene || chapterish || centered || (geometricStart && !continuationGuard);
 
@@ -4045,7 +4068,7 @@
         if (typeof progressCallback === "function") {
           progressCallback(index + 1, state.pages.length, italicPct);
         } else {
-          setStatus(`Automatic italic scan 2.8.3 ${state.sourceProfile === "cloud-iowan" ? "CloudLibrary/Iowan" : "profile"}: page ${index + 1} of ${state.pages.length}…`);
+          setStatus(`Automatic italic scan 29 ${state.sourceProfile === "cloud-iowan" ? "CloudLibrary/Iowan" : "profile"}: page ${index + 1} of ${state.pages.length}…`);
         }
         const img = await loadImageFromFile(file);
         const canvas = makeCroppedCanvas(img);
@@ -4124,7 +4147,7 @@
       // projected onto the authoritative current page text instead.
       saveCheckpoint();
       if (els.italicStatus) els.italicStatus.textContent = `${markedRuns} run${markedRuns === 1 ? "" : "s"} · ${markedWords} words`;
-      setStatus(`Automatic italic scan 2.8.3 checked ${scannedWords} words across ${scannedLines} OCR lines and marked ${markedRuns} hybrid run${markedRuns === 1 ? "" : "s"} (${markedWords} words). Formatting evidence was projected onto ${projectedItalicPages} current page${projectedItalicPages === 1 ? "" : "s"} without rebuilding repaired text.`);
+      setStatus(`Automatic italic scan 29 checked ${scannedWords} words across ${scannedLines} OCR lines and marked ${markedRuns} hybrid run${markedRuns === 1 ? "" : "s"} (${markedWords} words). Formatting evidence was projected onto ${projectedItalicPages} current page${projectedItalicPages === 1 ? "" : "s"} without rebuilding repaired text.`);
       return { markedRuns, markedWords, scannedWords, scannedLines, projectedItalicPages };
     } catch (err) {
       console.error(err);
