@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "48";
+  const BUILD_VERSION = "49";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -4371,12 +4371,11 @@
       .map((word, index) => ({ ...word, calibrationRank: index + 1 }));
 
 
-    // Build 48: generic local typography-change diagnostics. Instead of asking
-    // whether an isolated word crosses an absolute "italic" threshold, compare
-    // every contiguous word window with nearby words on the SAME OCR line.
-    // This is deliberately book/corpus/text agnostic and diagnostic-only: it
-    // never marks formatting. External QA can later compare these rankings with
-    // independently known examples without leaking those answers into Studio.
+    // Build 49: generic style-sensitive local typography-change diagnostics.
+    // Keep glyph/content-sensitive measurements available for diagnostics, but
+    // do NOT let letter identity (aspect, component count/width, raw occupancy)
+    // dominate the primary typography-change ranking. Production logic remains
+    // book/corpus/text agnostic and this pass is diagnostic-only.
     const typographyFeatureVector = w => {
       const occ = Array.isArray(w.bandOccupancy) ? w.bandOccupancy : [];
       const left = Array.isArray(w.leftEdgeBands) ? w.leftEdgeBands : [];
@@ -4392,11 +4391,20 @@
         Number(w.componentCount||0), Number(w.componentWidthMedian||0), Number(w.componentWidthSpread||0)
       ];
     };
+    const typographyFeatureNames = [
+      "absSlant","gain","absShear","inkDensity","topBottomWidthRatio","leftEdgeShear","rightEdgeShear",
+      "occupancy0","occupancy1","occupancy2","occupancy3",
+      "leftEdge0","leftEdge1","leftEdge2","rightEdge0","rightEdge1","rightEdge2",
+      "orientationLeft","orientationNeutral","orientationRight",
+      "componentCount","componentWidthMedian","componentWidthSpread"
+    ];
+    // Style-sensitive dimensions drive v49 ranking. Raw density/occupancy and
+    // component geometry remain exported as secondary evidence only.
+    const styleFeatureIndexes = [0,1,2,4,5,6,11,12,13,14,15,16,17,18,19];
     const vecMean = vs => vs.length ? vs[0].map((_,i)=>vs.reduce((a,v)=>a+Number(v[i]||0),0)/vs.length) : [];
     const featureScale = (peers, idx) => {
       const vals=peers.map(w=>typographyFeatureVector(w)[idx]).filter(Number.isFinite);
       const med=median(vals), mad=median(vals.map(v=>Math.abs(v-med)));
-      // Keep a small relative floor so near-constant features do not explode.
       return Math.max(1e-4, 1.4826*mad, Math.abs(med)*0.035);
     };
     const typographyChangeWindows=[];
@@ -4409,8 +4417,6 @@
       for(let start=0;start<ordered.length;start++){
         for(let len=1;len<=Math.min(6,ordered.length-start);len++){
           const end=start+len;
-          // Local controls only. Prefer up to three words on either side, and
-          // require at least one outside word so the window has a comparison.
           const contextIdx=[];
           for(let i=Math.max(0,start-3);i<start;i++) contextIdx.push(i);
           for(let i=end;i<Math.min(ordered.length,end+3);i++) contextIdx.push(i);
@@ -4418,23 +4424,35 @@
           const runMean=vecMean(vectors.slice(start,end));
           const ctxMean=vecMean(contextIdx.map(i=>vectors[i]));
           const deltas=runMean.map((v,i)=>(v-ctxMean[i])/scales[i]);
-          // Trim extreme dimensions. A real local face change should move more
-          // than one measurement; one pathological glyph must not own the score.
-          const abs=deltas.map(Math.abs).sort((a,b)=>b-a);
-          const top=abs.slice(0,Math.min(8,abs.length)).map(x=>Math.min(x,6));
-          const changeMagnitude=top.length?top.reduce((a,b)=>a+b,0)/top.length:0;
-          const coherentDimensions=deltas.filter(d=>Math.abs(d)>=1.25).length;
+          const styleAbs=styleFeatureIndexes.map(i=>Math.abs(deltas[i]||0)).sort((a,b)=>b-a);
+          const styleTop=styleAbs.slice(0,Math.min(7,styleAbs.length)).map(x=>Math.min(x,6));
+          const styleChangeMagnitude=styleTop.length?styleTop.reduce((a,b)=>a+b,0)/styleTop.length:0;
+          const coherentStyleDimensions=styleFeatureIndexes.filter(i=>Math.abs(deltas[i]||0)>=1.25).length;
+          // Retain the old all-feature magnitude only as a diagnostic comparison.
+          const allAbs=deltas.map(Math.abs).sort((a,b)=>b-a);
+          const allTop=allAbs.slice(0,Math.min(8,allAbs.length)).map(x=>Math.min(x,6));
+          const allFeatureChangeMagnitude=allTop.length?allTop.reduce((a,b)=>a+b,0)/allTop.length:0;
+
           const internalVectors=vectors.slice(start,end);
           let internalConsistency=1;
+          let directionalConsistency=1;
           if(internalVectors.length>1){
-            const mean=runMean;
-            const deviations=internalVectors.map(v=>v.reduce((a,x,i)=>a+Math.min(Math.abs((x-mean[i])/scales[i]),6),0)/dims);
+            const deviations=internalVectors.map(v=>styleFeatureIndexes.reduce((a,i)=>a+Math.min(Math.abs((v[i]-runMean[i])/scales[i]),6),0)/styleFeatureIndexes.length);
             internalConsistency=1/(1+median(deviations));
+            // Reward multiword spans only when their words move in the SAME
+            // direction from local Roman context across style-sensitive axes.
+            const votes=styleFeatureIndexes.map(i=>{
+              const ctx=ctxMean[i], scale=scales[i];
+              const ds=internalVectors.map(v=>(v[i]-ctx)/scale).filter(Number.isFinite);
+              if(!ds.length) return 0;
+              const pos=ds.filter(d=>d>=0.6).length, neg=ds.filter(d=>d<=-0.6).length;
+              return Math.max(pos,neg)/ds.length;
+            });
+            directionalConsistency=votes.length?votes.reduce((a,b)=>a+b,0)/votes.length:0;
           }
-          // Multiword spans receive only a small evidence bonus. Singletons stay
-          // eligible, but must earn their ranking from stronger visual change.
-          const runBonus=len>=2?Math.min(0.35,(len-1)*0.07)*internalConsistency:0;
-          const typographyChangeScore=changeMagnitude*(0.70+0.30*internalConsistency)+runBonus;
+          const runBonus=len>=2 ? Math.min(0.65,(len-1)*0.13)*internalConsistency*directionalConsistency : 0;
+          const singletonPenalty=len===1 ? 0.90 : 1;
+          const typographyChangeScore=styleChangeMagnitude*(0.62+0.23*internalConsistency+0.15*directionalConsistency)*singletonPenalty+runBonus;
           typographyChangeWindows.push({
             pageIndex:ordered[0].pageIndex,pageNumber:ordered[0].pageNumber,fileName:ordered[0].fileName,
             lineIndex:ordered[0].lineIndex,startWordIndex:ordered[start].wordIndex,endWordIndex:ordered[end-1].wordIndex,
@@ -4442,7 +4460,9 @@
             leftContext:ordered.slice(Math.max(0,start-3),start).map(w=>w.text).join(' '),
             rightContext:ordered.slice(end,Math.min(ordered.length,end+3)).map(w=>w.text).join(' '),
             fullLineText:ordered.map(w=>w.text).join(' '),contextWordCount:contextIdx.length,
-            typographyChangeScore,changeMagnitude,internalConsistency,coherentDimensions,
+            typographyChangeScore,styleChangeMagnitude,allFeatureChangeMagnitude,internalConsistency,directionalConsistency,
+            coherentStyleDimensions,styleFeatureNames:styleFeatureIndexes.map(i=>typographyFeatureNames[i]),
+            normalizedStyleFeatureDeltas:Object.fromEntries(styleFeatureIndexes.map(i=>[typographyFeatureNames[i],deltas[i]])),
             normalizedFeatureDeltas:deltas
           });
         }
