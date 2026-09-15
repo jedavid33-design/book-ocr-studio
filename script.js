@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "53";
+  const BUILD_VERSION = "54";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -4659,50 +4659,61 @@
         }
       }
     });
-    supervisedRuns.forEach(run=>{ run.learnedItalicProbability=italicLearnedProbability(run); });
-    supervisedRuns.sort((a,b)=>{
-      const ap=a.learnedItalicProbability, bp=b.learnedItalicProbability;
-      if(ap!=null && bp!=null && bp!==ap) return bp-ap;
-      return b.supervisedScore-a.supervisedScore || b.wordCount-a.wordCount;
+    // Build 54: active learning. Search the full generic supervised-run pool,
+    // then ask the human about a small batch chosen from three useful regions:
+    // likely italic, decision-boundary uncertainty, and visual exploration.
+    // Labels/words/book locations are never used as predictive features.
+    const profile=currentItalicLearningProfile();
+    const learnedExamples=(profile.examples||[]).filter(x=>Array.isArray(x.vector)&&x.vector.length===ITALIC_FEATURE_NAMES.length);
+    const sessionSignature=checkpointSignature().map(signatureFileName).join("|");
+    const previouslyTrainedIds=new Set(learnedExamples.map(x=>String(x.id||"")));
+    const activeLearningReady=learnedExamples.some(x=>x.label==="ITALIC")&&learnedExamples.some(x=>x.label==="ROMAN");
+
+    supervisedRuns.forEach(run=>{
+      run.learnedItalicProbability=italicLearnedProbability(run);
+      const sid=`${sessionSignature}::${italicCalibrationKey(run)}`;
+      run.alreadyTrained=previouslyTrainedIds.has(sid);
     });
 
-    // Diversity, not a hard italic gate: reserve room for multiword spans,
-    // ordinary lexical singletons, and legitimate short/single-glyph cases.
+    const eligibleRuns=supervisedRuns.filter(r=>!r.alreadyTrained && r.reviewBox);
     const supervisedReviewSet=[];
+    const usedWords=new Set();
     const normalizedSeen=new Map();
-    const quotas={multiword:12,'lexical-single':8,'short-single':5};
-    const counts={multiword:0,'lexical-single':0,'short-single':0};
-    const canAdd = run => {
-      if(counts[run.sampleKind]>=quotas[run.sampleKind]) return false;
+    const overlapsUsed=run=>italicCalibrationWordKeys(run).some(k=>usedWords.has(k));
+    const canAdd=run=>{
+      if(overlapsUsed(run)) return false;
       const normalized=String(run.text||"").toLowerCase().replace(/[^a-z]+/g," ").trim();
-      // Single glyphs may recur a little so an italic I is not hidden by one Roman I,
-      // but no normalized token may flood the supervised set.
-      const repeatCap=run.sampleKind==='short-single'?2:1;
-      if(normalized && (normalizedSeen.get(normalized)||0)>=repeatCap) return false;
-      const overlaps=supervisedReviewSet.some(x=>x.pageIndex===run.pageIndex&&x.lineIndex===run.lineIndex&&
-        !(run.endWordIndex < x.startWordIndex-1 || run.startWordIndex > x.endWordIndex+1));
-      if(overlaps) return false;
-      return true;
+      const cap=run.sampleKind==='short-single'?2:1;
+      return !normalized || (normalizedSeen.get(normalized)||0)<cap;
     };
-    const addRun = run => {
-      supervisedReviewSet.push({...run,reviewLabel:null,reviewInstruction:'Compare with frozen source screenshot; label ITALIC, ROMAN, or UNSURE.'});
-      counts[run.sampleKind]++;
+    const addRun=(run,reason)=>{
+      if(!canAdd(run)) return false;
+      const copy={...run,activeLearningReason:reason,reviewLabel:null,reviewInstruction:'Spoiler-safe human typography label: ITALIC, ROMAN, or UNSURE.'};
+      supervisedReviewSet.push(copy);
+      italicCalibrationWordKeys(run).forEach(k=>usedWords.add(k));
       const normalized=String(run.text||"").toLowerCase().replace(/[^a-z]+/g," ").trim();
       if(normalized) normalizedSeen.set(normalized,(normalizedSeen.get(normalized)||0)+1);
+      return true;
     };
-    // Round-robin the three evidence classes so one class cannot consume the set.
-    for(const kind of ['multiword','lexical-single','short-single']){
-      for(const run of supervisedRuns){
-        if(run.sampleKind!==kind || !canAdd(run)) continue;
-        addRun(run);
-        if(counts[kind]>=quotas[kind]) break;
+
+    if(activeLearningReady){
+      // Class-balanced kNN probability is calculated by italicLearnedProbability;
+      // candidate selection itself does not mirror the 2:117 class imbalance.
+      const likely=[...eligibleRuns].filter(r=>r.learnedItalicProbability!=null)
+        .sort((a,b)=>(b.learnedItalicProbability-a.learnedItalicProbability)||b.supervisedScore-a.supervisedScore);
+      const boundary=[...eligibleRuns].filter(r=>r.learnedItalicProbability!=null)
+        .sort((a,b)=>Math.abs(a.learnedItalicProbability-.5)-Math.abs(b.learnedItalicProbability-.5)||b.supervisedScore-a.supervisedScore);
+      const explore=[...eligibleRuns].sort((a,b)=>b.supervisedScore-a.supervisedScore);
+      // 15 specimens max: seek positives, learn the boundary, and retain a small
+      // exploration lane so a novel italic shape can still enter the training set.
+      for(const [pool,target,reason] of [[likely,7,'likely-italic'],[boundary,5,'decision-boundary'],[explore,3,'exploration']]){
+        let n=0; for(const run of pool){ if(supervisedReviewSet.length>=15||n>=target) break; if(addRun(run,reason)) n++; }
       }
-    }
-    // If overlap/dedup prevents a quota from filling, backfill with the best
-    // remaining diverse samples regardless of class, still capped at 25.
-    for(const run of supervisedRuns){
-      if(supervisedReviewSet.length>=25) break;
-      if(canAdd(run)) addRun(run);
+      for(const run of likely){ if(supervisedReviewSet.length>=15) break; addRun(run,'active-backfill'); }
+    } else {
+      // Cold start remains diverse until both classes have at least one label.
+      const sorted=[...eligibleRuns].sort((a,b)=>b.supervisedScore-a.supervisedScore);
+      for(const run of sorted){ if(supervisedReviewSet.length>=15) break; addRun(run,'cold-start'); }
     }
     supervisedReviewSet.forEach((r,i)=>r.supervisedRank=i+1);
     state.italicCalibrationReviewSet = supervisedReviewSet;
@@ -4763,7 +4774,7 @@
         cloudIowanSupervisedReviewSetDiagnosticOnly: true,
         cloudIowanLocalTypographyChangeDiagnosticOnly: true,
         cloudIowanGlyphMatchedRomanBaselineDiagnosticOnly: true,
-        cloudIowanSupervisedRankingOrder: "v44-diverse-human-label-sampler/length-aware-density/no-corroboration-gate/shear-weak",
+        cloudIowanSupervisedRankingOrder: "v54-active-learning/15-batch/likely-italic+boundary+exploration/persistent-label-exclusion",
         calibrationFeatures: ["slant","gain","score","shear","shearStrength","inkDensity","medianRowWidth","upperMedianWidth","lowerMedianWidth","topBottomWidthRatio","leftEdgeShear","rightEdgeShear","aspectRatio","bandOccupancy","leftEdgeBands","rightEdgeBands","orientationHistogram","componentCount","componentWidthMedian","componentWidthSpread","localSlantLift","localGainLift","localShearLift"],
         cloudIowanTokenSplitAtDash: true,
       },

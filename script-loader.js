@@ -3,7 +3,7 @@
 // then runs the patched source.
 
 (async () => {
-  const response = await fetch("./script.js?v=53", { cache: "no-store" });
+  const response = await fetch("./script.js?v=54", { cache: "no-store" });
   if (!response.ok) {
     throw new Error(`Could not load script.js (${response.status})`);
   }
