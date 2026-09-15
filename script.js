@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "40";
+  const BUILD_VERSION = "41";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -4359,8 +4359,73 @@
     calibrationRuns.sort((a,b)=>b.runCalibrationScore-a.runCalibrationScore)
       .forEach((r,i)=>r.runCalibrationRank=i+1);
 
+    // v41 supervised review set: invert the ranking philosophy. Structural
+    // difference leads, local consistency corroborates, slant/gain support, and
+    // raw shear is deliberately weak. Export a compact set with immediate roman
+    // context so frozen-corpus screenshots can be labeled ITALIC / ROMAN without
+    // wading through hundreds of overlapping windows. Diagnostic-only.
+    const structuralWordScore = w => {
+      const c=w.calibrationStructural||{};
+      const n=w.calibrationLineNormalized||{};
+      const densityZ=Math.abs(Number(n.inkDensity?.z||0));
+      const edge=Math.min(Math.abs(Number(c.edgeDelta||0)),10)/10;
+      const width=Math.min(Math.abs(Number(c.widthRatioDelta||0)),1);
+      const slantSupport=Math.max(0,Number(c.localSlantLift||0));
+      const gainSupport=Math.max(0,Number(c.localGainLift||0));
+      const shearSupport=Math.max(0,Number(c.localShearLift||0));
+      return densityZ*0.30 + edge*0.28 + width*0.22 +
+        Math.min(slantSupport*2.0,0.30) + Math.min(gainSupport*30,0.24) +
+        Math.min(shearSupport*0.01,0.05);
+    };
+    const supervisedRuns=[];
+    lineGroups.forEach((peers,key)=>{
+      const ordered=[...peers].sort((a,b)=>Number(a.wordIndex||0)-Number(b.wordIndex||0));
+      const ranked=ordered.map(w=>calibrationByKey.get(`${w.pageIndex ?? w.pageNumber ?? 0}:${w.lineIndex ?? 0}:${w.wordIndex ?? 0}`)||w);
+      for(let start=0;start<ranked.length;start++){
+        for(let len=1;len<=Math.min(6,ranked.length-start);len++){
+          const ws=ranked.slice(start,start+len);
+          const structural=ws.map(structuralWordScore);
+          const structuralAvg=structural.reduce((a,b)=>a+b,0)/len;
+          const structuralMin=Math.min(...structural);
+          const slantSupport=ws.reduce((a,w)=>a+Math.max(0,Number(w.localSlantLift||0)),0)/len;
+          const gainSupport=ws.reduce((a,w)=>a+Math.max(0,Number(w.localGainLift||0)),0)/len;
+          const shearSupport=ws.reduce((a,w)=>a+Math.max(0,Number(w.localShearLift||0)),0)/len;
+          const consistency=structural.filter(x=>x>=0.20).length/len;
+          const contextBonus=len>=2?Math.min(0.30,(len-1)*0.07)*consistency:0;
+          const supervisedScore=structuralAvg + Math.max(0,structuralMin)*0.16 +
+            consistency*0.18 + Math.min(slantSupport*1.4,0.20) +
+            Math.min(gainSupport*22,0.18) + Math.min(shearSupport*0.006,0.025) + contextBonus;
+          const left=ranked.slice(Math.max(0,start-3),start).map(w=>w.text).join(' ');
+          const right=ranked.slice(start+len,Math.min(ranked.length,start+len+3)).map(w=>w.text).join(' ');
+          supervisedRuns.push({
+            pageIndex:ws[0].pageIndex,pageNumber:ws[0].pageNumber,fileName:ws[0].fileName,lineIndex:ws[0].lineIndex,
+            startWordIndex:ws[0].wordIndex,endWordIndex:ws[ws.length-1].wordIndex,wordCount:len,
+            text:ws.map(w=>w.text).join(' '),leftContext:left,rightContext:right,fullLineText:ws[0].text,
+            supervisedScore,structuralAverage:structuralAvg,structuralMinimum:structuralMin,structuralConsistency:consistency,
+            slantSupport,gainSupport,shearSupport,
+            words:ws.map((w,i)=>({wordIndex:w.wordIndex,text:w.text,structuralScore:structural[i],
+              inkDensityZ:w.calibrationLineNormalized?.inkDensity?.z||0,edgeDelta:w.calibrationStructural?.edgeDelta||0,
+              widthRatioDelta:w.calibrationStructural?.widthRatioDelta||0,localSlantLift:w.localSlantLift||0,
+              localGainLift:w.localGainLift||0,localShearLift:w.localShearLift||0}))
+          });
+        }
+      }
+    });
+    // De-overlap aggressively: keep the strongest representative per line/span
+    // neighborhood, preferring multiword evidence when scores are comparable.
+    supervisedRuns.sort((a,b)=>b.supervisedScore-a.supervisedScore);
+    const supervisedReviewSet=[];
+    for(const run of supervisedRuns){
+      const overlaps=supervisedReviewSet.some(x=>x.pageIndex===run.pageIndex&&x.lineIndex===run.lineIndex&&
+        !(run.endWordIndex < x.startWordIndex-1 || run.startWordIndex > x.endWordIndex+1));
+      if(overlaps) continue;
+      supervisedReviewSet.push({...run,reviewLabel:null,reviewInstruction:'Compare with frozen source screenshot; label ITALIC or ROMAN.'});
+      if(supervisedReviewSet.length>=80) break;
+    }
+    supervisedReviewSet.forEach((r,i)=>r.supervisedRank=i+1);
+
     const payload = {
-      format: "book-ocr-studio-italic-calibration-v10",
+      format: "book-ocr-studio-italic-calibration-v11",
       buildVersion: BUILD_VERSION,
       exportedAt: new Date().toISOString(),
       summary: {
@@ -4405,6 +4470,8 @@
         cloudIowanCalibrationRankingDiagnosticOnly: true,
         cloudIowanRobustLineNormalizationDiagnosticOnly: true,
         cloudIowanRunCalibrationRankingDiagnosticOnly: true,
+        cloudIowanSupervisedReviewSetDiagnosticOnly: true,
+        cloudIowanSupervisedRankingOrder: "structural-first/local-consistency/slant-gain-support/shear-weak",
         calibrationFeatures: ["slant","gain","score","shear","shearStrength","inkDensity","medianRowWidth","upperMedianWidth","lowerMedianWidth","topBottomWidthRatio","leftEdgeShear","rightEdgeShear","aspectRatio","localSlantLift","localGainLift","localShearLift"],
         cloudIowanTokenSplitAtDash: true,
       },
@@ -4412,6 +4479,7 @@
       topWordCandidatesByGain: rankedWords.slice(0, 250),
       topLocalCalibrationCandidates: calibrationWords.slice(0, 300),
       topRunCalibrationCandidates: calibrationRuns.slice(0, 300),
+      supervisedCalibrationReviewSet: supervisedReviewSet,
       acceptedRuns: runs.filter(x => x.accepted),
       rejectedRuns: runs.filter(x => !x.accepted),
       lines,
