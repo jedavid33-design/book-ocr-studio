@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "35";
+  const BUILD_VERSION = "36";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -1807,13 +1807,25 @@
     return text;
   }
 
+  // v36: normalize straight OCR dialogue quotes without changing wording.
+  // Opening quotes are recognized only at a true text/whitespace/open-punctuation
+  // boundary; every remaining straight double quote is a closing quote. This
+  // fixes mixed pairs such as “She's totally checking me out." while preserving
+  // apostrophes, em dashes, ellipses, and manual curly quotes already present.
+  function normalizeDialogueQuoteTypography(text) {
+    return String(text || "")
+      .replace(/(^|[\s([{—–])"(?=\S)/gmu, "$1“")
+      .replace(/"/g, "”");
+  }
+
   function cleanBodyText(text) {
-    return (text || "")
+    const cleaned = (text || "")
       .replace(/\r/g, "")
       .replace(/[ \t]+/g, " ")
       .replace(/ *\n */g, "\n")
       .replace(/\n{3,}/g, "\n\n")
       .trim();
+    return normalizeDialogueQuoteTypography(cleaned);
   }
 
   function cleanMessageText(text) {
