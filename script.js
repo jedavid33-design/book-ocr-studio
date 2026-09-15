@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "42";
+  const BUILD_VERSION = "43";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -4366,23 +4366,39 @@
     calibrationRuns.sort((a,b)=>b.runCalibrationScore-a.runCalibrationScore)
       .forEach((r,i)=>r.runCalibrationRank=i+1);
 
-    // v41 supervised review set: invert the ranking philosophy. Structural
-    // difference leads, local consistency corroborates, slant/gain support, and
-    // raw shear is deliberately weak. Export a compact set with immediate roman
-    // context so frozen-corpus screenshots can be labeled ITALIC / ROMAN without
-    // wading through hundreds of overlapping windows. Diagnostic-only.
+    // v43 supervised review-set curation. Keep single-letter candidates eligible
+    // (an isolated I/A/etc. can genuinely be italic), but prevent tiny-glyph density
+    // outliers from dominating the shortlist. Density is length-aware/capped and
+    // short tokens require corroboration from independent shape/context signals.
+    // This remains diagnostic-only and does not create <i> markup.
+    const alphaCount = text => (String(text || "").match(/[A-Za-z]/g) || []).length;
     const structuralWordScore = w => {
       const c=w.calibrationStructural||{};
       const n=w.calibrationLineNormalized||{};
+      const letters=alphaCount(w.text);
       const densityZ=Math.abs(Number(n.inkDensity?.z||0));
+      // Density is useful context, but very short glyphs naturally have extreme z
+      // scores. Cap its contribution aggressively instead of banning those glyphs.
+      const densityCap=letters<=1?0.08:letters===2?0.14:0.24;
+      const density=Math.min(densityZ*0.018,densityCap);
       const edge=Math.min(Math.abs(Number(c.edgeDelta||0)),10)/10;
       const width=Math.min(Math.abs(Number(c.widthRatioDelta||0)),1);
       const slantSupport=Math.max(0,Number(c.localSlantLift||0));
       const gainSupport=Math.max(0,Number(c.localGainLift||0));
       const shearSupport=Math.max(0,Number(c.localShearLift||0));
-      return densityZ*0.30 + edge*0.28 + width*0.22 +
+      return density + edge*0.28 + width*0.22 +
         Math.min(slantSupport*2.0,0.30) + Math.min(gainSupport*30,0.24) +
         Math.min(shearSupport*0.01,0.05);
+    };
+    const wordCorroboration = w => {
+      const c=w.calibrationStructural||{};
+      let signals=0;
+      if(Math.max(0,Number(c.localSlantLift||0))>=0.035) signals++;
+      if(Math.max(0,Number(c.localGainLift||0))>=0.0035) signals++;
+      if(Math.max(0,Number(c.localShearLift||0))>=2.0) signals++;
+      if(Math.abs(Number(c.edgeDelta||0))>=0.08) signals++;
+      if(Math.abs(Number(c.widthRatioDelta||0))>=0.08) signals++;
+      return signals;
     };
     const supervisedRuns=[];
     lineGroups.forEach((peers,key)=>{
@@ -4398,6 +4414,16 @@
           const gainSupport=ws.reduce((a,w)=>a+Math.max(0,Number(w.localGainLift||0)),0)/len;
           const shearSupport=ws.reduce((a,w)=>a+Math.max(0,Number(w.localShearLift||0)),0)/len;
           const consistency=structural.filter(x=>x>=0.20).length/len;
+          const corroboration=ws.reduce((a,w)=>a+wordCorroboration(w),0);
+          const letters=ws.reduce((a,w)=>a+alphaCount(w.text),0);
+          const multiwordConsistent=len>=2 && consistency>=0.50 && structuralAvg>=0.18;
+          // Preserve legitimate one-letter italics, but demand two independent
+          // signals so ink-density alone can never nominate I/A/a again.
+          if(len===1 && letters<=1 && corroboration<2) continue;
+          // Longer singleton words need at least one non-density signal. Multiword
+          // spans may qualify through consistent local structure/context.
+          if(len===1 && letters>1 && corroboration<1) continue;
+          if(len>=2 && corroboration<1 && !multiwordConsistent) continue;
           const contextBonus=len>=2?Math.min(0.30,(len-1)*0.07)*consistency:0;
           const supervisedScore=structuralAvg + Math.max(0,structuralMin)*0.16 +
             consistency*0.18 + Math.min(slantSupport*1.4,0.20) +
@@ -4409,32 +4435,40 @@
             startWordIndex:ws[0].wordIndex,endWordIndex:ws[ws.length-1].wordIndex,wordCount:len,
             text:ws.map(w=>w.text).join(' '),leftContext:left,rightContext:right,fullLineText:ws[0].text,
             supervisedScore,structuralAverage:structuralAvg,structuralMinimum:structuralMin,structuralConsistency:consistency,
-            slantSupport,gainSupport,shearSupport,
+            slantSupport,gainSupport,shearSupport,corroborationSignals:corroboration,
             words:ws.map((w,i)=>({wordIndex:w.wordIndex,text:w.text,structuralScore:structural[i],
               inkDensityZ:w.calibrationLineNormalized?.inkDensity?.z||0,edgeDelta:w.calibrationStructural?.edgeDelta||0,
               widthRatioDelta:w.calibrationStructural?.widthRatioDelta||0,localSlantLift:w.localSlantLift||0,
-              localGainLift:w.localGainLift||0,localShearLift:w.localShearLift||0}))
+              localGainLift:w.localGainLift||0,localShearLift:w.localShearLift||0,corroborationSignals:wordCorroboration(w)}))
           });
         }
       }
     });
-    // De-overlap aggressively: keep the strongest representative per line/span
-    // neighborhood, preferring multiword evidence when scores are comparable.
-    supervisedRuns.sort((a,b)=>b.supervisedScore-a.supervisedScore);
+    // De-overlap and de-duplicate aggressively. Prefer multiword evidence when
+    // scores are close, and keep repeated normalized tokens from flooding review.
+    supervisedRuns.sort((a,b)=>{
+      const delta=b.supervisedScore-a.supervisedScore;
+      if(Math.abs(delta)>0.06) return delta;
+      return b.wordCount-a.wordCount;
+    });
     const supervisedReviewSet=[];
+    const normalizedSeen=new Map();
     for(const run of supervisedRuns){
+      const normalized=String(run.text||"").toLowerCase().replace(/[^a-z]+/g," ").trim();
+      if(normalized && (normalizedSeen.get(normalized)||0)>=1) continue;
       const overlaps=supervisedReviewSet.some(x=>x.pageIndex===run.pageIndex&&x.lineIndex===run.lineIndex&&
         !(run.endWordIndex < x.startWordIndex-1 || run.startWordIndex > x.endWordIndex+1));
       if(overlaps) continue;
       supervisedReviewSet.push({...run,reviewLabel:null,reviewInstruction:'Compare with frozen source screenshot; label ITALIC or ROMAN.'});
-      if(supervisedReviewSet.length>=80) break;
+      if(normalized) normalizedSeen.set(normalized,(normalizedSeen.get(normalized)||0)+1);
+      if(supervisedReviewSet.length>=25) break;
     }
     supervisedReviewSet.forEach((r,i)=>r.supervisedRank=i+1);
     state.italicCalibrationReviewSet = supervisedReviewSet;
     renderItalicCalibrationReview();
 
     const payload = {
-      format: "book-ocr-studio-italic-calibration-v12",
+      format: "book-ocr-studio-italic-calibration-v13",
       buildVersion: BUILD_VERSION,
       exportedAt: new Date().toISOString(),
       summary: {
@@ -4480,7 +4514,7 @@
         cloudIowanRobustLineNormalizationDiagnosticOnly: true,
         cloudIowanRunCalibrationRankingDiagnosticOnly: true,
         cloudIowanSupervisedReviewSetDiagnosticOnly: true,
-        cloudIowanSupervisedRankingOrder: "structural-first/local-consistency/slant-gain-support/shear-weak",
+        cloudIowanSupervisedRankingOrder: "v43-length-aware-density/corroborated-short-tokens/multiword-preference/shear-weak",
         calibrationFeatures: ["slant","gain","score","shear","shearStrength","inkDensity","medianRowWidth","upperMedianWidth","lowerMedianWidth","topBottomWidthRatio","leftEdgeShear","rightEdgeShear","aspectRatio","localSlantLift","localGainLift","localShearLift"],
         cloudIowanTokenSplitAtDash: true,
       },
