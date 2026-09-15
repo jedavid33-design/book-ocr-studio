@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "45";
+  const BUILD_VERSION = "46";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -4524,15 +4524,25 @@
     state.italicCalibrationReviewSet = supervisedReviewSet;
     renderItalicCalibrationReview();
 
-    // Build 45: explicit frozen-corpus positive controls. Match by normalized
-    // word sequence, never by detector candidacy, then export the positive words
-    // plus up to three roman neighbors on either side from the same OCR line.
+    // Build 46: explicit frozen-corpus positive controls. These are human-
+    // confirmed from the source screenshots. Match by normalized OCR sequence,
+    // never by detector candidacy. Short/single-letter positives are preserved.
+    // We intentionally export every textual match for ambiguous one-word specs;
+    // expectedLocation tells QA which screenshot is the ground-truth target.
     const normToken = t => String(t||"").toLowerCase().replace(/[^a-z]+/g,"");
     const knownPositiveSpecs = [
-      { id:"legacy-c1-hurry", label:"ITALIC", tokens:["hurry","john","i","need","to","come"] },
-      { id:"legacy-c1-keep", label:"ITALIC", tokens:["keep","it","all"] },
+      { id:"legacy-c1p3-very", expectedLocation:"ch1p3", label:"ITALIC", tokens:["very"] },
+      { id:"legacy-c1p5-hurry", expectedLocation:"ch1p5", label:"ITALIC", tokens:["hurry","john","i","need","to","come"] },
+      { id:"legacy-c1p6-keep", expectedLocation:"ch1p6", label:"ITALIC", tokens:["keep","it","all"] },
+      { id:"legacy-c2p1-son", expectedLocation:"ch2p1", label:"ITALIC", tokens:["son"] },
+      { id:"legacy-c2p4-missed", expectedLocation:"ch2p4", label:"ITALIC", tokens:["i","missed","you"] },
+      { id:"legacy-c2p4-i", expectedLocation:"ch2p4", label:"ITALIC", tokens:["i"] },
+      { id:"legacy-c2p5-garrett", expectedLocation:"ch2p5", label:"ITALIC", tokens:["garrett"] },
+      { id:"legacy-c2p5-thousand", expectedLocation:"ch2p5", label:"ITALIC", tokens:["thousand"] },
+      { id:"legacy-c3p2-blah", expectedLocation:"ch3p2", label:"ITALIC", tokens:["blah"] },
     ];
     const positiveControls=[];
+    const positiveMatchCounts=Object.fromEntries(knownPositiveSpecs.map(spec=>[spec.id,0]));
     lineGroups.forEach((peers,key) => {
       const ordered=[...peers].sort((a,b)=>Number(a.wordIndex||0)-Number(b.wordIndex||0));
       const nt=ordered.map(w=>normToken(w.text));
@@ -4543,9 +4553,17 @@
           const positive=ordered.slice(start,start+spec.tokens.length);
           const after=ordered.slice(start+spec.tokens.length,Math.min(ordered.length,start+spec.tokens.length+3));
           const pack=(w,groundTruth)=>({ ...w, groundTruth, normalizedToken:normToken(w.text) });
+          positiveMatchCounts[spec.id]=(positiveMatchCounts[spec.id]||0)+1;
           positiveControls.push({
-            id:spec.id, groundTruth:spec.label, pageIndex:ordered[0].pageIndex, pageNumber:ordered[0].pageNumber,
-            fileName:ordered[0].fileName, lineIndex:ordered[0].lineIndex, fullLineText:ordered[0].text,
+            id:spec.id,
+            expectedLocation:spec.expectedLocation,
+            matchOrdinal:positiveMatchCounts[spec.id],
+            groundTruth:spec.label,
+            pageIndex:ordered[0].pageIndex,
+            pageNumber:ordered[0].pageNumber,
+            fileName:ordered[0].fileName,
+            lineIndex:ordered[0].lineIndex,
+            fullLineText:ordered.map(w=>w.text).join(" "),
             matchedText:positive.map(w=>w.text).join(" "),
             romanBefore:before.map(w=>pack(w,"ROMAN_NEIGHBOR")),
             positiveWords:positive.map(w=>pack(w,"ITALIC")),
@@ -4554,9 +4572,16 @@
         }
       });
     });
+    const knownPositiveControlSummary=knownPositiveSpecs.map(spec=>({
+      id:spec.id,
+      expectedLocation:spec.expectedLocation,
+      expectedText:spec.tokens.join(" "),
+      matchCount:positiveMatchCounts[spec.id]||0,
+      status:(positiveMatchCounts[spec.id]||0)>0 ? "MATCHED" : "NOT_FOUND"
+    }));
 
     const payload = {
-      format: "book-ocr-studio-italic-calibration-v15",
+      format: "book-ocr-studio-italic-calibration-v16",
       buildVersion: BUILD_VERSION,
       exportedAt: new Date().toISOString(),
       summary: {
@@ -4603,7 +4628,7 @@
         cloudIowanRunCalibrationRankingDiagnosticOnly: true,
         cloudIowanSupervisedReviewSetDiagnosticOnly: true,
         cloudIowanKnownPositiveInstrumentationDiagnosticOnly: true,
-        cloudIowanKnownPositiveSpecs: ["Hurry John I need to come", "Keep it all"],
+        cloudIowanKnownPositiveSpecs: knownPositiveSpecs.map(spec => `${spec.expectedLocation}: ${spec.tokens.join(" ")}`),
         cloudIowanSupervisedRankingOrder: "v44-diverse-human-label-sampler/length-aware-density/no-corroboration-gate/shear-weak",
         calibrationFeatures: ["slant","gain","score","shear","shearStrength","inkDensity","medianRowWidth","upperMedianWidth","lowerMedianWidth","topBottomWidthRatio","leftEdgeShear","rightEdgeShear","aspectRatio","bandOccupancy","leftEdgeBands","rightEdgeBands","orientationHistogram","componentCount","componentWidthMedian","componentWidthSpread","localSlantLift","localGainLift","localShearLift"],
         cloudIowanTokenSplitAtDash: true,
@@ -4613,6 +4638,7 @@
       topLocalCalibrationCandidates: calibrationWords.slice(0, 300),
       topRunCalibrationCandidates: calibrationRuns.slice(0, 300),
       supervisedCalibrationReviewSet: supervisedReviewSet,
+      knownPositiveControlSummary,
       knownPositiveControls: positiveControls,
       acceptedRuns: runs.filter(x => x.accepted),
       rejectedRuns: runs.filter(x => !x.accepted),
