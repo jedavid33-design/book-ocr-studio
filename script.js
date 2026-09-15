@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "39";
+  const BUILD_VERSION = "40";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -4325,8 +4325,42 @@
     }).sort((a,b) => b.calibrationScore - a.calibrationScore)
       .map((word, index) => ({ ...word, calibrationRank: index + 1 }));
 
+    // v40 supervised calibration: rank contiguous multiword runs using the v39
+    // word scores. True book italics are commonly phrases/runs, while noisy
+    // roman outliers are often isolated. This remains diagnostic-only.
+    const calibrationByKey = new Map(calibrationWords.map(w =>
+      [`${w.pageIndex ?? w.pageNumber ?? 0}:${w.lineIndex ?? 0}:${w.wordIndex ?? 0}`, w]));
+    const calibrationRuns = [];
+    lineGroups.forEach((peers, key) => {
+      const ordered = [...peers].sort((a,b) => Number(a.wordIndex||0) - Number(b.wordIndex||0));
+      const ranked = ordered.map(w => calibrationByKey.get(`${w.pageIndex ?? w.pageNumber ?? 0}:${w.lineIndex ?? 0}:${w.wordIndex ?? 0}`) || w);
+      // Build windows of 1–6 adjacent words. Exporting the windows lets QA compare
+      // known visual italic spans directly with neighboring roman phrases.
+      for (let start=0; start<ranked.length; start++) {
+        for (let len=1; len<=Math.min(6, ranked.length-start); len++) {
+          const ws=ranked.slice(start,start+len);
+          const scores=ws.map(w=>Number(w.calibrationScore||0));
+          const positive=scores.filter(x=>x>0);
+          const avg=scores.reduce((a,b)=>a+b,0)/len;
+          const min=Math.min(...scores), max=Math.max(...scores);
+          const continuity=positive.length/len;
+          const multiwordBonus=len>=2 ? Math.min(0.45,(len-1)*0.09)*continuity : 0;
+          const runCalibrationScore=avg + Math.max(0,min)*0.20 + multiwordBonus;
+          calibrationRuns.push({
+            pageIndex:ws[0].pageIndex, pageNumber:ws[0].pageNumber, fileName:ws[0].fileName,
+            lineIndex:ws[0].lineIndex, startWordIndex:ws[0].wordIndex, endWordIndex:ws[ws.length-1].wordIndex,
+            wordCount:len, text:ws.map(w=>w.text).join(' '), runCalibrationScore,
+            averageWordScore:avg, minimumWordScore:min, maximumWordScore:max, positiveWordFraction:continuity,
+            words:ws.map(w=>({wordIndex:w.wordIndex,text:w.text,calibrationRank:w.calibrationRank,calibrationScore:w.calibrationScore}))
+          });
+        }
+      }
+    });
+    calibrationRuns.sort((a,b)=>b.runCalibrationScore-a.runCalibrationScore)
+      .forEach((r,i)=>r.runCalibrationRank=i+1);
+
     const payload = {
-      format: "book-ocr-studio-italic-calibration-v9",
+      format: "book-ocr-studio-italic-calibration-v10",
       buildVersion: BUILD_VERSION,
       exportedAt: new Date().toISOString(),
       summary: {
@@ -4370,12 +4404,14 @@
         cloudIowanAutomaticItalicsDisabledForCalibration: true,
         cloudIowanCalibrationRankingDiagnosticOnly: true,
         cloudIowanRobustLineNormalizationDiagnosticOnly: true,
+        cloudIowanRunCalibrationRankingDiagnosticOnly: true,
         calibrationFeatures: ["slant","gain","score","shear","shearStrength","inkDensity","medianRowWidth","upperMedianWidth","lowerMedianWidth","topBottomWidthRatio","leftEdgeShear","rightEdgeShear","aspectRatio","localSlantLift","localGainLift","localShearLift"],
         cloudIowanTokenSplitAtDash: true,
       },
       topLineCandidatesByGain: rankedLines.slice(0, 100),
       topWordCandidatesByGain: rankedWords.slice(0, 250),
       topLocalCalibrationCandidates: calibrationWords.slice(0, 300),
+      topRunCalibrationCandidates: calibrationRuns.slice(0, 300),
       acceptedRuns: runs.filter(x => x.accepted),
       rejectedRuns: runs.filter(x => !x.accepted),
       lines,
