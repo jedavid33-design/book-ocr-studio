@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "58";
+  const BUILD_VERSION = "59";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -34,6 +34,8 @@
     italicCalibrationReviewSet: [],
     italicCalibrationLabels: {},
     italicLearningProfile: null,
+    italicReviewSelectionMode: "learned",
+    italicReviewHistory: [],
   };
 
   let PaddleOCRClass = null;
@@ -138,6 +140,8 @@
     italicLearningStatus: $("italicLearningStatus"),
     italicCalibrationReview: $("italicCalibrationReview"),
     italicCalibrationReviewList: $("italicCalibrationReviewList"),
+    italicReviewLearnedBtn: $("italicReviewLearnedBtn"),
+    italicReviewRandomBtn: $("italicReviewRandomBtn"),
     italicCalibrationProgress: $("italicCalibrationProgress"),
     italicStatus: $("italicStatus"),
     polishStatus: $("polishStatus"),
@@ -4688,11 +4692,9 @@
       supervisedSingletonKeys.add(sk);
     });
 
-    // Build 57: unlimited spoiler-safe bootstrap review. Draw randomly from the
-    // full unseen OCR specimen population without replacement. The learner does
-    // not decide what the human gets to see in this mode, so weak classifier
-    // recall cannot hide potential italics. Labels remain generic visual training
-    // data only; no book-, phrase-, page-, or known-answer information is used.
+    // Build 59: learned-vs-random review. Learned mode ranks the entire unseen
+    // generic OCR specimen population using only saved visual typography labels.
+    // Random mode remains available as the unbiased bootstrap/fallback path.
     const profile=currentItalicLearningProfile();
     const learnedExamples=(profile.examples||[]).filter(x=>Array.isArray(x.vector)&&x.vector.length===ITALIC_FEATURE_NAMES.length);
     const sessionSignature=checkpointSignature().map(signatureFileName).join("|");
@@ -4707,19 +4709,26 @@
     const eligibleRuns=supervisedRuns.filter(r=>!r.alreadyTrained && r.reviewBox && !state.italicCalibrationLabels[italicCalibrationKey(r)]);
     const supervisedReviewSet=[...eligibleRuns];
 
-    // Fisher-Yates shuffle: random without replacement for this generated queue.
-    // renderItalicCalibrationReview consumes one specimen at a time and skips
-    // overlaps after a judgment, so the same underlying OCR word cannot boomerang.
-    for(let i=supervisedReviewSet.length-1;i>0;i--){
-      let j;
-      if(globalThis.crypto?.getRandomValues){
-        const a=new Uint32Array(1); globalThis.crypto.getRandomValues(a);
-        j=a[0]%(i+1);
-      } else j=Math.floor(Math.random()*(i+1));
-      [supervisedReviewSet[i],supervisedReviewSet[j]]=[supervisedReviewSet[j],supervisedReviewSet[i]];
+    if(state.italicReviewSelectionMode==="learned" && learnedExamples.filter(x=>x.label==="ITALIC").length>=2){
+      supervisedReviewSet.sort((a,b)=>{
+        const ap=Number.isFinite(a.learnedItalicProbability)?a.learnedItalicProbability:-1;
+        const bp=Number.isFinite(b.learnedItalicProbability)?b.learnedItalicProbability:-1;
+        if(bp!==ap) return bp-ap;
+        return Number(b.supervisedScore||0)-Number(a.supervisedScore||0);
+      });
+      supervisedReviewSet.forEach(r=>r.activeLearningReason="learned-ranked");
+    } else {
+      for(let i=supervisedReviewSet.length-1;i>0;i--){
+        let j;
+        if(globalThis.crypto?.getRandomValues){
+          const a=new Uint32Array(1); globalThis.crypto.getRandomValues(a);
+          j=a[0]%(i+1);
+        } else j=Math.floor(Math.random()*(i+1));
+        [supervisedReviewSet[i],supervisedReviewSet[j]]=[supervisedReviewSet[j],supervisedReviewSet[i]];
+      }
+      supervisedReviewSet.forEach(r=>r.activeLearningReason="random-bootstrap");
     }
     supervisedReviewSet.forEach(r=>{
-      r.activeLearningReason='random-bootstrap';
       r.reviewLabel=null;
       r.reviewInstruction='Spoiler-safe human typography label: ITALIC, ROMAN, or UNSURE.';
     });
@@ -4820,7 +4829,7 @@
       downloadBlob(new Blob([JSON.stringify(payload, null, 2)], {type:"application/json"}), `${safeTitle}-italic-diagnostics.json`);
       setStatus(`Downloaded word-level italic diagnostics: ${words.length} words, ${runs.length} candidate runs, ${runs.filter(x=>x.accepted).length} accepted. Spoiler-safe review set is ready.`);
     } else {
-      setStatus(`Built an unlimited randomized spoiler-safe queue from ${supervisedReviewSet.length} unseen OCR specimens. Review continuously until you choose to stop.`);
+      setStatus(`Built ${state.italicReviewSelectionMode === "learned" ? "a learned-ranked" : "an unlimited randomized"} spoiler-safe queue from ${supervisedReviewSet.length} unseen OCR specimens.`);
     }
     return payload;
   }
@@ -4878,17 +4887,47 @@
     return {total:ex.length,italic:ex.filter(x=>x.label==="ITALIC").length,roman:ex.filter(x=>x.label==="ROMAN").length};
   }
   function italicLearnedProbability(run) {
-    const p=currentItalicLearningProfile(), ex=(p.examples||[]).filter(x=>Array.isArray(x.vector)&&x.vector.length===ITALIC_FEATURE_NAMES.length);
-    if(ex.length<8 || !ex.some(x=>x.label==="ITALIC") || !ex.some(x=>x.label==="ROMAN")) return null;
+    const p=currentItalicLearningProfile();
+    const ex=(p.examples||[]).filter(x=>Array.isArray(x.vector)&&x.vector.length===ITALIC_FEATURE_NAMES.length);
+    const italic=ex.filter(x=>x.label==="ITALIC"), roman=ex.filter(x=>x.label==="ROMAN");
+    if(italic.length<2 || roman.length<2) return null;
     const v=italicLearningVector(run), dims=v.length;
     const scales=Array.from({length:dims},(_,i)=>{
-      const vals=ex.map(x=>Number(x.vector[i]||0)); const lo=Math.min(...vals), hi=Math.max(...vals); return Math.max(1e-6,hi-lo);
+      const vals=ex.map(x=>Number(x.vector[i]||0));
+      const sorted=[...vals].sort((a,b)=>a-b);
+      const q=(p)=>sorted[Math.min(sorted.length-1,Math.max(0,Math.floor((sorted.length-1)*p)))];
+      return Math.max(1e-6,q(0.90)-q(0.10),Math.max(...vals)-Math.min(...vals));
     });
-    const near=ex.map(x=>{let d=0; for(let i=0;i<dims;i++){const z=(v[i]-Number(x.vector[i]||0))/scales[i]; d+=z*z;} return {x,d:Math.sqrt(d/dims)};})
-      .sort((a,b)=>a.d-b.d).slice(0,Math.min(11,ex.length));
-    let iw=0,rw=0; near.forEach(({x,d})=>{const w=1/(0.08+d); if(x.label==="ITALIC") iw+=w; else rw+=w;});
-    return iw+rw?iw/(iw+rw):null;
+    const dist=(x)=>{
+      let d=0;
+      for(let i=0;i<dims;i++){
+        const z=(v[i]-Number(x.vector[i]||0))/scales[i];
+        d+=z*z;
+      }
+      return Math.sqrt(d/dims);
+    };
+    // Class-balanced comparison: the much larger Roman class gets no extra vote
+    // merely because it has more saved examples.
+    const classAffinity=(rows)=>{
+      const near=rows.map(x=>dist(x)).sort((a,b)=>a-b).slice(0,Math.min(7,rows.length));
+      return near.reduce((a,d)=>a+1/(0.08+d),0)/Math.max(1,near.length);
+    };
+    const ia=classAffinity(italic), ra=classAffinity(roman);
+    return ia+ra ? ia/(ia+ra) : null;
   }
+
+  function removeItalicTrainingExample(run) {
+    const store=loadItalicLearningStore(), key=state.sourceProfile||"default";
+    const p=store[key];
+    if(!p || !Array.isArray(p.examples)) return;
+    const specimenId=italicCalibrationKey(run);
+    const sessionSignature=checkpointSignature().map(signatureFileName).join("|");
+    const id=`${sessionSignature}::${specimenId}`;
+    p.examples=p.examples.filter(x=>x.id!==id);
+    p.updatedAt=new Date().toISOString();
+    store[key]=p; saveItalicLearningStore(store); state.italicLearningProfile=p;
+  }
+
   function updateItalicLearningUi() {
     const st=italicLearningStats();
     if(els.italicLearningStatus) els.italicLearningStatus.textContent=`Learned: ${st.italic} italic · ${st.roman} Roman`;
@@ -4992,9 +5031,6 @@
       return !italicCalibrationWordKeys(run).some(k=>consumedWords.has(k));
     });
 
-    // Keep the interaction deliberately one-at-a-time: a judgment consumes the
-    // current specimen, rerenders, and the next unseen/non-overlapping specimen
-    // takes its place. This prevents accidental double-labeling.
     const run = reviewRuns[0] || null;
     if (run) {
       const key = italicCalibrationKey(run);
@@ -5004,6 +5040,7 @@
         <div class="italic-calibration-title"><strong>Next specimen</strong><span class="badge">spoiler-safe</span>${run.learnedItalicProbability==null?"":`<span class="badge">learned ${Math.round(run.learnedItalicProbability*100)}%</span>`}</div>
         <div class="italic-spoiler-specimen" aria-label="Isolated typography specimen"><span class="hint">Loading isolated specimen…</span></div>
         <div class="italic-calibration-actions">
+          <button class="button secondary" data-previous ${state.italicReviewHistory?.length?"":"disabled"}>← Previous</button>
           <button class="button secondary" data-label="ITALIC">Italic</button>
           <button class="button secondary" data-label="ROMAN">Roman</button>
           <button class="button secondary" data-label="UNSURE">Unsure</button>
@@ -5013,15 +5050,31 @@
         if (state.italicCalibrationLabels[key]) return;
         const label=btn.dataset.label;
         state.italicCalibrationLabels[key] = label;
+        if(!Array.isArray(state.italicReviewHistory)) state.italicReviewHistory=[];
+        state.italicReviewHistory.push(run);
         saveItalicTrainingExample(run, label);
         updateItalicLearningUi();
         renderItalicCalibrationReview();
       }));
+      card.querySelector("[data-previous]")?.addEventListener("click",()=>{
+        if(!Array.isArray(state.italicReviewHistory) || !state.italicReviewHistory.length) return;
+        const previous=state.italicReviewHistory.pop();
+        const previousKey=italicCalibrationKey(previous);
+        // Undo the prior review decision so it can be corrected. If it was a
+        // training label, remove that saved row; a new Italic/Roman choice will
+        // write the corrected example back exactly once.
+        delete state.italicCalibrationLabels[previousKey];
+        removeItalicTrainingExample(previous);
+        const queue=state.italicCalibrationReviewSet||[];
+        const idx=queue.indexOf(previous);
+        if(idx>0){ queue.splice(idx,1); queue.unshift(previous); }
+        else if(idx<0) queue.unshift(previous);
+        updateItalicLearningUi();
+        renderItalicCalibrationReview();
+      });
       card.querySelector("[data-split]")?.addEventListener("click",()=>{
         const children=(run.splitChildren||[]).filter(child=>!state.italicCalibrationLabels[italicCalibrationKey(child)]);
         if(children.length<2) return;
-        // Replace only this mixed review card with clean OCR-word specimens.
-        // Do not label or train on the mixed parent.
         const queue=state.italicCalibrationReviewSet||[];
         const idx=queue.indexOf(run);
         if(idx>=0) queue.splice(idx,1,...children);
@@ -7375,13 +7428,27 @@ ${coverSpine}${spine.join("\n")}
         els.cropSides.value = 0;
       }
       syncCropPresetUi();
-      updatePreview();
+    
+  els.italicReviewLearnedBtn?.addEventListener("click",()=>{
+    state.italicReviewSelectionMode="learned"; state.italicReviewHistory=[]; downloadItalicDiagnostics(false);
+  });
+  els.italicReviewRandomBtn?.addEventListener("click",()=>{
+    state.italicReviewSelectionMode="random"; state.italicReviewHistory=[]; downloadItalicDiagnostics(false);
+  });
+  updatePreview();
     });
   });
 
   [els.cropTop, els.cropBottom, els.cropSides].forEach(input => input.addEventListener("input", () => {
     syncCropPresetUi();
-    updatePreview();
+  
+  els.italicReviewLearnedBtn?.addEventListener("click",()=>{
+    state.italicReviewSelectionMode="learned"; state.italicReviewHistory=[]; downloadItalicDiagnostics(false);
+  });
+  els.italicReviewRandomBtn?.addEventListener("click",()=>{
+    state.italicReviewSelectionMode="random"; state.italicReviewHistory=[]; downloadItalicDiagnostics(false);
+  });
+  updatePreview();
   }));
 
   syncCropPresetUi();
@@ -7464,7 +7531,14 @@ ${coverSpine}${spine.join("\n")}
     renderReview();
     refreshParagraphRebuildUi();
     syncCropPresetUi();
-    updatePreview();
+  
+  els.italicReviewLearnedBtn?.addEventListener("click",()=>{
+    state.italicReviewSelectionMode="learned"; state.italicReviewHistory=[]; downloadItalicDiagnostics(false);
+  });
+  els.italicReviewRandomBtn?.addEventListener("click",()=>{
+    state.italicReviewSelectionMode="random"; state.italicReviewHistory=[]; downloadItalicDiagnostics(false);
+  });
+  updatePreview();
     setStatus("Add screenshots to begin.");
   });
 
@@ -7558,103 +7632,12 @@ ${coverSpine}${spine.join("\n")}
     console.error("Book OCR Studio promise error", event.reason);
   });
 
+
+  els.italicReviewLearnedBtn?.addEventListener("click",()=>{
+    state.italicReviewSelectionMode="learned"; state.italicReviewHistory=[]; downloadItalicDiagnostics(false);
+  });
+  els.italicReviewRandomBtn?.addEventListener("click",()=>{
+    state.italicReviewSelectionMode="random"; state.italicReviewHistory=[]; downloadItalicDiagnostics(false);
+  });
   updatePreview();
 })();
-
-
-/* BUILD 58: spoiler-safe review navigation history.
-   Navigation only: going back never changes/removes an existing training label. */
-(function installItalicReviewHistoryV58() {
-  if (window.__italicReviewHistoryV58Installed) return;
-  window.__italicReviewHistoryV58Installed = true;
-
-  const history = [];
-  let cursor = -1;
-  let restoring = false;
-
-  function reviewRoot() {
-    const candidates = [...document.querySelectorAll('body *')];
-    const heading = candidates.find(el =>
-      el.children.length === 0 &&
-      /spoiler-safe italic review/i.test((el.textContent || '').trim())
-    );
-    return heading ? (heading.closest('section, dialog, .modal, .card, .panel') || heading.parentElement) : null;
-  }
-
-  function specimenImage(root) {
-    if (!root) return null;
-    const imgs = [...root.querySelectorAll('img, canvas')];
-    return imgs.find(el => {
-      const r = el.getBoundingClientRect();
-      return r.width > 80 && r.height > 20;
-    }) || null;
-  }
-
-  function signature(root) {
-    const img = specimenImage(root);
-    if (!img) return null;
-    if (img.tagName === 'IMG') return img.currentSrc || img.src || null;
-    try { return img.toDataURL(); } catch (_) { return null; }
-  }
-
-  function snapshot(root) {
-    const img = specimenImage(root);
-    if (!img) return null;
-    const src = img.tagName === 'IMG' ? (img.currentSrc || img.src) : (() => {
-      try { return img.toDataURL(); } catch (_) { return ''; }
-    })();
-    const textNodes = [...root.querySelectorAll('*')]
-      .filter(el => el.children.length === 0)
-      .map(el => (el.textContent || '').trim())
-      .filter(Boolean);
-    return { src, textNodes };
-  }
-
-  function ensurePrevious(root) {
-    if (!root || root.querySelector('[data-v58-previous]')) return;
-    const buttons = [...root.querySelectorAll('button')];
-    const anchor = buttons.find(b => /roman|italic|unsure|split/i.test(b.textContent || ''));
-    if (!anchor) return;
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.dataset.v58Previous = '1';
-    btn.textContent = '← Previous';
-    btn.style.marginRight = '8px';
-    btn.disabled = cursor <= 0;
-    btn.addEventListener('click', () => {
-      if (cursor <= 0) return;
-      cursor -= 1;
-      restoring = true;
-      const snap = history[cursor];
-      const img = specimenImage(root);
-      if (img && snap && snap.src) {
-        if (img.tagName === 'IMG') img.src = snap.src;
-      }
-      root.dataset.v58HistoryPreview = '1';
-      btn.disabled = cursor <= 0;
-      setTimeout(() => { restoring = false; }, 0);
-    });
-    anchor.parentElement.insertBefore(btn, anchor);
-  }
-
-  let lastSig = null;
-  const observer = new MutationObserver(() => {
-    const root = reviewRoot();
-    if (!root) return;
-    ensurePrevious(root);
-    const sig = signature(root);
-    if (!sig || restoring || sig === lastSig) return;
-    lastSig = sig;
-    // If the user had backed up and then the app advances, discard only forward NAV history.
-    if (cursor < history.length - 1) history.splice(cursor + 1);
-    const snap = snapshot(root);
-    if (snap) {
-      history.push(snap);
-      cursor = history.length - 1;
-    }
-    const prev = root.querySelector('[data-v58-previous]');
-    if (prev) prev.disabled = cursor <= 0;
-  });
-  observer.observe(document.documentElement, {subtree:true, childList:true, attributes:true, attributeFilter:['src']});
-})();
-

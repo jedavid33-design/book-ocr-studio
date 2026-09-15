@@ -18,7 +18,7 @@
 <body>
 <header class="topbar">
 <div>
-<div class="build-identifier" id="buildIdentifier">BUILD 58</div>
+<div class="build-identifier" id="buildIdentifier">BUILD 59</div>
 <h1>Book OCR Studio</h1>
 <p class="subhead">Crop screenshots, OCR them one page at a time, batch OCR the whole book, review chapter starts or any page, and export TXT or EPUB.</p>
 </div>
@@ -215,7 +215,11 @@
 </div>
 <div class="italic-calibration-review hidden" id="italicCalibrationReview">
   <div class="italic-calibration-head"><strong>Spoiler-safe Italic Review</strong><span class="progress-pill" id="italicCalibrationProgress">0 / 0 labeled</span></div>
-  <p class="hint">Continuous random review draws from all unseen OCR specimens without replacement. OCR text, page/line location, surrounding words, and story order stay hidden. Italic and Roman train this OCR/font profile across books; Unsure skips training. Split mixed specimens into OCR-word pieces. Labels still do not change EPUB formatting yet.</p>
+  <div class="actions">
+    <button class="button secondary" id="italicReviewLearnedBtn" type="button">Learned review</button>
+    <button class="button secondary" id="italicReviewRandomBtn" type="button">Random review</button>
+  </div>
+  <p class="hint">Learned review ranks all unseen OCR specimens from the persistent visual training profile; Random review remains available as an unbiased fallback. OCR text, page/line location, surrounding words, and story order stay hidden. Italic and Roman train this OCR/font profile across books; Unsure skips training. Split mixed specimens into OCR-word pieces. Labels still do not change EPUB formatting yet.</p>
   <div class="review-list" id="italicCalibrationReviewList"></div>
 </div>
 </div></div></details><details class="card hidden kindle-ready-section" id="kindleReadySection" open=""><summary class="kindle-ready-summary">8. Kindle Ready</summary><div class="kindle-ready-body"><p class="hint">Final preflight for a clean reflowable EPUB before Send to Kindle. This inspects the repaired/polished book and does not change text.</p><div class="actions"><button class="button primary" id="runKindleReady" type="button">Run Kindle Ready Check</button><span class="progress-pill" id="kindleReadyStatus">Not checked</span></div><div class="regression-results hidden" id="kindleReadyResults"></div></div></details><section class="card hidden" id="exportSection"><h2>9. Export</h2><div class="actions">
