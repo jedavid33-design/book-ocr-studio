@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "65";
+  const BUILD_VERSION = "66";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -4744,6 +4744,9 @@
       supervisedReviewSet.sort((a,b)=>{
         const ap=Number.isFinite(a.learnedItalicProbability)?a.learnedItalicProbability:-1;
         const bp=Number.isFinite(b.learnedItalicProbability)?b.learnedItalicProbability:-1;
+        const aUnsupportedSingle=italicGlyphClassFromRun(a).startsWith("single:") && ap<=0.01;
+        const bUnsupportedSingle=italicGlyphClassFromRun(b).startsWith("single:") && bp<=0.01;
+        if(aUnsupportedSingle!==bUnsupportedSingle) return aUnsupportedSingle?1:-1;
         if(bp!==ap) return bp-ap;
         return Number(b.supervisedScore||0)-Number(a.supervisedScore||0);
       });
@@ -4908,7 +4911,8 @@
     const sessionSignature=checkpointSignature().map(signatureFileName).join("|");
     const id=`${sessionSignature}::${specimenId}`;
     const existing=p.examples.find(x=>x.id===id);
-    const example={id,label,vector,createdAt:existing?.createdAt||new Date().toISOString(),updatedAt:new Date().toISOString()};
+    const glyphClass=italicGlyphClassFromRun(run);
+    const example={id,label,vector,glyphClass,createdAt:existing?.createdAt||new Date().toISOString(),updatedAt:new Date().toISOString()};
     if(existing) Object.assign(existing,example); else p.examples.push(example);
     p.updatedAt=new Date().toISOString(); p.featureNames=ITALIC_FEATURE_NAMES;
     store[key]=p; saveItalicLearningStore(store); state.italicLearningProfile=p;
@@ -4917,34 +4921,61 @@
     const p=currentItalicLearningProfile(), ex=p.examples||[];
     return {total:ex.length,italic:ex.filter(x=>x.label==="ITALIC").length,roman:ex.filter(x=>x.label==="ROMAN").length};
   }
+  function italicGlyphClassFromRun(run) {
+    const raw=String(run?.text||run?.words?.map(w=>w?.text||"").join("")||"").normalize("NFKC");
+    const glyphs=[...raw].filter(ch=>/\p{L}|\p{N}/u.test(ch));
+    if(glyphs.length===1) return `single:${glyphs[0].toLocaleLowerCase()}`;
+    if(glyphs.length>=2) return `word:${glyphs.length}`;
+    return "other";
+  }
   function italicLearnedProbability(run) {
     const p=currentItalicLearningProfile();
-    const ex=(p.examples||[]).filter(x=>Array.isArray(x.vector)&&x.vector.length===ITALIC_FEATURE_NAMES.length);
+    const all=(p.examples||[]).filter(x=>Array.isArray(x.vector)&&x.vector.length===ITALIC_FEATURE_NAMES.length);
+    const target=italicGlyphClassFromRun(run);
+    const single=target.startsWith("single:");
+    let ex;
+    if(single){
+      ex=all.filter(x=>x.glyphClass===target);
+      const hasItalic=ex.some(x=>x.label==="ITALIC"), hasRoman=ex.some(x=>x.label==="ROMAN");
+      // A single I/A/a cannot dominate merely because it resembles unrelated
+      // positive examples. It earns ranking only after that SAME glyph has both
+      // Roman and italic human labels.
+      if(!hasItalic || !hasRoman) return 0.01;
+    } else {
+      const len=Number(target.split(":")[1]||0);
+      const classed=all.filter(x=>{
+        if(!String(x.glyphClass||"").startsWith("word:")) return false;
+        return Math.abs(Number(x.glyphClass.split(":")[1]||0)-len)<=2;
+      });
+      const legacy=all.filter(x=>!x.glyphClass); // preserve pre-v66 training
+      ex=[...classed,...legacy];
+    }
     const italic=ex.filter(x=>x.label==="ITALIC"), roman=ex.filter(x=>x.label==="ROMAN");
-    if(italic.length<2 || roman.length<2) return null;
+    if(italic.length<2 || roman.length<2) return single?0.01:null;
     const v=italicLearningVector(run), dims=v.length;
     const scales=Array.from({length:dims},(_,i)=>{
-      const vals=ex.map(x=>Number(x.vector[i]||0));
+      const vals=ex.map(x=>Number(x.vector[i]||0)).filter(Number.isFinite);
       const sorted=[...vals].sort((a,b)=>a-b);
-      const q=(p)=>sorted[Math.min(sorted.length-1,Math.max(0,Math.floor((sorted.length-1)*p)))];
-      return Math.max(1e-6,q(0.90)-q(0.10),Math.max(...vals)-Math.min(...vals));
+      const q=p=>sorted[Math.min(sorted.length-1,Math.max(0,Math.floor((sorted.length-1)*p)))];
+      return Math.max(1e-4,q(.9)-q(.1),Math.max(...vals)-Math.min(...vals));
     });
-    const dist=(x)=>{
+    const dist=x=>{
       let d=0;
       for(let i=0;i<dims;i++){
-        const z=(v[i]-Number(x.vector[i]||0))/scales[i];
-        d+=z*z;
+        const z=(Number(v[i]||0)-Number(x.vector[i]||0))/scales[i];
+        d+=Math.min(25,z*z);
       }
       return Math.sqrt(d/dims);
     };
-    // Class-balanced comparison: the much larger Roman class gets no extra vote
-    // merely because it has more saved examples.
-    const classAffinity=(rows)=>{
-      const near=rows.map(x=>dist(x)).sort((a,b)=>a-b).slice(0,Math.min(7,rows.length));
-      return near.reduce((a,d)=>a+1/(0.08+d),0)/Math.max(1,near.length);
+    const affinity=rows=>{
+      const near=rows.map(dist).sort((a,b)=>a-b).slice(0,Math.min(7,rows.length));
+      return near.reduce((a,d)=>a+1/(.08+d),0)/Math.max(1,near.length);
     };
-    const ia=classAffinity(italic), ra=classAffinity(roman);
-    return ia+ra ? ia/(ia+ra) : null;
+    const ia=affinity(italic), ra=affinity(roman);
+    const raw=ia+ra?ia/(ia+ra):null;
+    if(raw==null) return null;
+    const support=Math.min(1,Math.min(italic.length,roman.length)/5);
+    return .5+(raw-.5)*support;
   }
 
   function removeItalicTrainingExample(run) {
