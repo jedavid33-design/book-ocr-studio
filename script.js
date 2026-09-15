@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "34";
+  const BUILD_VERSION = "35";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -5780,6 +5780,14 @@
       const finalQaCleanup = applySafePolishToProject(pageIndexes) || { fixedCount:0 };
       const finalQaLigatures = runSplitLigaturePolish(pageIndexes) || { fixedCount:0, ambiguousCount:0 };
 
+      // v35: page.text is not the only post-OCR text representation. Italic
+      // diagnostics and other geometry-aware consumers read layoutLines/rawOcrItems
+      // directly. Apply the same deterministic, CloudLibrary/Iowan-safe cleanup to
+      // those saved line records so every downstream stage sees the corrected
+      // characters without rerunning OCR. Geometry/boxes are left untouched.
+      repairStage = "synchronize canonical OCR line text";
+      const finalQaLineSync = synchronizeCanonicalOcrLineText(pageIndexes);
+
       state.repairBookHasRun = true;
       saveCheckpoint();
       repairStage = "render repaired results";
@@ -5831,6 +5839,39 @@
       return { text: String(text ?? ""), fixedCount: 0, knownWordOcr: 0, stackedDashArtifacts: 0, exactPunctuationArtifacts: 0 };
     }
     return repair(text);
+  }
+
+
+  function synchronizeCanonicalOcrLineText(pageIndexes = null) {
+    if (state.sourceProfile !== "cloud-iowan") return { fixedCount: 0, lineCount: 0 };
+    const safe = globalThis.BookOcrEpubPolish?.safePolishText;
+    const ligature = globalThis.BookOcrEpubPolish?.repairSplitLigatures;
+    const selected = pageIndexes ? new Set(pageIndexes) : null;
+    let fixedCount = 0;
+    let lineCount = 0;
+
+    const clean = value => {
+      let text = String(value ?? "");
+      const before = text;
+      if (typeof safe === "function") text = safe(text).text;
+      text = applyProfileKnownOcrCleanup(text).text;
+      if (typeof ligature === "function") text = ligature(text).text;
+      if (text !== before) fixedCount++;
+      return text;
+    };
+
+    state.pages.forEach((page, pageIndex) => {
+      if (selected && !selected.has(pageIndex)) return;
+      for (const key of ["layoutLines", "rawOcrItems"]) {
+        if (!Array.isArray(page?.[key])) continue;
+        page[key].forEach(item => {
+          if (!item || typeof item.text !== "string") return;
+          item.text = clean(item.text);
+          lineCount++;
+        });
+      }
+    });
+    return { fixedCount, lineCount };
   }
 
   function applySafePolishToProject(pageIndexes = null) {
