@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "49";
+  const BUILD_VERSION = "50";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -4471,6 +4471,77 @@
     typographyChangeWindows.sort((a,b)=>b.typographyChangeScore-a.typographyChangeScore)
       .forEach((r,i)=>r.typographyChangeRank=i+1);
 
+
+    // Build 50: corpus-generic glyph-composition-matched baseline experiment.
+    // Compare a rendered token only with OTHER occurrences of the same OCR token
+    // in the document. This removes most letter-identity/word-shape confounding
+    // without using any known italic answers, pages, phrases, or book-specific data.
+    // Diagnostic-only: it cannot mark or alter italics.
+    const normalizeTypographyToken = text => String(text || "")
+      .normalize("NFKC").toLocaleLowerCase().replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
+    const allTypographyWords = Array.from(lineGroups.values()).flat();
+    const tokenOccurrenceMap = new Map();
+    allTypographyWords.forEach(w => {
+      const token = normalizeTypographyToken(w.text);
+      if (!token) return;
+      if (!tokenOccurrenceMap.has(token)) tokenOccurrenceMap.set(token, []);
+      tokenOccurrenceMap.get(token).push(w);
+    });
+    const matchedWordEvidence = new Map();
+    allTypographyWords.forEach(w => {
+      const token = normalizeTypographyToken(w.text);
+      const occurrences = (tokenOccurrenceMap.get(token) || []).filter(o => o !== w);
+      if (occurrences.length < 2) return; // require at least 3 total observations
+      const v = typographyFeatureVector(w);
+      const peerVecs = occurrences.map(typographyFeatureVector);
+      const baseline = vecMean(peerVecs);
+      const deltas = styleFeatureIndexes.map(i => {
+        const vals = peerVecs.map(x => Number(x[i] || 0));
+        const med = median(vals), mad = median(vals.map(x => Math.abs(x-med)));
+        const scale = Math.max(1e-4, 1.4826*mad, Math.abs(med)*0.035);
+        return {i, z:(Number(v[i]||0)-baseline[i])/scale};
+      });
+      const abs = deltas.map(d=>Math.min(Math.abs(d.z),6)).sort((a,b)=>b-a);
+      const top = abs.slice(0,Math.min(7,abs.length));
+      const magnitude = top.length ? top.reduce((a,b)=>a+b,0)/top.length : 0;
+      const coherent = deltas.filter(d=>Math.abs(d.z)>=1.25).length;
+      matchedWordEvidence.set(w,{token,peerCount:occurrences.length,magnitude,coherent,
+        deltas:Object.fromEntries(deltas.map(d=>[typographyFeatureNames[d.i],d.z]))});
+    });
+    const glyphMatchedTypographyWindows=[];
+    lineGroups.forEach(peers => {
+      const ordered=[...peers].sort((a,b)=>Number(a.wordIndex||0)-Number(b.wordIndex||0));
+      for(let start=0;start<ordered.length;start++){
+        for(let len=1;len<=Math.min(6,ordered.length-start);len++){
+          const wordsInRun=ordered.slice(start,start+len);
+          const evidence=wordsInRun.map(w=>matchedWordEvidence.get(w)).filter(Boolean);
+          if(!evidence.length) continue;
+          const coverage=evidence.length/len;
+          const mags=evidence.map(e=>e.magnitude);
+          const base=mags.reduce((a,b)=>a+b,0)/mags.length;
+          const coherentMean=evidence.reduce((a,e)=>a+e.coherent,0)/evidence.length;
+          // A run gets extra confidence from multiple independently matched words,
+          // but sparse coverage cannot masquerade as a fully corroborated phrase.
+          const corroboration=1+Math.min(0.45,Math.max(0,evidence.length-1)*0.15);
+          const coverageWeight=0.55+0.45*coverage;
+          const score=base*corroboration*coverageWeight;
+          glyphMatchedTypographyWindows.push({
+            pageIndex:ordered[0].pageIndex,pageNumber:ordered[0].pageNumber,fileName:ordered[0].fileName,
+            lineIndex:ordered[0].lineIndex,startWordIndex:ordered[start].wordIndex,endWordIndex:ordered[start+len-1].wordIndex,
+            wordCount:len,text:wordsInRun.map(w=>w.text).join(' '),
+            leftContext:ordered.slice(Math.max(0,start-3),start).map(w=>w.text).join(' '),
+            rightContext:ordered.slice(start+len,Math.min(ordered.length,start+len+3)).map(w=>w.text).join(' '),
+            fullLineText:ordered.map(w=>w.text).join(' '),
+            glyphMatchedScore:score,matchedWordCount:evidence.length,matchedCoverage:coverage,
+            matchedTokens:evidence.map(e=>({token:e.token,peerCount:e.peerCount,magnitude:e.magnitude,coherentStyleDimensions:e.coherent,normalizedStyleFeatureDeltas:e.deltas})),
+            baselineMethod:"same-normalized-token/other-document-occurrences/min-3-total"
+          });
+        }
+      }
+    });
+    glyphMatchedTypographyWindows.sort((a,b)=>b.glyphMatchedScore-a.glyphMatchedScore)
+      .forEach((r,i)=>r.glyphMatchedRank=i+1);
+
     // v40 supervised calibration: rank contiguous multiword runs using the v39
     // word scores. True book italics are commonly phrases/runs, while noisy
     // roman outliers are often isolated. This remains diagnostic-only.
@@ -4679,6 +4750,7 @@
         cloudIowanRunCalibrationRankingDiagnosticOnly: true,
         cloudIowanSupervisedReviewSetDiagnosticOnly: true,
         cloudIowanLocalTypographyChangeDiagnosticOnly: true,
+        cloudIowanGlyphMatchedRomanBaselineDiagnosticOnly: true,
         cloudIowanSupervisedRankingOrder: "v44-diverse-human-label-sampler/length-aware-density/no-corroboration-gate/shear-weak",
         calibrationFeatures: ["slant","gain","score","shear","shearStrength","inkDensity","medianRowWidth","upperMedianWidth","lowerMedianWidth","topBottomWidthRatio","leftEdgeShear","rightEdgeShear","aspectRatio","bandOccupancy","leftEdgeBands","rightEdgeBands","orientationHistogram","componentCount","componentWidthMedian","componentWidthSpread","localSlantLift","localGainLift","localShearLift"],
         cloudIowanTokenSplitAtDash: true,
@@ -4688,6 +4760,7 @@
       topLocalCalibrationCandidates: calibrationWords.slice(0, 300),
       topRunCalibrationCandidates: calibrationRuns.slice(0, 300),
       topLocalTypographyChangeWindows: typographyChangeWindows.slice(0, 500),
+      topGlyphMatchedTypographyChangeWindows: glyphMatchedTypographyWindows.slice(0, 500),
       supervisedCalibrationReviewSet: supervisedReviewSet,
       acceptedRuns: runs.filter(x => x.accepted),
       rejectedRuns: runs.filter(x => !x.accepted),
