@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "36";
+  const BUILD_VERSION = "37";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -3716,10 +3716,42 @@
     }
     const shearStrength = Math.abs(shear);
 
+    // v37 Iowan calibration: export additional shape measurements so the frozen
+    // corpus can compare known italic spans with adjacent roman text. These are
+    // diagnostic features only and never create formatting.
+    const inkDensity = darkCount / Math.max(1, w * h);
+    const occupiedRows = rows.filter(xs => xs.length);
+    const rowWidths = occupiedRows.map(xs => Math.max(...xs) - Math.min(...xs) + 1);
+    const medianRowWidth = median(rowWidths);
+    const upperRows = occupiedRows.slice(0, Math.max(1, Math.floor(occupiedRows.length / 2)));
+    const lowerRows = occupiedRows.slice(Math.floor(occupiedRows.length / 2));
+    const widthOf = xs => xs.length ? Math.max(...xs) - Math.min(...xs) + 1 : 0;
+    const upperMedianWidth = median(upperRows.map(widthOf));
+    const lowerMedianWidth = median(lowerRows.map(widthOf));
+    const topBottomWidthRatio = lowerMedianWidth ? upperMedianWidth / lowerMedianWidth : 0;
+    const edgeSeries = rowCenters.map(({y}) => {
+      const xs = rows[y];
+      return xs?.length ? { y, left:Math.min(...xs), right:Math.max(...xs) } : null;
+    }).filter(Boolean);
+    const edgeShear = key => {
+      if (edgeSeries.length < 6) return 0;
+      const third = Math.max(2, Math.floor(edgeSeries.length / 3));
+      const top = median(edgeSeries.slice(0, third).map(r=>r[key]));
+      const bottom = median(edgeSeries.slice(-third).map(r=>r[key]));
+      const topY = median(edgeSeries.slice(0, third).map(r=>r.y));
+      const bottomY = median(edgeSeries.slice(-third).map(r=>r.y));
+      return (top - bottom) / Math.max(1, bottomY - topY);
+    };
+    const leftEdgeShear = edgeShear('left');
+    const rightEdgeShear = edgeShear('right');
+    const aspectRatio = w / Math.max(1, h);
+
     // Conservative by design: this legacy flag still describes only the old
     // overlap-based full-line signal. Iowan inline acceptance happens later.
     const italic = Math.abs(bestSlant) >= 0.12 && gain >= 0.018 && bestScore >= 0.38;
-    return { italic, slant: bestSlant, gain, score: bestScore, zeroScore, shear, shearStrength };
+    return { italic, slant: bestSlant, gain, score: bestScore, zeroScore, shear, shearStrength,
+      inkDensity, medianRowWidth, upperMedianWidth, lowerMedianWidth, topBottomWidthRatio,
+      leftEdgeShear, rightEdgeShear, aspectRatio };
   }
 
   function estimateWordBoxes(line) {
@@ -4125,6 +4157,19 @@
             return { ...w, ...r, letters, candidate, italic:false };
           });
 
+          // v37 supervised calibration context. Roman/italic separation is likely
+          // relative, so preserve same-line neighborhood baselines per word.
+          prelim.forEach((word, wi) => {
+            const neighbors = prelim.filter((other, oi) => oi !== wi && Math.abs(oi - wi) <= 2 && (other.letters || 0) >= 2);
+            word.localNeighborCount = neighbors.length;
+            word.localMedianAbsSlant = median(neighbors.map(x=>Math.abs(x.slant || 0)));
+            word.localMedianGain = median(neighbors.map(x=>x.gain || 0));
+            word.localMedianAbsShear = median(neighbors.map(x=>Math.abs(x.shear || 0)));
+            word.localSlantLift = Math.abs(word.slant || 0) - word.localMedianAbsSlant;
+            word.localGainLift = (word.gain || 0) - word.localMedianGain;
+            word.localShearLift = Math.abs(word.shear || 0) - word.localMedianAbsShear;
+          });
+
           const surroundingLineResults = [];
           for (const delta of [-2,-1,1,2]) {
             const otherIndex = lineIndex + delta;
@@ -4134,8 +4179,20 @@
             surroundingLineResults.push(lineScores[otherIndex]);
           }
           const runs = groupItalicRuns(prelim, lineResult, text, surroundingLineResults, state.sourceProfile);
+          // v37: CloudLibrary/Iowan is a supervised calibration corpus. No
+          // automatic route, legacy or shear, may create <i> markup yet. Keep
+          // every candidate/run and measurement for analysis, but force the
+          // formatting decision off. Kindle/Georgia and other profiles are unchanged.
+          if (state.sourceProfile === "cloud-iowan") {
+            prelim.forEach(word => { word.italic = false; });
+            runs.forEach(run => {
+              if (run.accepted) run.wouldAcceptLegacy = true;
+              run.accepted = false;
+              run.diagnosticOnly = true;
+            });
+          }
           line.italicRunMeta = runs;
-          line.italicWordMeta = prelim.map(({text,start,end,letters,candidate,italic,slant,gain,score,zeroScore,shear,shearStrength}) => ({text,start,end,letters,candidate,italic,slant,gain,score,zeroScore,shear,shearStrength}));
+          line.italicWordMeta = prelim.map(({text,start,end,letters,candidate,italic,slant,gain,score,zeroScore,shear,shearStrength,inkDensity,medianRowWidth,upperMedianWidth,lowerMedianWidth,topBottomWidthRatio,leftEdgeShear,rightEdgeShear,aspectRatio,localNeighborCount,localMedianAbsSlant,localMedianGain,localMedianAbsShear,localSlantLift,localGainLift,localShearLift}) => ({text,start,end,letters,candidate,italic,slant,gain,score,zeroScore,shear,shearStrength,inkDensity,medianRowWidth,upperMedianWidth,lowerMedianWidth,topBottomWidthRatio,leftEdgeShear,rightEdgeShear,aspectRatio,localNeighborCount,localMedianAbsSlant,localMedianGain,localMedianAbsShear,localSlantLift,localGainLift,localShearLift}));
           line.italicText = buildItalicText(text, prelim);
           const acceptedRuns = runs.filter(r=>r.accepted).length;
           const acceptedWords = prelim.filter(x=>x.italic).length;
@@ -4198,7 +4255,7 @@
     const rankedLines = [...lines].sort((a,b) => (b.gain || 0) - (a.gain || 0));
     const rankedWords = [...words].sort((a,b) => (b.gain || 0) - (a.gain || 0));
     const payload = {
-      format: "book-ocr-studio-italic-diagnostics-v6",
+      format: "book-ocr-studio-italic-calibration-v7",
       buildVersion: BUILD_VERSION,
       exportedAt: new Date().toISOString(),
       summary: {
@@ -4239,6 +4296,8 @@
         italicsCommittedImmediatelyAfterBatchOcr: true,
         cloudIowanShearDetector: false,
         cloudIowanShearDiagnosticOnly: true,
+        cloudIowanAutomaticItalicsDisabledForCalibration: true,
+        calibrationFeatures: ["slant","gain","score","shear","shearStrength","inkDensity","medianRowWidth","upperMedianWidth","lowerMedianWidth","topBottomWidthRatio","leftEdgeShear","rightEdgeShear","aspectRatio","localSlantLift","localGainLift","localShearLift"],
         cloudIowanTokenSplitAtDash: true,
       },
       topLineCandidatesByGain: rankedLines.slice(0, 100),
