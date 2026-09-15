@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "66";
+  const BUILD_VERSION = "67";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -35,6 +35,7 @@
     italicCalibrationLabels: {},
     italicLearningProfile: null,
     italicReviewSelectionMode: "learned",
+    italicHuntSeenKeys: new Set(),
     italicReviewHistory: [],
   };
 
@@ -141,6 +142,7 @@
     italicCalibrationReviewList: $("italicCalibrationReviewList"),
     italicReviewLearnedBtn: $("italicReviewLearnedBtn"),
     italicReviewRandomBtn: $("italicReviewRandomBtn"),
+    italicReviewHuntBtn: $("italicReviewHuntBtn"),
     italicCalibrationProgress: $("italicCalibrationProgress"),
     italicStatus: $("italicStatus"),
     polishStatus: $("polishStatus"),
@@ -4762,6 +4764,54 @@
       }
       supervisedReviewSet.forEach(r=>r.activeLearningReason="random-bootstrap");
     }
+    if(state.italicReviewSelectionMode==="hunt"){
+      // Positive-example discovery mode. Start from candidates with some italic
+      // evidence, then greedily maximize visual diversity so the reviewer sees
+      // different typography neighborhoods rather than twenty cousins of "cuts".
+      const candidates=supervisedReviewSet.filter(r=>!italicGlyphClassFromRun(r).startsWith("single:"));
+      const vectors=candidates.map(r=>italicLearningVector(r));
+      const dims=ITALIC_FEATURE_NAMES.length;
+      const scales=Array.from({length:dims},(_,i)=>{
+        const vals=vectors.map(v=>Number(v[i]||0)).filter(Number.isFinite).sort((a,b)=>a-b);
+        if(!vals.length) return 1;
+        const q=p=>vals[Math.min(vals.length-1,Math.max(0,Math.floor((vals.length-1)*p)))];
+        return Math.max(1e-4,q(.9)-q(.1),vals[vals.length-1]-vals[0]);
+      });
+      const distance=(a,b)=>{
+        let d=0;
+        for(let i=0;i<dims;i++){
+          const z=(Number(a[i]||0)-Number(b[i]||0))/scales[i];
+          d+=Math.min(25,z*z);
+        }
+        return Math.sqrt(d/dims);
+      };
+      const scored=candidates.map((r,i)=>({
+        r,v:vectors[i],
+        p:Number.isFinite(r.learnedItalicProbability)?r.learnedItalicProbability:.5
+      }));
+      // Seed from the strongest non-single learned candidate, but do not let
+      // classifier score alone control the rest of the hunt.
+      scored.sort((a,b)=>b.p-a.p);
+      const picked=[], remaining=[...scored];
+      if(remaining.length) picked.push(remaining.shift());
+      const target=Math.min(250, scored.length);
+      while(picked.length<target && remaining.length){
+        let bestIndex=0,best=-Infinity;
+        for(let i=0;i<remaining.length;i++){
+          const c=remaining[i];
+          const minD=Math.min(...picked.map(p=>distance(c.v,p.v)));
+          // Diversity dominates; modest learned evidence breaks ties.
+          const score=minD*0.82+c.p*0.18;
+          if(score>best){best=score;bestIndex=i;}
+        }
+        picked.push(remaining.splice(bestIndex,1)[0]);
+      }
+      const pickedRuns=picked.map(x=>x.r);
+      const pickedSet=new Set(pickedRuns);
+      supervisedReviewSet.splice(0,supervisedReviewSet.length,...pickedRuns,...candidates.filter(r=>!pickedSet.has(r)));
+      supervisedReviewSet.forEach(r=>r.activeLearningReason="italic-hunt-diverse");
+    }
+
     supervisedReviewSet.forEach(r=>{
       r.reviewLabel=null;
       r.reviewInstruction='Spoiler-safe human typography label: ITALIC, ROMAN, or UNSURE.';
@@ -7708,7 +7758,7 @@ ${coverSpine}${spine.join("\n")}
 
     const queue = state.italicCalibrationReviewSet || [];
     setStatus(queue.length
-      ? `Built ${mode === "learned" ? "learned-ranked" : "random"} spoiler-safe review from ${queue.length} unique measured OCR specimens.`
+      ? `Built ${mode === "learned" ? "learned-ranked" : mode === "hunt" ? "diversity-ranked Italic Hunt" : "random"} spoiler-safe review from ${queue.length} unique measured OCR specimens.`
       : "No eligible review specimens were produced. Typography measurements are present, but the review population is empty.");
 
     els.italicCalibrationReview?.scrollIntoView({behavior:"smooth", block:"start"});
@@ -7723,6 +7773,11 @@ ${coverSpine}${spine.join("\n")}
     els.italicReviewRandomBtn.disabled=true;
     try { await launchItalicLearningReview("random"); }
     finally { els.italicReviewRandomBtn.disabled=false; }
+  });
+  els.italicReviewHuntBtn?.addEventListener("click", async () => {
+    els.italicReviewHuntBtn.disabled=true;
+    try { await launchItalicLearningReview("hunt"); }
+    finally { els.italicReviewHuntBtn.disabled=false; }
   });
   updatePreview();
 })();
