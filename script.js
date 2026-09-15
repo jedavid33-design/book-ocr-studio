@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "44";
+  const BUILD_VERSION = "45";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -3753,12 +3753,50 @@
     const rightEdgeShear = edgeShear('right');
     const aspectRatio = w / Math.max(1, h);
 
+    // Build 45 positive-control instrumentation. These richer shape features are
+    // diagnostic-only. They are exported for known Iowan italic spans and their
+    // local roman neighbors; they never create <i> markup.
+    const bandOccupancy = [0,1,2,3].map(band => {
+      const ya = Math.floor(h * band / 4), yb = Math.max(ya + 1, Math.floor(h * (band + 1) / 4));
+      let ink = 0, total = Math.max(1, (yb - ya) * w);
+      for (let y=ya; y<yb; y++) ink += rows[y]?.length || 0;
+      return ink / total;
+    });
+    const edgeBandMedian = (key, band) => {
+      const ya = h * band / 3, yb = h * (band + 1) / 3;
+      return median(edgeSeries.filter(r => r.y >= ya && r.y < yb).map(r => r[key]));
+    };
+    const leftEdgeBands = [0,1,2].map(b => edgeBandMedian('left', b));
+    const rightEdgeBands = [0,1,2].map(b => edgeBandMedian('right', b));
+    const centerDeltas = [];
+    for (let i=1;i<rowCenters.length;i++) {
+      const dy = rowCenters[i].y - rowCenters[i-1].y;
+      if (dy > 0) centerDeltas.push((rowCenters[i].center-rowCenters[i-1].center)/dy);
+    }
+    const orientationHistogram = { left:0, neutral:0, right:0 };
+    centerDeltas.forEach(d => { if (d < -0.18) orientationHistogram.left++; else if (d > 0.18) orientationHistogram.right++; else orientationHistogram.neutral++; });
+    const orientationTotal = Math.max(1, centerDeltas.length);
+    Object.keys(orientationHistogram).forEach(k => orientationHistogram[k] /= orientationTotal);
+    const activeCols = new Array(w).fill(false);
+    for (let x=0;x<w;x++) {
+      let n=0; for (let y=0;y<h;y++) if (gray[y*w+x] < threshold) n++;
+      activeCols[x] = n >= Math.max(1, Math.floor(h*0.04));
+    }
+    const columnComponents=[];
+    for (let x=0;x<w;) {
+      while(x<w && !activeCols[x]) x++; if(x>=w) break;
+      const a=x; while(x<w && activeCols[x]) x++; columnComponents.push(x-a);
+    }
+    const componentWidthMedian = median(columnComponents);
+    const componentWidthSpread = columnComponents.length ? Math.max(...columnComponents)-Math.min(...columnComponents) : 0;
+
     // Conservative by design: this legacy flag still describes only the old
     // overlap-based full-line signal. Iowan inline acceptance happens later.
     const italic = Math.abs(bestSlant) >= 0.12 && gain >= 0.018 && bestScore >= 0.38;
     return { italic, slant: bestSlant, gain, score: bestScore, zeroScore, shear, shearStrength,
       inkDensity, medianRowWidth, upperMedianWidth, lowerMedianWidth, topBottomWidthRatio,
-      leftEdgeShear, rightEdgeShear, aspectRatio };
+      leftEdgeShear, rightEdgeShear, aspectRatio, bandOccupancy, leftEdgeBands, rightEdgeBands,
+      orientationHistogram, componentCount:columnComponents.length, componentWidthMedian, componentWidthSpread };
   }
 
   function estimateWordBoxes(line) {
@@ -4199,7 +4237,7 @@
             });
           }
           line.italicRunMeta = runs;
-          line.italicWordMeta = prelim.map(({text,start,end,letters,candidate,italic,slant,gain,score,zeroScore,shear,shearStrength,inkDensity,medianRowWidth,upperMedianWidth,lowerMedianWidth,topBottomWidthRatio,leftEdgeShear,rightEdgeShear,aspectRatio,localNeighborCount,localMedianAbsSlant,localMedianGain,localMedianAbsShear,localSlantLift,localGainLift,localShearLift}) => ({text,start,end,letters,candidate,italic,slant,gain,score,zeroScore,shear,shearStrength,inkDensity,medianRowWidth,upperMedianWidth,lowerMedianWidth,topBottomWidthRatio,leftEdgeShear,rightEdgeShear,aspectRatio,localNeighborCount,localMedianAbsSlant,localMedianGain,localMedianAbsShear,localSlantLift,localGainLift,localShearLift}));
+          line.italicWordMeta = prelim.map(({text,start,end,box,letters,candidate,italic,slant,gain,score,zeroScore,shear,shearStrength,inkDensity,medianRowWidth,upperMedianWidth,lowerMedianWidth,topBottomWidthRatio,leftEdgeShear,rightEdgeShear,aspectRatio,bandOccupancy,leftEdgeBands,rightEdgeBands,orientationHistogram,componentCount,componentWidthMedian,componentWidthSpread,localNeighborCount,localMedianAbsSlant,localMedianGain,localMedianAbsShear,localSlantLift,localGainLift,localShearLift}) => ({text,start,end,box,letters,candidate,italic,slant,gain,score,zeroScore,shear,shearStrength,inkDensity,medianRowWidth,upperMedianWidth,lowerMedianWidth,topBottomWidthRatio,leftEdgeShear,rightEdgeShear,aspectRatio,bandOccupancy,leftEdgeBands,rightEdgeBands,orientationHistogram,componentCount,componentWidthMedian,componentWidthSpread,localNeighborCount,localMedianAbsSlant,localMedianGain,localMedianAbsShear,localSlantLift,localGainLift,localShearLift}));
           line.italicText = buildItalicText(text, prelim);
           const acceptedRuns = runs.filter(r=>r.accepted).length;
           const acceptedWords = prelim.filter(x=>x.italic).length;
@@ -4486,8 +4524,39 @@
     state.italicCalibrationReviewSet = supervisedReviewSet;
     renderItalicCalibrationReview();
 
+    // Build 45: explicit frozen-corpus positive controls. Match by normalized
+    // word sequence, never by detector candidacy, then export the positive words
+    // plus up to three roman neighbors on either side from the same OCR line.
+    const normToken = t => String(t||"").toLowerCase().replace(/[^a-z]+/g,"");
+    const knownPositiveSpecs = [
+      { id:"legacy-c1-hurry", label:"ITALIC", tokens:["hurry","john","i","need","to","come"] },
+      { id:"legacy-c1-keep", label:"ITALIC", tokens:["keep","it","all"] },
+    ];
+    const positiveControls=[];
+    lineGroups.forEach((peers,key) => {
+      const ordered=[...peers].sort((a,b)=>Number(a.wordIndex||0)-Number(b.wordIndex||0));
+      const nt=ordered.map(w=>normToken(w.text));
+      knownPositiveSpecs.forEach(spec => {
+        for(let start=0; start<=ordered.length-spec.tokens.length; start++) {
+          if(!spec.tokens.every((t,j)=>nt[start+j]===t)) continue;
+          const before=ordered.slice(Math.max(0,start-3),start);
+          const positive=ordered.slice(start,start+spec.tokens.length);
+          const after=ordered.slice(start+spec.tokens.length,Math.min(ordered.length,start+spec.tokens.length+3));
+          const pack=(w,groundTruth)=>({ ...w, groundTruth, normalizedToken:normToken(w.text) });
+          positiveControls.push({
+            id:spec.id, groundTruth:spec.label, pageIndex:ordered[0].pageIndex, pageNumber:ordered[0].pageNumber,
+            fileName:ordered[0].fileName, lineIndex:ordered[0].lineIndex, fullLineText:ordered[0].text,
+            matchedText:positive.map(w=>w.text).join(" "),
+            romanBefore:before.map(w=>pack(w,"ROMAN_NEIGHBOR")),
+            positiveWords:positive.map(w=>pack(w,"ITALIC")),
+            romanAfter:after.map(w=>pack(w,"ROMAN_NEIGHBOR"))
+          });
+        }
+      });
+    });
+
     const payload = {
-      format: "book-ocr-studio-italic-calibration-v14",
+      format: "book-ocr-studio-italic-calibration-v15",
       buildVersion: BUILD_VERSION,
       exportedAt: new Date().toISOString(),
       summary: {
@@ -4533,8 +4602,10 @@
         cloudIowanRobustLineNormalizationDiagnosticOnly: true,
         cloudIowanRunCalibrationRankingDiagnosticOnly: true,
         cloudIowanSupervisedReviewSetDiagnosticOnly: true,
+        cloudIowanKnownPositiveInstrumentationDiagnosticOnly: true,
+        cloudIowanKnownPositiveSpecs: ["Hurry John I need to come", "Keep it all"],
         cloudIowanSupervisedRankingOrder: "v44-diverse-human-label-sampler/length-aware-density/no-corroboration-gate/shear-weak",
-        calibrationFeatures: ["slant","gain","score","shear","shearStrength","inkDensity","medianRowWidth","upperMedianWidth","lowerMedianWidth","topBottomWidthRatio","leftEdgeShear","rightEdgeShear","aspectRatio","localSlantLift","localGainLift","localShearLift"],
+        calibrationFeatures: ["slant","gain","score","shear","shearStrength","inkDensity","medianRowWidth","upperMedianWidth","lowerMedianWidth","topBottomWidthRatio","leftEdgeShear","rightEdgeShear","aspectRatio","bandOccupancy","leftEdgeBands","rightEdgeBands","orientationHistogram","componentCount","componentWidthMedian","componentWidthSpread","localSlantLift","localGainLift","localShearLift"],
         cloudIowanTokenSplitAtDash: true,
       },
       topLineCandidatesByGain: rankedLines.slice(0, 100),
@@ -4542,6 +4613,7 @@
       topLocalCalibrationCandidates: calibrationWords.slice(0, 300),
       topRunCalibrationCandidates: calibrationRuns.slice(0, 300),
       supervisedCalibrationReviewSet: supervisedReviewSet,
+      knownPositiveControls: positiveControls,
       acceptedRuns: runs.filter(x => x.accepted),
       rejectedRuns: runs.filter(x => !x.accepted),
       lines,

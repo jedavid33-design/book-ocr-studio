@@ -1,9 +1,9 @@
-// Book OCR Studio 44 loader. Keeps the review-toggle compatibility patch.
+// Book OCR Studio 45 loader. Keeps the review-toggle compatibility patch.
 // Keeps the existing script.js intact, injects the two missing click handlers,
 // then runs the patched source.
 
 (async () => {
-  const response = await fetch("./script.js?v=44", { cache: "no-store" });
+  const response = await fetch("./script.js?v=45", { cache: "no-store" });
   if (!response.ok) {
     throw new Error(`Could not load script.js (${response.status})`);
   }
@@ -24,7 +24,7 @@
   }
 
   source = source.replace(anchor, replacement);
-  source += "\n//# sourceURL=book-ocr-studio-44.js";
+  source += "\n//# sourceURL=book-ocr-studio-45.js";
 
   (0, eval)(source);
 })().catch((err) => {
