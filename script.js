@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "59";
+  const BUILD_VERSION = "60";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -7428,26 +7428,12 @@ ${coverSpine}${spine.join("\n")}
         els.cropSides.value = 0;
       }
       syncCropPresetUi();
-    
-  els.italicReviewLearnedBtn?.addEventListener("click",()=>{
-    state.italicReviewSelectionMode="learned"; state.italicReviewHistory=[]; downloadItalicDiagnostics(false);
-  });
-  els.italicReviewRandomBtn?.addEventListener("click",()=>{
-    state.italicReviewSelectionMode="random"; state.italicReviewHistory=[]; downloadItalicDiagnostics(false);
-  });
   updatePreview();
     });
   });
 
   [els.cropTop, els.cropBottom, els.cropSides].forEach(input => input.addEventListener("input", () => {
     syncCropPresetUi();
-  
-  els.italicReviewLearnedBtn?.addEventListener("click",()=>{
-    state.italicReviewSelectionMode="learned"; state.italicReviewHistory=[]; downloadItalicDiagnostics(false);
-  });
-  els.italicReviewRandomBtn?.addEventListener("click",()=>{
-    state.italicReviewSelectionMode="random"; state.italicReviewHistory=[]; downloadItalicDiagnostics(false);
-  });
   updatePreview();
   }));
 
@@ -7531,13 +7517,6 @@ ${coverSpine}${spine.join("\n")}
     renderReview();
     refreshParagraphRebuildUi();
     syncCropPresetUi();
-  
-  els.italicReviewLearnedBtn?.addEventListener("click",()=>{
-    state.italicReviewSelectionMode="learned"; state.italicReviewHistory=[]; downloadItalicDiagnostics(false);
-  });
-  els.italicReviewRandomBtn?.addEventListener("click",()=>{
-    state.italicReviewSelectionMode="random"; state.italicReviewHistory=[]; downloadItalicDiagnostics(false);
-  });
   updatePreview();
     setStatus("Add screenshots to begin.");
   });
@@ -7595,6 +7574,18 @@ ${coverSpine}${spine.join("\n")}
   els.autoItalicScan?.addEventListener("click", autoScanItalics);
   els.downloadItalicDiagnostics?.addEventListener("click", () => downloadItalicDiagnostics(true));
   els.openItalicCalibrationReview?.addEventListener("click", openItalicCalibrationReview);
+  els.italicReviewLearnedBtn?.addEventListener("click",()=>{
+    state.italicReviewSelectionMode="learned";
+    state.italicReviewHistory=[];
+    downloadItalicDiagnostics(false);
+    openItalicCalibrationReview();
+  });
+  els.italicReviewRandomBtn?.addEventListener("click",()=>{
+    state.italicReviewSelectionMode="random";
+    state.italicReviewHistory=[];
+    downloadItalicDiagnostics(false);
+    openItalicCalibrationReview();
+  });
   els.exportItalicCalibrationLabels?.addEventListener("click", exportItalicCalibrationLabels);
   els.exportItalicLearning?.addEventListener("click", exportItalicLearningProfile);
   els.importItalicLearning?.addEventListener("click", ()=>els.importItalicLearningFile?.click());
@@ -7630,14 +7621,6 @@ ${coverSpine}${spine.join("\n")}
   });
   window.addEventListener("unhandledrejection", (event) => {
     console.error("Book OCR Studio promise error", event.reason);
-  });
-
-
-  els.italicReviewLearnedBtn?.addEventListener("click",()=>{
-    state.italicReviewSelectionMode="learned"; state.italicReviewHistory=[]; downloadItalicDiagnostics(false);
-  });
-  els.italicReviewRandomBtn?.addEventListener("click",()=>{
-    state.italicReviewSelectionMode="random"; state.italicReviewHistory=[]; downloadItalicDiagnostics(false);
   });
   updatePreview();
 })();
