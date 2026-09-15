@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "61";
+  const BUILD_VERSION = "62";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -131,7 +131,6 @@
     safePolish: $("safePolish"),
     autoItalicScan: $("autoItalicScan"),
     downloadItalicDiagnostics: $("downloadItalicDiagnostics"),
-    openItalicCalibrationReview: $("openItalicCalibrationReview"),
     exportItalicCalibrationLabels: $("exportItalicCalibrationLabels"),
     exportItalicLearning: $("exportItalicLearning"),
     importItalicLearning: $("importItalicLearning"),
@@ -5021,7 +5020,6 @@
   function renderItalicCalibrationReview() {
     if (!els.italicCalibrationReview || !els.italicCalibrationReviewList) return;
     const runs = state.italicCalibrationReviewSet || [];
-    els.italicCalibrationReview.classList.toggle("hidden", !runs.length);
     els.italicCalibrationReviewList.innerHTML = "";
 
     const consumedWords = consumedItalicCalibrationWords();
@@ -5084,10 +5082,12 @@
       });
       els.italicCalibrationReviewList.appendChild(card);
       renderSpoilerSafeItalicCrop(card.querySelector(".italic-spoiler-specimen"), run);
-    } else if (runs.length) {
+    } else {
       const done=document.createElement("div");
       done.className="italic-calibration-card";
-      done.innerHTML='<strong>Review queue complete.</strong><div class="hint">No unseen, non-overlapping spoiler-safe specimens remain in this scan.</div>';
+      done.innerHTML = runs.length
+        ? '<strong>Review queue complete.</strong><div class="hint">No unseen, non-overlapping spoiler-safe specimens remain in this queue.</div>'
+        : '<strong>Ready for review.</strong><div class="hint">Choose Learned review or Random review above. Existing OCR data is enough; Repair Book and Final Polish are not prerequisites.</div>';
       els.italicCalibrationReviewList.appendChild(done);
     }
 
@@ -7573,7 +7573,6 @@ ${coverSpine}${spine.join("\n")}
   els.safePolish?.addEventListener("click", applySafePolishToProject);
   els.autoItalicScan?.addEventListener("click", autoScanItalics);
   els.downloadItalicDiagnostics?.addEventListener("click", () => downloadItalicDiagnostics(true));
-  els.openItalicCalibrationReview?.addEventListener("click", openItalicCalibrationReview);
   els.exportItalicCalibrationLabels?.addEventListener("click", exportItalicCalibrationLabels);
   els.exportItalicLearning?.addEventListener("click", exportItalicLearningProfile);
   els.importItalicLearning?.addEventListener("click", ()=>els.importItalicLearningFile?.click());
@@ -7610,49 +7609,26 @@ ${coverSpine}${spine.join("\n")}
   window.addEventListener("unhandledrejection", (event) => {
     console.error("Book OCR Studio promise error", event.reason);
   });
+
+  function launchItalicLearningReview(mode) {
+    if (state.sourceProfile !== "cloud-iowan") {
+      setStatus("Italic learning review currently uses the CloudLibrary / Iowan Old Style profile.");
+      return;
+    }
+    if (!state.pages?.length) {
+      setStatus("Load a project with saved OCR pages before starting italic review.");
+      return;
+    }
+    state.italicReviewSelectionMode = mode;
+    state.italicReviewHistory = [];
+    downloadItalicDiagnostics(false); // rebuilds queue from saved OCR; does not re-OCR
+    renderItalicCalibrationReview();
+    els.italicCalibrationReview?.scrollIntoView({behavior:"smooth", block:"start"});
+  }
+
+  els.italicReviewLearnedBtn?.addEventListener("click", () => launchItalicLearningReview("learned"));
+  els.italicReviewRandomBtn?.addEventListener("click", () => launchItalicLearningReview("random"));
   updatePreview();
 })();
 
-
-/* BUILD 61: robust Italic Review & Learning button bridge.
-   Review can be launched from existing OCR state; Repair/Final Polish are not prerequisites. */
-(function installItalicReviewLaunchBridgeV61(){
-  if(window.__italicReviewLaunchBridgeV61) return;
-  window.__italicReviewLaunchBridgeV61=true;
-
-  function launch(mode){
-    try{
-      state.italicReviewSelectionMode=mode;
-      state.italicReviewHistory=[];
-      // Rebuild the review population from the already-loaded OCR/layout state.
-      // downloadItalicDiagnostics(false) is the established scan/queue builder and does not re-OCR.
-      if(typeof downloadItalicDiagnostics==="function"){
-        downloadItalicDiagnostics(false);
-      } else if(typeof openItalicCalibrationReview==="function"){
-        openItalicCalibrationReview();
-      } else {
-        setStatus?.("Italic review is unavailable until OCR pages are loaded.");
-        return;
-      }
-      // Ensure the review section is visible after queue construction.
-      requestAnimationFrame(()=>{
-        const review=document.getElementById("italicCalibrationReview");
-        review?.classList.remove("hidden");
-        review?.scrollIntoView({behavior:"smooth",block:"start"});
-      });
-    }catch(err){
-      console.error("Italic review launch failed",err);
-      if(typeof setStatus==="function") setStatus(`Italic review launch failed: ${err?.message||err}`);
-    }
-  }
-
-  document.addEventListener("click",(ev)=>{
-    const learned=ev.target.closest("#italicReviewLearnedBtn");
-    const random=ev.target.closest("#italicReviewRandomBtn");
-    if(!learned && !random) return;
-    ev.preventDefault();
-    ev.stopImmediatePropagation();
-    launch(learned?"learned":"random");
-  },true);
-})();
 
