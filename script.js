@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "51";
+  const BUILD_VERSION = "52";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -33,6 +33,7 @@
     cropPreviewIndex: 0,
     italicCalibrationReviewSet: [],
     italicCalibrationLabels: {},
+    italicLearningProfile: null,
   };
 
   let PaddleOCRClass = null;
@@ -130,6 +131,11 @@
     downloadItalicDiagnostics: $("downloadItalicDiagnostics"),
     openItalicCalibrationReview: $("openItalicCalibrationReview"),
     exportItalicCalibrationLabels: $("exportItalicCalibrationLabels"),
+    exportItalicLearning: $("exportItalicLearning"),
+    importItalicLearning: $("importItalicLearning"),
+    importItalicLearningFile: $("importItalicLearningFile"),
+    resetItalicLearning: $("resetItalicLearning"),
+    italicLearningStatus: $("italicLearningStatus"),
     italicCalibrationReview: $("italicCalibrationReview"),
     italicCalibrationReviewList: $("italicCalibrationReviewList"),
     italicCalibrationProgress: $("italicCalibrationProgress"),
@@ -4653,7 +4659,12 @@
         }
       }
     });
-    supervisedRuns.sort((a,b)=>b.supervisedScore-a.supervisedScore || b.wordCount-a.wordCount);
+    supervisedRuns.forEach(run=>{ run.learnedItalicProbability=italicLearnedProbability(run); });
+    supervisedRuns.sort((a,b)=>{
+      const ap=a.learnedItalicProbability, bp=b.learnedItalicProbability;
+      if(ap!=null && bp!=null && bp!==ap) return bp-ap;
+      return b.supervisedScore-a.supervisedScore || b.wordCount-a.wordCount;
+    });
 
     // Diversity, not a hard italic gate: reserve room for multiword spans,
     // ordinary lexical singletons, and legitimate short/single-glyph cases.
@@ -4779,6 +4790,100 @@
     return payload;
   }
 
+  // Build 52: persistent, profile-scoped supervised typography learning.
+  // Only visual/geometry measurements and human labels are retained. OCR words,
+  // book titles, page/chapter locations, and story context are deliberately excluded.
+  const ITALIC_LEARNING_KEY = "bookOcrStudioItalicLearningV1";
+  const ITALIC_FEATURE_NAMES = [
+    "structuralAverage","structuralMinimum","structuralConsistency","slantSupport","gainSupport","shearSupport",
+    "wordCount","meanInkDensityZ","meanAbsEdgeDelta","meanAbsWidthRatioDelta","meanLocalSlantLift","meanLocalGainLift","meanLocalShearLift"
+  ];
+
+  function italicLearningVector(run) {
+    const ws=Array.isArray(run?.words)?run.words:[];
+    const mean=(fn)=>ws.length?ws.reduce((a,w)=>a+Number(fn(w)||0),0)/ws.length:0;
+    return [
+      Number(run?.structuralAverage||0), Number(run?.structuralMinimum||0), Number(run?.structuralConsistency||0),
+      Number(run?.slantSupport||0), Number(run?.gainSupport||0), Number(run?.shearSupport||0), Number(run?.wordCount||ws.length||1),
+      mean(w=>Math.abs(Number(w.inkDensityZ||0))), mean(w=>Math.abs(Number(w.edgeDelta||0))), mean(w=>Math.abs(Number(w.widthRatioDelta||0))),
+      mean(w=>Math.max(0,Number(w.localSlantLift||0))), mean(w=>Math.max(0,Number(w.localGainLift||0))), mean(w=>Math.max(0,Number(w.localShearLift||0)))
+    ].map(v=>Number.isFinite(v)?v:0);
+  }
+
+  function loadItalicLearningStore() {
+    try { const x=JSON.parse(localStorage.getItem(ITALIC_LEARNING_KEY)||"{}"); return x&&typeof x==="object"?x:{}; } catch(_){ return {}; }
+  }
+  function saveItalicLearningStore(store) { try { localStorage.setItem(ITALIC_LEARNING_KEY,JSON.stringify(store)); } catch(err){ console.warn("Could not save italic learning profile",err); } }
+  function currentItalicLearningProfile() {
+    const store=loadItalicLearningStore();
+    const key=state.sourceProfile||"default";
+    const p=store[key]||{version:1,sourceProfile:key,featureNames:ITALIC_FEATURE_NAMES,examples:[]};
+    if(!Array.isArray(p.examples)) p.examples=[];
+    state.italicLearningProfile=p;
+    return p;
+  }
+  function saveItalicTrainingExample(run,label) {
+    if(label!=="ITALIC"&&label!=="ROMAN") return; // UNSURE never trains.
+    const store=loadItalicLearningStore(), key=state.sourceProfile||"default";
+    const p=store[key]||{version:1,sourceProfile:key,featureNames:ITALIC_FEATURE_NAMES,examples:[]};
+    if(!Array.isArray(p.examples)) p.examples=[];
+    const vector=italicLearningVector(run);
+    // Same visual specimen can be relabeled without creating duplicate training rows.
+    const specimenId=italicCalibrationKey(run);
+    const sessionSignature=checkpointSignature().map(signatureFileName).join("|");
+    const id=`${sessionSignature}::${specimenId}`;
+    const existing=p.examples.find(x=>x.id===id);
+    const example={id,label,vector,createdAt:existing?.createdAt||new Date().toISOString(),updatedAt:new Date().toISOString()};
+    if(existing) Object.assign(existing,example); else p.examples.push(example);
+    p.updatedAt=new Date().toISOString(); p.featureNames=ITALIC_FEATURE_NAMES;
+    store[key]=p; saveItalicLearningStore(store); state.italicLearningProfile=p;
+  }
+  function italicLearningStats() {
+    const p=currentItalicLearningProfile(), ex=p.examples||[];
+    return {total:ex.length,italic:ex.filter(x=>x.label==="ITALIC").length,roman:ex.filter(x=>x.label==="ROMAN").length};
+  }
+  function italicLearnedProbability(run) {
+    const p=currentItalicLearningProfile(), ex=(p.examples||[]).filter(x=>Array.isArray(x.vector)&&x.vector.length===ITALIC_FEATURE_NAMES.length);
+    if(ex.length<8 || !ex.some(x=>x.label==="ITALIC") || !ex.some(x=>x.label==="ROMAN")) return null;
+    const v=italicLearningVector(run), dims=v.length;
+    const scales=Array.from({length:dims},(_,i)=>{
+      const vals=ex.map(x=>Number(x.vector[i]||0)); const lo=Math.min(...vals), hi=Math.max(...vals); return Math.max(1e-6,hi-lo);
+    });
+    const near=ex.map(x=>{let d=0; for(let i=0;i<dims;i++){const z=(v[i]-Number(x.vector[i]||0))/scales[i]; d+=z*z;} return {x,d:Math.sqrt(d/dims)};})
+      .sort((a,b)=>a.d-b.d).slice(0,Math.min(11,ex.length));
+    let iw=0,rw=0; near.forEach(({x,d})=>{const w=1/(0.08+d); if(x.label==="ITALIC") iw+=w; else rw+=w;});
+    return iw+rw?iw/(iw+rw):null;
+  }
+  function updateItalicLearningUi() {
+    const st=italicLearningStats();
+    if(els.italicLearningStatus) els.italicLearningStatus.textContent=`Learned: ${st.italic} italic · ${st.roman} Roman`;
+  }
+  function exportItalicLearningProfile() {
+    const p=currentItalicLearningProfile();
+    const payload={format:"book-ocr-studio-italic-learning-v1",buildVersion:BUILD_VERSION,exportedAt:new Date().toISOString(),profile:p};
+    downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),`ocr-studio-${cleanFilename(state.sourceProfile||"profile")}-italic-learning.json`);
+    setStatus(`Exported ${p.examples.length} persistent typography training examples.`);
+  }
+  function importItalicLearningProfileFile(file) {
+    if(!file) return;
+    const reader=new FileReader(); reader.onload=()=>{ try {
+      const payload=JSON.parse(String(reader.result||"{}")), p=payload?.profile;
+      if(payload?.format!=="book-ocr-studio-italic-learning-v1"||!p||!Array.isArray(p.examples)) throw new Error("Not an OCR Studio italic learning profile");
+      if(p.sourceProfile!==state.sourceProfile) throw new Error(`This profile is for ${p.sourceProfile}, not ${state.sourceProfile}`);
+      const clean=p.examples.filter(x=>(x.label==="ITALIC"||x.label==="ROMAN")&&Array.isArray(x.vector)&&x.vector.length===ITALIC_FEATURE_NAMES.length)
+        .map(x=>({id:String(x.id||crypto.randomUUID()),label:x.label,vector:x.vector.map(Number),createdAt:x.createdAt||new Date().toISOString(),updatedAt:x.updatedAt||new Date().toISOString()}));
+      const store=loadItalicLearningStore(), cur=currentItalicLearningProfile();
+      const byId=new Map((cur.examples||[]).map(x=>[x.id,x])); clean.forEach(x=>byId.set(x.id,x));
+      store[state.sourceProfile]={version:1,sourceProfile:state.sourceProfile,featureNames:ITALIC_FEATURE_NAMES,examples:[...byId.values()],updatedAt:new Date().toISOString()};
+      saveItalicLearningStore(store); updateItalicLearningUi(); setStatus(`Imported typography learning profile. ${italicLearningStats().total} examples are now available.`);
+    } catch(err){ alert(err.message||err); } }; reader.readAsText(file);
+  }
+  function resetItalicLearningProfile() {
+    const st=italicLearningStats(); if(!st.total) return;
+    if(!confirm(`Reset all ${st.total} learned typography examples for ${state.sourceProfile}? This cannot be undone unless you exported them.`)) return;
+    const store=loadItalicLearningStore(); delete store[state.sourceProfile]; saveItalicLearningStore(store); state.italicLearningProfile=null; updateItalicLearningUi(); setStatus("Italic learning profile reset for this OCR source profile.");
+  }
+
   function italicCalibrationKey(run) {
     return `${run.pageIndex}:${run.lineIndex}:${run.startWordIndex}:${run.endWordIndex}`;
   }
@@ -4835,7 +4940,7 @@
       const card = document.createElement("div");
       card.className = "italic-calibration-card spoiler-safe-italic-card";
       card.innerHTML = `
-        <div class="italic-calibration-title"><strong>Specimen ${displayIndex + 1}</strong><span class="badge">spoiler-safe</span></div>
+        <div class="italic-calibration-title"><strong>Specimen ${displayIndex + 1}</strong><span class="badge">spoiler-safe</span>${run.learnedItalicProbability==null?"":`<span class="badge">learned ${Math.round(run.learnedItalicProbability*100)}%</span>`}</div>
         <div class="italic-spoiler-specimen" aria-label="Isolated typography specimen"><span class="hint">Loading isolated specimen…</span></div>
         <div class="italic-calibration-actions">
           <button class="button ${label==='ITALIC'?'primary':'secondary'}" data-label="ITALIC">Italic</button>
@@ -4844,6 +4949,8 @@
         </div>`;
       card.querySelectorAll("[data-label]").forEach(btn => btn.addEventListener("click", () => {
         state.italicCalibrationLabels[key] = btn.dataset.label;
+        saveItalicTrainingExample(run, btn.dataset.label);
+        updateItalicLearningUi();
         renderItalicCalibrationReview();
       }));
       els.italicCalibrationReviewList.appendChild(card);
@@ -7333,6 +7440,11 @@ ${coverSpine}${spine.join("\n")}
   els.downloadItalicDiagnostics?.addEventListener("click", () => downloadItalicDiagnostics(true));
   els.openItalicCalibrationReview?.addEventListener("click", openItalicCalibrationReview);
   els.exportItalicCalibrationLabels?.addEventListener("click", exportItalicCalibrationLabels);
+  els.exportItalicLearning?.addEventListener("click", exportItalicLearningProfile);
+  els.importItalicLearning?.addEventListener("click", ()=>els.importItalicLearningFile?.click());
+  els.importItalicLearningFile?.addEventListener("change", ()=>{ importItalicLearningProfileFile(els.importItalicLearningFile.files?.[0]); els.importItalicLearningFile.value=""; });
+  els.resetItalicLearning?.addEventListener("click", resetItalicLearningProfile);
+  updateItalicLearningUi();
   els.repairLigatures.addEventListener("click", runSplitLigaturePolish);
 
   els.rebuildParagraphs?.addEventListener("click", () => rebuildParagraphsFromSavedGeometry({ confirmOverwrite: true }));
