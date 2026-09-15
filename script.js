@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "60";
+  const BUILD_VERSION = "61";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -7574,18 +7574,6 @@ ${coverSpine}${spine.join("\n")}
   els.autoItalicScan?.addEventListener("click", autoScanItalics);
   els.downloadItalicDiagnostics?.addEventListener("click", () => downloadItalicDiagnostics(true));
   els.openItalicCalibrationReview?.addEventListener("click", openItalicCalibrationReview);
-  els.italicReviewLearnedBtn?.addEventListener("click",()=>{
-    state.italicReviewSelectionMode="learned";
-    state.italicReviewHistory=[];
-    downloadItalicDiagnostics(false);
-    openItalicCalibrationReview();
-  });
-  els.italicReviewRandomBtn?.addEventListener("click",()=>{
-    state.italicReviewSelectionMode="random";
-    state.italicReviewHistory=[];
-    downloadItalicDiagnostics(false);
-    openItalicCalibrationReview();
-  });
   els.exportItalicCalibrationLabels?.addEventListener("click", exportItalicCalibrationLabels);
   els.exportItalicLearning?.addEventListener("click", exportItalicLearningProfile);
   els.importItalicLearning?.addEventListener("click", ()=>els.importItalicLearningFile?.click());
@@ -7624,3 +7612,47 @@ ${coverSpine}${spine.join("\n")}
   });
   updatePreview();
 })();
+
+
+/* BUILD 61: robust Italic Review & Learning button bridge.
+   Review can be launched from existing OCR state; Repair/Final Polish are not prerequisites. */
+(function installItalicReviewLaunchBridgeV61(){
+  if(window.__italicReviewLaunchBridgeV61) return;
+  window.__italicReviewLaunchBridgeV61=true;
+
+  function launch(mode){
+    try{
+      state.italicReviewSelectionMode=mode;
+      state.italicReviewHistory=[];
+      // Rebuild the review population from the already-loaded OCR/layout state.
+      // downloadItalicDiagnostics(false) is the established scan/queue builder and does not re-OCR.
+      if(typeof downloadItalicDiagnostics==="function"){
+        downloadItalicDiagnostics(false);
+      } else if(typeof openItalicCalibrationReview==="function"){
+        openItalicCalibrationReview();
+      } else {
+        setStatus?.("Italic review is unavailable until OCR pages are loaded.");
+        return;
+      }
+      // Ensure the review section is visible after queue construction.
+      requestAnimationFrame(()=>{
+        const review=document.getElementById("italicCalibrationReview");
+        review?.classList.remove("hidden");
+        review?.scrollIntoView({behavior:"smooth",block:"start"});
+      });
+    }catch(err){
+      console.error("Italic review launch failed",err);
+      if(typeof setStatus==="function") setStatus(`Italic review launch failed: ${err?.message||err}`);
+    }
+  }
+
+  document.addEventListener("click",(ev)=>{
+    const learned=ev.target.closest("#italicReviewLearnedBtn");
+    const random=ev.target.closest("#italicReviewRandomBtn");
+    if(!learned && !random) return;
+    ev.preventDefault();
+    ev.stopImmediatePropagation();
+    launch(learned?"learned":"random");
+  },true);
+})();
+

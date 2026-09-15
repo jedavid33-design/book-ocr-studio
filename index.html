@@ -18,7 +18,7 @@
 <body>
 <header class="topbar">
 <div>
-<div class="build-identifier" id="buildIdentifier">BUILD 60</div>
+<div class="build-identifier" id="buildIdentifier">BUILD 61</div>
 <h1>Book OCR Studio</h1>
 <p class="subhead">Crop screenshots, OCR them one page at a time, batch OCR the whole book, review chapter starts or any page, and export TXT or EPUB.</p>
 </div>
@@ -180,30 +180,6 @@
 <div class="review-list" id="finalPolishReviewList"></div>
 </div>
 </details>
-</div><div class="subcard italic-learning-card">
-<h3>Italic Review &amp; Learning</h3>
-<p class="hint">Spoiler-safe typography review after Final Polish. Learned review ranks unseen specimens from this OCR/font profile; Random review samples without relying on the learner. Italic and Roman labels train the profile across books; Unsure skips training. Labels are still training-only and do not change EPUB formatting yet.</p>
-<div class="actions">
-<button class="button primary" id="openItalicCalibrationReview" type="button">Spoiler-safe italic review</button>
-<button class="button secondary" id="italicReviewLearnedBtn" type="button">Learned review</button>
-<button class="button secondary" id="italicReviewRandomBtn" type="button">Random review</button>
-<span class="progress-pill" id="italicLearningStatus">Learned: 0 italic · 0 Roman</span>
-</div>
-<div class="actions">
-<button class="button secondary" id="exportItalicLearning" type="button">Export learning</button>
-<button class="button secondary" id="importItalicLearning" type="button">Import learning</button>
-<input class="hidden" id="importItalicLearningFile" type="file" accept="application/json,.json"/>
-<button class="button secondary" id="resetItalicLearning" type="button">Reset learning</button>
-</div>
-<div class="italic-calibration-review hidden" id="italicCalibrationReview">
-  <div class="italic-calibration-head"><strong>Spoiler-safe Italic Review</strong><span class="progress-pill" id="italicCalibrationProgress">0 / 0 labeled</span></div>
-  <div class="actions">
-    <button class="button secondary" id="italicReviewLearnedBtn" type="button">Learned review</button>
-    <button class="button secondary" id="italicReviewRandomBtn" type="button">Random review</button>
-  </div>
-  <p class="hint">Learned review ranks all unseen OCR specimens from the persistent visual training profile; Random review remains available as an unbiased fallback. OCR text, page/line location, surrounding words, and story order stay hidden. Italic and Roman train this OCR/font profile across books; Unsure skips training. Split mixed specimens into OCR-word pieces. Labels still do not change EPUB formatting yet.</p>
-  <div class="review-list" id="italicCalibrationReviewList"></div>
-</div>
 </div></section><details class="card hidden advanced-collapsible" id="advancedSection"><summary class="advanced-summary">7. Advanced</summary><div class="advanced-body"><p class="hint advanced-label"><strong>Diagnostics and individual tools</strong> · Use these when testing a build or rerunning one stage manually.</p><div class="subcard regression-card">
 <h3>Regression Check</h3>
 <p class="hint">Inspection only. Checks paragraph sanity, text continuity, cleanup normalization, scene breaks, split ligatures, layout geometry, dropcaps, and italic sanity without changing the book. The original 20-page IMG_2701–IMG_2720 test set also gets its known layout-profile checks.</p>
@@ -227,11 +203,25 @@
 <button class="button secondary" id="safePolish" type="button">Safe text cleanup</button>
 <button class="button secondary" id="autoItalicScan" type="button">Auto italic scan</button>
 <button class="button secondary" id="downloadItalicDiagnostics" type="button">Download italic calibration diagnostics</button>
+<button class="button secondary" id="openItalicCalibrationReview" type="button">Spoiler-safe italic review</button>
 <button class="button secondary" id="exportItalicCalibrationLabels" type="button" disabled>Export italic labels</button>
+<button class="button secondary" id="exportItalicLearning" type="button">Export learning</button>
+<button class="button secondary" id="importItalicLearning" type="button">Import learning</button>
+<input class="hidden" id="importItalicLearningFile" type="file" accept="application/json,.json"/>
+<button class="button secondary" id="resetItalicLearning" type="button">Reset learning</button>
+<span class="progress-pill" id="italicLearningStatus">Learned: 0 italic · 0 Roman</span>
 <span class="progress-pill" id="polishStatus">Not run</span>
 <span class="progress-pill" id="italicStatus">Italics not scanned</span>
 </div>
-
+<div class="italic-calibration-review hidden" id="italicCalibrationReview">
+  <div class="italic-calibration-head"><strong>Spoiler-safe Italic Review</strong><span class="progress-pill" id="italicCalibrationProgress">0 / 0 labeled</span></div>
+  <div class="actions">
+    <button class="button secondary" id="italicReviewLearnedBtn" type="button">Learned review</button>
+    <button class="button secondary" id="italicReviewRandomBtn" type="button">Random review</button>
+  </div>
+  <p class="hint">Learned review ranks all unseen OCR specimens from the persistent visual training profile; Random review remains available as an unbiased fallback. OCR text, page/line location, surrounding words, and story order stay hidden. Italic and Roman train this OCR/font profile across books; Unsure skips training. Split mixed specimens into OCR-word pieces. Labels still do not change EPUB formatting yet.</p>
+  <div class="review-list" id="italicCalibrationReviewList"></div>
+</div>
 </div></div></details><details class="card hidden kindle-ready-section" id="kindleReadySection" open=""><summary class="kindle-ready-summary">8. Kindle Ready</summary><div class="kindle-ready-body"><p class="hint">Final preflight for a clean reflowable EPUB before Send to Kindle. This inspects the repaired/polished book and does not change text.</p><div class="actions"><button class="button primary" id="runKindleReady" type="button">Run Kindle Ready Check</button><span class="progress-pill" id="kindleReadyStatus">Not checked</span></div><div class="regression-results hidden" id="kindleReadyResults"></div></div></details><section class="card hidden" id="exportSection"><h2>9. Export</h2><div class="actions">
 <button class="button primary" id="downloadTxt" type="button">Download TXT</button>
 <button class="button secondary" id="downloadEpub" type="button">Download EPUB</button>
