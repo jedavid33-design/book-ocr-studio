@@ -13,12 +13,12 @@
 <link href="manifest.webmanifest" rel="manifest"/>
 <link href="apple-touch-icon.png" rel="apple-touch-icon"/>
 <link href="icon-192.png" rel="icon" sizes="192x192" type="image/png"/>
-<link href="styles.css?v=37" rel="stylesheet"/>
+<link href="styles.css?v=42" rel="stylesheet"/>
 </head>
 <body>
 <header class="topbar">
 <div>
-<div class="build-identifier" id="buildIdentifier">BUILD 41</div>
+<div class="build-identifier" id="buildIdentifier">BUILD 42</div>
 <h1>Book OCR Studio</h1>
 <p class="subhead">Crop screenshots, OCR them one page at a time, batch OCR the whole book, review chapter starts or any page, and export TXT or EPUB.</p>
 </div>
@@ -203,8 +203,15 @@
 <button class="button secondary" id="safePolish" type="button">Safe text cleanup</button>
 <button class="button secondary" id="autoItalicScan" type="button">Auto italic scan</button>
 <button class="button secondary" id="downloadItalicDiagnostics" type="button">Download italic calibration diagnostics</button>
+<button class="button secondary" id="openItalicCalibrationReview" type="button">Review Iowan italic calibration</button>
+<button class="button secondary" id="exportItalicCalibrationLabels" type="button" disabled>Export italic labels</button>
 <span class="progress-pill" id="polishStatus">Not run</span>
 <span class="progress-pill" id="italicStatus">Italics not scanned</span>
+</div>
+<div class="italic-calibration-review hidden" id="italicCalibrationReview">
+  <div class="italic-calibration-head"><strong>Iowan Italic Calibration Review</strong><span class="progress-pill" id="italicCalibrationProgress">0 / 0 labeled</span></div>
+  <p class="hint">Compare each ranked phrase with the frozen source screenshot. Label only what the screenshot visibly shows. These labels never change EPUB formatting.</p>
+  <div class="review-list" id="italicCalibrationReviewList"></div>
 </div>
 </div></div></details><details class="card hidden kindle-ready-section" id="kindleReadySection" open=""><summary class="kindle-ready-summary">8. Kindle Ready</summary><div class="kindle-ready-body"><p class="hint">Final preflight for a clean reflowable EPUB before Send to Kindle. This inspects the repaired/polished book and does not change text.</p><div class="actions"><button class="button primary" id="runKindleReady" type="button">Run Kindle Ready Check</button><span class="progress-pill" id="kindleReadyStatus">Not checked</span></div><div class="regression-results hidden" id="kindleReadyResults"></div></div></details><section class="card hidden" id="exportSection"><h2>9. Export</h2><div class="actions">
 <button class="button primary" id="downloadTxt" type="button">Download TXT</button>
@@ -245,7 +252,7 @@
 </dialog>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="epub-polish.js?v=37"></script>
-<script src="script-loader.js?v=37"></script>
+<script src="script-loader.js?v=42"></script>
 <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {

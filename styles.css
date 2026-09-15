@@ -893,3 +893,15 @@ dialog::backdrop { background: rgba(30,25,20,.48); backdrop-filter: blur(5px); }
 .preview-sample-label{flex:1;min-width:0;font-size:.8rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .compact-button{width:auto;padding:7px 10px;font-size:.78rem}
 select{width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:var(--card);color:var(--text);font:inherit}
+
+/* Build 42: diagnostic-only supervised Iowan italic labeling */
+.italic-calibration-review { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 14px; }
+.italic-calibration-head { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px; }
+.italic-calibration-card { border:1px solid var(--line); border-radius:14px; padding:12px; background:rgba(255,255,255,.82); }
+.italic-calibration-title { display:flex; flex-wrap:wrap; justify-content:space-between; gap:8px; align-items:center; }
+.italic-calibration-context { margin-top:10px; font-size:1.02rem; line-height:1.55; overflow-wrap:anywhere; }
+.italic-calibration-context mark { padding:2px 4px; border-radius:5px; background:#efe8f7; color:var(--ink); font-weight:800; }
+.italic-calibration-source { margin-top:8px; color:var(--muted); font-size:.82rem; line-height:1.4; overflow-wrap:anywhere; }
+.italic-calibration-metrics { margin-top:8px; color:var(--muted); font-size:.74rem; font-variant-numeric:tabular-nums; }
+.italic-calibration-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+.italic-calibration-actions .button { min-width:84px; }

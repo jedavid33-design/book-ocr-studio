@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "41";
+  const BUILD_VERSION = "42";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -31,6 +31,8 @@
     guidedRepairChapterIndex: 0,
     sourceProfile: "cloud-iowan",
     cropPreviewIndex: 0,
+    italicCalibrationReviewSet: [],
+    italicCalibrationLabels: {},
   };
 
   let PaddleOCRClass = null;
@@ -126,6 +128,11 @@
     safePolish: $("safePolish"),
     autoItalicScan: $("autoItalicScan"),
     downloadItalicDiagnostics: $("downloadItalicDiagnostics"),
+    openItalicCalibrationReview: $("openItalicCalibrationReview"),
+    exportItalicCalibrationLabels: $("exportItalicCalibrationLabels"),
+    italicCalibrationReview: $("italicCalibrationReview"),
+    italicCalibrationReviewList: $("italicCalibrationReviewList"),
+    italicCalibrationProgress: $("italicCalibrationProgress"),
     italicStatus: $("italicStatus"),
     polishStatus: $("polishStatus"),
     repairLigatures: $("repairLigatures"),
@@ -4228,7 +4235,7 @@
     }
   }
 
-  function downloadItalicDiagnostics() {
+  function downloadItalicDiagnostics(shouldDownload = true) {
     const lines = [];
     const words = [];
     const runs = [];
@@ -4423,9 +4430,11 @@
       if(supervisedReviewSet.length>=80) break;
     }
     supervisedReviewSet.forEach((r,i)=>r.supervisedRank=i+1);
+    state.italicCalibrationReviewSet = supervisedReviewSet;
+    renderItalicCalibrationReview();
 
     const payload = {
-      format: "book-ocr-studio-italic-calibration-v11",
+      format: "book-ocr-studio-italic-calibration-v12",
       buildVersion: BUILD_VERSION,
       exportedAt: new Date().toISOString(),
       summary: {
@@ -4486,9 +4495,73 @@
       words,
       runs,
     };
-    const safeTitle = cleanFilename(els.bookTitle?.value || "book");
-    downloadBlob(new Blob([JSON.stringify(payload, null, 2)], {type:"application/json"}), `${safeTitle}-italic-diagnostics.json`);
-    setStatus(`Downloaded word-level italic diagnostics: ${words.length} words, ${runs.length} candidate runs, ${runs.filter(x=>x.accepted).length} accepted. This file now reflects the same decisions the EPUB exporter uses.`);
+    if (shouldDownload) {
+      const safeTitle = cleanFilename(els.bookTitle?.value || "book");
+      downloadBlob(new Blob([JSON.stringify(payload, null, 2)], {type:"application/json"}), `${safeTitle}-italic-diagnostics.json`);
+      setStatus(`Downloaded word-level italic diagnostics: ${words.length} words, ${runs.length} candidate runs, ${runs.filter(x=>x.accepted).length} accepted. Supervised review set is ready for screenshot labeling.`);
+    } else {
+      setStatus(`Built ${supervisedReviewSet.length} diagnostic-only Iowan calibration cards. Compare them with the frozen screenshots and label Italic, Roman, or Unsure.`);
+    }
+    return payload;
+  }
+
+  function italicCalibrationKey(run) {
+    return `${run.pageIndex}:${run.lineIndex}:${run.startWordIndex}:${run.endWordIndex}`;
+  }
+
+  function renderItalicCalibrationReview() {
+    if (!els.italicCalibrationReview || !els.italicCalibrationReviewList) return;
+    const runs = state.italicCalibrationReviewSet || [];
+    els.italicCalibrationReview.classList.toggle("hidden", !runs.length);
+    els.italicCalibrationReviewList.innerHTML = "";
+    runs.forEach(run => {
+      const key = italicCalibrationKey(run);
+      const label = state.italicCalibrationLabels[key] || null;
+      const card = document.createElement("div");
+      card.className = "italic-calibration-card";
+      card.innerHTML = `
+        <div class="italic-calibration-title"><strong>#${run.supervisedRank} · Page ${run.pageNumber || Number(run.pageIndex)+1} · line ${Number(run.lineIndex)+1}</strong><span class="badge">score ${Number(run.supervisedScore||0).toFixed(3)}</span></div>
+        <div class="italic-calibration-context"><span>${escapeHtml(run.leftContext || "")}</span> <mark>${escapeHtml(run.text || "")}</mark> <span>${escapeHtml(run.rightContext || "")}</span></div>
+        <div class="italic-calibration-source">${escapeHtml(run.fullLineText || "")}</div>
+        <div class="italic-calibration-metrics">struct ${Number(run.structuralAverage||0).toFixed(3)} · consistency ${Number(run.structuralConsistency||0).toFixed(2)} · slant ${Number(run.slantSupport||0).toFixed(3)} · gain ${Number(run.gainSupport||0).toFixed(4)} · shear ${Number(run.shearSupport||0).toFixed(3)}</div>
+        <div class="italic-calibration-actions">
+          <button class="button ${label==='ITALIC'?'primary':'secondary'}" data-label="ITALIC">Italic</button>
+          <button class="button ${label==='ROMAN'?'primary':'secondary'}" data-label="ROMAN">Roman</button>
+          <button class="button ${label==='UNSURE'?'primary':'secondary'}" data-label="UNSURE">Unsure</button>
+        </div>`;
+      card.querySelectorAll("[data-label]").forEach(btn => btn.addEventListener("click", () => {
+        state.italicCalibrationLabels[key] = btn.dataset.label;
+        renderItalicCalibrationReview();
+      }));
+      els.italicCalibrationReviewList.appendChild(card);
+    });
+    const labeled = runs.filter(r => state.italicCalibrationLabels[italicCalibrationKey(r)]).length;
+    if (els.italicCalibrationProgress) els.italicCalibrationProgress.textContent = `${labeled} / ${runs.length} labeled`;
+    if (els.exportItalicCalibrationLabels) els.exportItalicCalibrationLabels.disabled = labeled === 0;
+  }
+
+  function openItalicCalibrationReview() {
+    if (state.sourceProfile !== "cloud-iowan") {
+      setStatus("The supervised calibration review is intentionally limited to CloudLibrary / Iowan Old Style.");
+      return;
+    }
+    downloadItalicDiagnostics(false);
+    els.italicCalibrationReview?.scrollIntoView({behavior:"smooth", block:"start"});
+  }
+
+  function exportItalicCalibrationLabels() {
+    const runs = state.italicCalibrationReviewSet || [];
+    if (!runs.length) { setStatus("Build the Iowan calibration review first."); return; }
+    const labeledRuns = runs.map(run => ({...run, reviewLabel: state.italicCalibrationLabels[italicCalibrationKey(run)] || null}));
+    const counts = labeledRuns.reduce((a,r)=>{ if(r.reviewLabel) a[r.reviewLabel]=(a[r.reviewLabel]||0)+1; return a; },{});
+    const payload = {
+      format:"book-ocr-studio-iowan-supervised-labels-v1", buildVersion:BUILD_VERSION, exportedAt:new Date().toISOString(),
+      sourceProfile:state.sourceProfile, summary:{total:labeledRuns.length,labeled:labeledRuns.filter(r=>r.reviewLabel).length,counts},
+      note:"Human screenshot-ground-truth labels. Diagnostic only; no EPUB italics were changed.", runs:labeledRuns
+    };
+    const safeTitle=cleanFilename(els.bookTitle?.value||"book");
+    downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),`${safeTitle}-iowan-italic-labels.json`);
+    setStatus(`Exported ${payload.summary.labeled} screenshot-grounded Iowan labels. Automatic Iowan italics remain disabled.`);
   }
 
 
@@ -6943,7 +7016,9 @@ ${coverSpine}${spine.join("\n")}
   els.finalPolish?.addEventListener("click", runFinalPolish);
   els.safePolish?.addEventListener("click", applySafePolishToProject);
   els.autoItalicScan?.addEventListener("click", autoScanItalics);
-  els.downloadItalicDiagnostics?.addEventListener("click", downloadItalicDiagnostics);
+  els.downloadItalicDiagnostics?.addEventListener("click", () => downloadItalicDiagnostics(true));
+  els.openItalicCalibrationReview?.addEventListener("click", openItalicCalibrationReview);
+  els.exportItalicCalibrationLabels?.addEventListener("click", exportItalicCalibrationLabels);
   els.repairLigatures.addEventListener("click", runSplitLigaturePolish);
 
   els.rebuildParagraphs?.addEventListener("click", () => rebuildParagraphsFromSavedGeometry({ confirmOverwrite: true }));
