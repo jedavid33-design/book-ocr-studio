@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "29";
+  const BUILD_VERSION = "30";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -4068,7 +4068,7 @@
         if (typeof progressCallback === "function") {
           progressCallback(index + 1, state.pages.length, italicPct);
         } else {
-          setStatus(`Automatic italic scan 29 ${state.sourceProfile === "cloud-iowan" ? "CloudLibrary/Iowan" : "profile"}: page ${index + 1} of ${state.pages.length}…`);
+          setStatus(`Automatic italic scan 30 ${state.sourceProfile === "cloud-iowan" ? "CloudLibrary/Iowan" : "profile"}: page ${index + 1} of ${state.pages.length}…`);
         }
         const img = await loadImageFromFile(file);
         const canvas = makeCroppedCanvas(img);
@@ -4147,7 +4147,7 @@
       // projected onto the authoritative current page text instead.
       saveCheckpoint();
       if (els.italicStatus) els.italicStatus.textContent = `${markedRuns} run${markedRuns === 1 ? "" : "s"} · ${markedWords} words`;
-      setStatus(`Automatic italic scan 29 checked ${scannedWords} words across ${scannedLines} OCR lines and marked ${markedRuns} hybrid run${markedRuns === 1 ? "" : "s"} (${markedWords} words). Formatting evidence was projected onto ${projectedItalicPages} current page${projectedItalicPages === 1 ? "" : "s"} without rebuilding repaired text.`);
+      setStatus(`Automatic italic scan 30 checked ${scannedWords} words across ${scannedLines} OCR lines and marked ${markedRuns} hybrid run${markedRuns === 1 ? "" : "s"} (${markedWords} words). Formatting evidence was projected onto ${projectedItalicPages} current page${projectedItalicPages === 1 ? "" : "s"} without rebuilding repaired text.`);
       return { markedRuns, markedWords, scannedWords, scannedLines, projectedItalicPages };
     } catch (err) {
       console.error(err);
@@ -4436,11 +4436,25 @@
       const bx = Number(bLine?.box?.x);
       const prevBottom = Number(prev?.box?.y) + Number(prev?.box?.h);
       const gap = Number(bLine?.box?.y) - prevBottom;
+      const indentLeft = Number(profile?.indentLeft);
       const onBodyLane = Number.isFinite(bx) && Math.abs(bx - bodyLeft) <= laneTol;
+      const onIndentLane = Number.isFinite(bx) && Number.isFinite(indentLeft) && Math.abs(bx - indentLeft) <= laneTol;
       const verticallyAdjacent = Number.isFinite(gap) && gap <= Math.max(typicalH * 0.65, 28);
       const prevMatchesA = na.includes(lineNorm(prev).slice(-Math.min(32, lineNorm(prev).length))) ||
         lineNorm(prev).includes(na.slice(-Math.min(32, na.length)));
-      return onBodyLane && verticallyAdjacent && prevMatchesA;
+
+      // v30: Reconcile the same narrow indent-lane continuation that v29 now
+      // handles during reconstruction before quote/terminal audits run. Paddle
+      // can place a wrapped lowercase line on the 229 px paragraph lane. If the
+      // preceding source line is vertically adjacent and the prior block is
+      // syntactically open, that is continuation evidence, not a fresh paragraph.
+      // This prevents healed dialogue such as “...do manual / labor on Christmas
+      // Eve.” from generating phantom quote-balance and punctuation review cards.
+      const previousOpen = /[A-Za-z0-9,;:]$/.test(na) && !/[.!?…]["'’)]?$/.test(na);
+      const beginsLowercase = /^["'‘’“”]?\s*[a-z]/.test(nb);
+      const beginsDialogue = /^["“]/.test(String(b || '').trim());
+      const laneSupported = onBodyLane || (onIndentLane && previousOpen && beginsLowercase && !beginsDialogue);
+      return laneSupported && verticallyAdjacent && prevMatchesA;
     };
 
     state.pages.forEach(page => {
