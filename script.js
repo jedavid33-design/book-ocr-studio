@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "50";
+  const BUILD_VERSION = "51";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -4641,6 +4641,7 @@
             pageIndex:ws[0].pageIndex,pageNumber:ws[0].pageNumber,fileName:ws[0].fileName,lineIndex:ws[0].lineIndex,
             startWordIndex:ws[0].wordIndex,endWordIndex:ws[ws.length-1].wordIndex,wordCount:len,
             text:ws.map(w=>w.text).join(' '),leftContext:left,rightContext:right,fullLineText:ranked.map(w=>w.text).join(' '),
+            reviewBox:(()=>{ const boxes=ws.map(w=>w.box).filter(Boolean); if(!boxes.length) return null; const x=Math.min(...boxes.map(b=>b.x)); const y=Math.min(...boxes.map(b=>b.y)); const r=Math.max(...boxes.map(b=>b.x+b.w)); const bt=Math.max(...boxes.map(b=>b.y+b.h)); return {x,y,w:r-x,h:bt-y}; })(),
             supervisedScore,structuralAverage:structuralAvg,structuralMinimum:structuralMin,structuralConsistency:consistency,
             slantSupport,gainSupport,shearSupport,corroborationSignals:corroboration,sampleKind:kind,
             words:ws.map((w,i)=>({wordIndex:w.wordIndex,text:w.text,structuralScore:structural[i],
@@ -4771,9 +4772,9 @@
     if (shouldDownload) {
       const safeTitle = cleanFilename(els.bookTitle?.value || "book");
       downloadBlob(new Blob([JSON.stringify(payload, null, 2)], {type:"application/json"}), `${safeTitle}-italic-diagnostics.json`);
-      setStatus(`Downloaded word-level italic diagnostics: ${words.length} words, ${runs.length} candidate runs, ${runs.filter(x=>x.accepted).length} accepted. Supervised review set is ready for screenshot labeling.`);
+      setStatus(`Downloaded word-level italic diagnostics: ${words.length} words, ${runs.length} candidate runs, ${runs.filter(x=>x.accepted).length} accepted. Spoiler-safe review set is ready.`);
     } else {
-      setStatus(`Built ${supervisedReviewSet.length} diagnostic-only Iowan calibration cards. Compare them with the frozen screenshots and label Italic, Roman, or Unsure.`);
+      setStatus(`Built ${supervisedReviewSet.length} spoiler-safe italic specimens. Only isolated candidate pixels are shown; story context stays hidden.`);
     }
     return payload;
   }
@@ -4782,21 +4783,60 @@
     return `${run.pageIndex}:${run.lineIndex}:${run.startWordIndex}:${run.endWordIndex}`;
   }
 
+  async function renderSpoilerSafeItalicCrop(canvasHost, run) {
+    if (!canvasHost || !run?.reviewBox) return;
+    const pageIndex = Number(run.pageIndex);
+    const page = state.pages[pageIndex];
+    const file = page?.file || state.files[pageIndex];
+    if (!file) return;
+    try {
+      const img = await loadImageFromFile(file);
+      const source = makeCroppedCanvas(img);
+      const b = run.reviewBox;
+      // Candidate only: no neighboring words, page number, chapter, or line context.
+      const padX = Math.max(3, Math.round(Number(b.h || 20) * 0.12));
+      const padY = Math.max(2, Math.round(Number(b.h || 20) * 0.10));
+      const x = clamp(Math.floor(b.x - padX), 0, source.width - 1);
+      const y = clamp(Math.floor(b.y - padY), 0, source.height - 1);
+      const w = clamp(Math.ceil(b.w + padX * 2), 1, source.width - x);
+      const h = clamp(Math.ceil(b.h + padY * 2), 1, source.height - y);
+      const scale = Math.min(3, Math.max(1.35, 74 / Math.max(1, h)));
+      const out = document.createElement("canvas");
+      out.className = "italic-spoiler-crop";
+      out.width = Math.max(1, Math.round(w * scale));
+      out.height = Math.max(1, Math.round(h * scale));
+      const ctx = out.getContext("2d");
+      ctx.imageSmoothingEnabled = true;
+      ctx.drawImage(source, x, y, w, h, 0, 0, out.width, out.height);
+      canvasHost.replaceChildren(out);
+    } catch (err) {
+      console.warn("Could not render spoiler-safe italic specimen", err);
+      canvasHost.textContent = "Specimen unavailable";
+    }
+  }
+
   function renderItalicCalibrationReview() {
     if (!els.italicCalibrationReview || !els.italicCalibrationReviewList) return;
     const runs = state.italicCalibrationReviewSet || [];
     els.italicCalibrationReview.classList.toggle("hidden", !runs.length);
     els.italicCalibrationReviewList.innerHTML = "";
-    runs.forEach(run => {
+    // Build 51: spoiler-safe review. Random order prevents page/chapter progression
+    // from leaking story sequence. Cards expose only the source-image pixels inside
+    // the candidate box. OCR text, page number, line text, context, and metrics stay hidden.
+    const reviewRuns = [...runs].sort((a,b) => {
+      const ak = italicCalibrationKey(a), bk = italicCalibrationKey(b);
+      const ah = [...ak].reduce((n,c)=>((n*33)^c.charCodeAt(0))>>>0,5381);
+      const bh = [...bk].reduce((n,c)=>((n*33)^c.charCodeAt(0))>>>0,5381);
+      return ah-bh;
+    });
+    reviewRuns.forEach((run, displayIndex) => {
       const key = italicCalibrationKey(run);
       const label = state.italicCalibrationLabels[key] || null;
       const card = document.createElement("div");
-      card.className = "italic-calibration-card";
+      card.className = "italic-calibration-card spoiler-safe-italic-card";
       card.innerHTML = `
-        <div class="italic-calibration-title"><strong>#${run.supervisedRank} · Page ${run.pageNumber || Number(run.pageIndex)+1} · line ${Number(run.lineIndex)+1}</strong><span class="badge">score ${Number(run.supervisedScore||0).toFixed(3)}</span></div>
-        <div class="italic-calibration-context"><span>${escapeHtml(run.leftContext || "")}</span> <mark>${escapeHtml(run.text || "")}</mark> <span>${escapeHtml(run.rightContext || "")}</span></div>
-        <div class="italic-calibration-source">${escapeHtml(run.fullLineText || "")}</div>
-        <div class="italic-calibration-metrics">struct ${Number(run.structuralAverage||0).toFixed(3)} · consistency ${Number(run.structuralConsistency||0).toFixed(2)} · slant ${Number(run.slantSupport||0).toFixed(3)} · gain ${Number(run.gainSupport||0).toFixed(4)} · shear ${Number(run.shearSupport||0).toFixed(3)}</div>
+        <div class="italic-calibration-title"><strong>Specimen ${displayIndex + 1}</strong><span class="badge">spoiler-safe</span></div>
+        <div class="italic-spoiler-specimen" aria-label="Isolated typography specimen"><span class="hint">Loading isolated specimen…</span></div>
         <div class="italic-calibration-actions">
           <button class="button ${label==='ITALIC'?'primary':'secondary'}" data-label="ITALIC">Italic</button>
           <button class="button ${label==='ROMAN'?'primary':'secondary'}" data-label="ROMAN">Roman</button>
@@ -4807,6 +4847,7 @@
         renderItalicCalibrationReview();
       }));
       els.italicCalibrationReviewList.appendChild(card);
+      renderSpoilerSafeItalicCrop(card.querySelector(".italic-spoiler-specimen"), run);
     });
     const labeled = runs.filter(r => state.italicCalibrationLabels[italicCalibrationKey(r)]).length;
     if (els.italicCalibrationProgress) els.italicCalibrationProgress.textContent = `${labeled} / ${runs.length} labeled`;

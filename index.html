@@ -203,14 +203,14 @@
 <button class="button secondary" id="safePolish" type="button">Safe text cleanup</button>
 <button class="button secondary" id="autoItalicScan" type="button">Auto italic scan</button>
 <button class="button secondary" id="downloadItalicDiagnostics" type="button">Download italic calibration diagnostics</button>
-<button class="button secondary" id="openItalicCalibrationReview" type="button">Review Iowan italic calibration</button>
+<button class="button secondary" id="openItalicCalibrationReview" type="button">Spoiler-safe italic review</button>
 <button class="button secondary" id="exportItalicCalibrationLabels" type="button" disabled>Export italic labels</button>
 <span class="progress-pill" id="polishStatus">Not run</span>
 <span class="progress-pill" id="italicStatus">Italics not scanned</span>
 </div>
 <div class="italic-calibration-review hidden" id="italicCalibrationReview">
-  <div class="italic-calibration-head"><strong>Iowan Italic Calibration Review</strong><span class="progress-pill" id="italicCalibrationProgress">0 / 0 labeled</span></div>
-  <p class="hint">Compare each ranked phrase with the frozen source screenshot. Label only what the screenshot visibly shows. These labels never change EPUB formatting.</p>
+  <div class="italic-calibration-head"><strong>Spoiler-safe Italic Review</strong><span class="progress-pill" id="italicCalibrationProgress">0 / 0 labeled</span></div>
+  <p class="hint">Review isolated candidate pixels only. OCR text, page/line location, surrounding words, and story order are hidden. Label the typography Italic, Roman, or Unsure. These labels are diagnostic-only and do not change EPUB formatting yet.</p>
   <div class="review-list" id="italicCalibrationReviewList"></div>
 </div>
 </div></div></details><details class="card hidden kindle-ready-section" id="kindleReadySection" open=""><summary class="kindle-ready-summary">8. Kindle Ready</summary><div class="kindle-ready-body"><p class="hint">Final preflight for a clean reflowable EPUB before Send to Kindle. This inspects the repaired/polished book and does not change text.</p><div class="actions"><button class="button primary" id="runKindleReady" type="button">Run Kindle Ready Check</button><span class="progress-pill" id="kindleReadyStatus">Not checked</span></div><div class="regression-results hidden" id="kindleReadyResults"></div></div></details><section class="card hidden" id="exportSection"><h2>9. Export</h2><div class="actions">

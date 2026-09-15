@@ -905,3 +905,8 @@ select{width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid var(-
 .italic-calibration-metrics { margin-top:8px; color:var(--muted); font-size:.74rem; font-variant-numeric:tabular-nums; }
 .italic-calibration-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
 .italic-calibration-actions .button { min-width:84px; }
+
+/* Build 51 spoiler-safe italic specimens */
+.italic-spoiler-specimen { margin-top:10px; min-height:82px; display:flex; align-items:center; justify-content:center; overflow:auto; border:1px solid var(--line); border-radius:10px; padding:8px; background:#fff; }
+.italic-spoiler-crop { display:block; max-width:100%; height:auto; image-rendering:auto; }
+.spoiler-safe-italic-card .italic-calibration-actions { justify-content:center; }
