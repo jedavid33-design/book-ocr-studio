@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "69";
+  const BUILD_VERSION = "70";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -4749,6 +4749,10 @@
       }
     });
     const supervisedReviewSet=[...dedupedByPhysicalWord.values()];
+    // v70: score only unique physical OCR specimens, never the 18k overlapping windows.
+    supervisedReviewSet.forEach(run=>{
+      run.learnedItalicProbability=cachedItalicLearnedProbability(run);
+    });
 
     if((state.italicReviewSelectionMode==="learned"||state.italicReviewSelectionMode==="validation") && learnedExamples.filter(x=>x.label==="ITALIC").length>=2){
       supervisedReviewSet.sort((a,b)=>{
@@ -5007,20 +5011,17 @@
   }
 
   function italicSlantSignal(run){
-    const m=run?.metrics||run?.italicMetrics||run?.wordMeta||run?.words?.[0]?.italicMeta||{};
-    const direct=Number(m.slant??m.shear??m.italicSlant??m.edgeSlant);
-    if(Number.isFinite(direct)) return Math.max(-2,Math.min(2,direct));
-    const top=Number(m.topInset??m.topLeftInset), bottom=Number(m.bottomInset??m.bottomLeftInset);
-    const rightTop=Number(m.topRightInset), rightBottom=Number(m.bottomRightInset);
-    if([top,bottom,rightTop,rightBottom].every(Number.isFinite)){
-      return Math.max(-2,Math.min(2,((bottom-top)-(rightTop-rightBottom))/Math.max(1,Number(run.reviewBox?.height||1))));
-    }
-    // Existing supervised features already encode edge/shape evidence. This fallback
-    // deliberately remains neutral rather than inventing a slant.
-    return 0;
+    const v=italicLearningVector(run);
+    if(!Array.isArray(v)||v.length<13)return 0;
+    const n=x=>Number.isFinite(Number(x))?Number(x):0;
+    const edgeA=n(v[3])-n(v[9]);
+    const edgeB=n(v[4])-n(v[10]);
+    const edgeC=n(v[5])-n(v[12]);
+    const scale=Math.max(.05,Math.abs(n(v[0]))+Math.abs(n(v[1]))+.25);
+    return Math.max(-3,Math.min(3,(edgeA*.50+edgeB*.20+edgeC*.30)/scale));
   }
 
-  function italicLearnedProbability(run) {
+  function italicLearnedProbabilityUncached(run) {
     const p=currentItalicLearningProfile();
     const all=(p.examples||[]).filter(x=>Array.isArray(x.vector)&&x.vector.length===ITALIC_FEATURE_NAMES.length);
     const target=italicGlyphClassFromRun(run);
@@ -5084,6 +5085,19 @@
       learned=learned*.72+slantP*.28;
     }
     return learned;
+  }
+
+  let italicFastScoreCache=new Map();
+  let italicFastScoreRevision="";
+  function italicLearnedProbability(run){
+    const p=currentItalicLearningProfile();
+    const rev=`${(p.examples||[]).length}:${p.updatedAt||""}`;
+    if(rev!==italicFastScoreRevision){italicFastScoreRevision=rev;italicFastScoreCache=new Map();}
+    const key=italicCalibrationKey(run);
+    if(italicFastScoreCache.has(key))return italicFastScoreCache.get(key);
+    const value=italicLearnedProbabilityUncached(run);
+    italicFastScoreCache.set(key,value);
+    return value;
   }
 
   function removeItalicTrainingExample(run) {
