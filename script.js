@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.8.1-cloudlibrary-iowan-recovery";
+  const BUILD_VERSION = "2.8.2-polish-false-split-repair";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -4045,7 +4045,7 @@
         if (typeof progressCallback === "function") {
           progressCallback(index + 1, state.pages.length, italicPct);
         } else {
-          setStatus(`Automatic italic scan 2.8.1 ${state.sourceProfile === "cloud-iowan" ? "CloudLibrary/Iowan" : "profile"}: page ${index + 1} of ${state.pages.length}…`);
+          setStatus(`Automatic italic scan 2.8.2 ${state.sourceProfile === "cloud-iowan" ? "CloudLibrary/Iowan" : "profile"}: page ${index + 1} of ${state.pages.length}…`);
         }
         const img = await loadImageFromFile(file);
         const canvas = makeCroppedCanvas(img);
@@ -4124,7 +4124,7 @@
       // projected onto the authoritative current page text instead.
       saveCheckpoint();
       if (els.italicStatus) els.italicStatus.textContent = `${markedRuns} run${markedRuns === 1 ? "" : "s"} · ${markedWords} words`;
-      setStatus(`Automatic italic scan 2.8.1 checked ${scannedWords} words across ${scannedLines} OCR lines and marked ${markedRuns} hybrid run${markedRuns === 1 ? "" : "s"} (${markedWords} words). Formatting evidence was projected onto ${projectedItalicPages} current page${projectedItalicPages === 1 ? "" : "s"} without rebuilding repaired text.`);
+      setStatus(`Automatic italic scan 2.8.2 checked ${scannedWords} words across ${scannedLines} OCR lines and marked ${markedRuns} hybrid run${markedRuns === 1 ? "" : "s"} (${markedWords} words). Formatting evidence was projected onto ${projectedItalicPages} current page${projectedItalicPages === 1 ? "" : "s"} without rebuilding repaired text.`);
       return { markedRuns, markedWords, scannedWords, scannedLines, projectedItalicPages };
     } catch (err) {
       console.error(err);
@@ -4381,7 +4381,43 @@
       if (/^["']/.test(nb)) return false;
       const aTail = na.slice(-Math.min(90, na.length));
       const bHead = nb.slice(0, Math.min(90, nb.length));
-      return paras.some(p => p.includes(aTail) && p.includes(bHead) && p.indexOf(aTail) <= p.lastIndexOf(bHead));
+      if (paras.some(p => p.includes(aTail) && p.includes(bHead) && p.indexOf(aTail) <= p.lastIndexOf(bHead))) return true;
+
+      // v2.8.2: Repair a narrow class of false paragraph splits before the
+      // terminal-punctuation audit. Reconstruction can itself preserve a bad
+      // blank-line boundary, so use the raw source-line geometry as a second,
+      // independent signal. The next block must begin lowercase, its source
+      // line must sit on the body lane (a wrapped continuation, not an indented
+      // paragraph start), and the preceding source line must be vertically
+      // adjacent. This targets cases such as “appreciate / it, but…” and
+      // “we are / composed…” without weakening source-supported boundaries.
+      const lines = page.layoutLines || [];
+      const profile = state.bookLayoutProfile || buildBookLayoutProfile(state.pages);
+      const bodyLeft = Number(profile?.bodyLeft);
+      const typicalH = Number(profile?.typicalH) || 38;
+      const laneTol = Number(profile?.laneTolerance) || Math.max(10, typicalH * 0.32);
+      if (!Number.isFinite(bodyLeft)) return false;
+
+      const lineNorm = line => norm(line?.text || '');
+      const bProbe = nb.slice(0, Math.min(42, nb.length));
+      let bIndex = -1;
+      for (let i = 0; i < lines.length; i++) {
+        const t = lineNorm(lines[i]);
+        if (t && (t.startsWith(bProbe) || bProbe.startsWith(t.slice(0, Math.min(24, t.length))))) {
+          bIndex = i;
+          break;
+        }
+      }
+      if (bIndex <= 0) return false;
+      const bLine = lines[bIndex], prev = lines[bIndex - 1];
+      const bx = Number(bLine?.box?.x);
+      const prevBottom = Number(prev?.box?.y) + Number(prev?.box?.h);
+      const gap = Number(bLine?.box?.y) - prevBottom;
+      const onBodyLane = Number.isFinite(bx) && Math.abs(bx - bodyLeft) <= laneTol;
+      const verticallyAdjacent = Number.isFinite(gap) && gap <= Math.max(typicalH * 0.65, 28);
+      const prevMatchesA = na.includes(lineNorm(prev).slice(-Math.min(32, lineNorm(prev).length))) ||
+        lineNorm(prev).includes(na.slice(-Math.min(32, na.length)));
+      return onBodyLane && verticallyAdjacent && prevMatchesA;
     };
 
     state.pages.forEach(page => {

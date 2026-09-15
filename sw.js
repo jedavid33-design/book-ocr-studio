@@ -1,7 +1,7 @@
-const CACHE_NAME = "book-ocr-studio-shell-v2-8-1-cloudlibrary-iowan-recovery";
+const CACHE_NAME = "book-ocr-studio-shell-v2-8-2-polish-false-split-repair";
 const APP_SHELL = [
-  "./styles.css?v=2.8.1-cloudlibrary-iowan-recovery",
-  "./epub-polish.js?v=2.8.1-cloudlibrary-iowan-recovery",
+  "./styles.css?v=2.8.2-polish-false-split-repair",
+  "./epub-polish.js?v=2.8.2-polish-false-split-repair",
   "./manifest.webmanifest",
   "./icon-192.png",
   "./icon-512.png",
