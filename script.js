@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "67";
+  const BUILD_VERSION = "68";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -4702,12 +4702,18 @@
     const previouslyTrainedIds=new Set(learnedExamples.map(x=>String(x.id||"")));
 
     supervisedRuns.forEach(run=>{
-      run.learnedItalicProbability=italicLearnedProbability(run);
+      run.learnedItalicProbability=cachedItalicLearnedProbability(run);
       const sid=`${sessionSignature}::${italicCalibrationKey(run)}`;
       run.alreadyTrained=previouslyTrainedIds.has(sid);
     });
 
-    const eligibleRuns=supervisedRuns.filter(r=>!r.alreadyTrained && r.reviewBox && !state.italicCalibrationLabels[italicCalibrationKey(r)]);
+    const eligibleRuns=supervisedRuns.filter(r=>{
+      if(r.alreadyTrained || !r.reviewBox || state.italicCalibrationLabels[italicCalibrationKey(r)]) return false;
+      const text=String(r.text||r.words?.map(w=>w?.text||"").join(" ")||"").normalize("NFKC");
+      // Review/training requires real alphanumeric content. Punctuation may ride
+      // along with text, but punctuation/symbol-only crops never enter any mode.
+      return /[\p{L}\p{N}]/u.test(text);
+    });
 
     // Build 65: deduplicate BEFORE learned ranking/random shuffle.
     // The legacy candidate builder intentionally creates many overlapping windows
@@ -4962,7 +4968,7 @@
     const id=`${sessionSignature}::${specimenId}`;
     const existing=p.examples.find(x=>x.id===id);
     const glyphClass=italicGlyphClassFromRun(run);
-    const example={id,label,vector,glyphClass,createdAt:existing?.createdAt||new Date().toISOString(),updatedAt:new Date().toISOString()};
+    const example={id,label,vector,glyphClass,slantSignal:italicSlantSignal(run),createdAt:existing?.createdAt||new Date().toISOString(),updatedAt:new Date().toISOString()};
     if(existing) Object.assign(existing,example); else p.examples.push(example);
     p.updatedAt=new Date().toISOString(); p.featureNames=ITALIC_FEATURE_NAMES;
     store[key]=p; saveItalicLearningStore(store); state.italicLearningProfile=p;
@@ -4978,6 +4984,40 @@
     if(glyphs.length>=2) return `word:${glyphs.length}`;
     return "other";
   }
+  let italicProbabilityCache=new Map();
+  let italicProbabilityCacheRevision="";
+  function italicLearningRevision(){
+    const p=currentItalicLearningProfile();
+    const ex=p.examples||[];
+    return `${ex.length}:${p.updatedAt||""}`;
+  }
+  function cachedItalicLearnedProbability(run){
+    const revision=italicLearningRevision();
+    if(revision!==italicProbabilityCacheRevision){
+      italicProbabilityCacheRevision=revision;
+      italicProbabilityCache=new Map();
+    }
+    const key=italicCalibrationKey(run);
+    if(italicProbabilityCache.has(key)) return italicProbabilityCache.get(key);
+    const value=italicLearnedProbability(run);
+    italicProbabilityCache.set(key,value);
+    return value;
+  }
+
+  function italicSlantSignal(run){
+    const m=run?.metrics||run?.italicMetrics||run?.wordMeta||run?.words?.[0]?.italicMeta||{};
+    const direct=Number(m.slant??m.shear??m.italicSlant??m.edgeSlant);
+    if(Number.isFinite(direct)) return Math.max(-2,Math.min(2,direct));
+    const top=Number(m.topInset??m.topLeftInset), bottom=Number(m.bottomInset??m.bottomLeftInset);
+    const rightTop=Number(m.topRightInset), rightBottom=Number(m.bottomRightInset);
+    if([top,bottom,rightTop,rightBottom].every(Number.isFinite)){
+      return Math.max(-2,Math.min(2,((bottom-top)-(rightTop-rightBottom))/Math.max(1,Number(run.reviewBox?.height||1))));
+    }
+    // Existing supervised features already encode edge/shape evidence. This fallback
+    // deliberately remains neutral rather than inventing a slant.
+    return 0;
+  }
+
   function italicLearnedProbability(run) {
     const p=currentItalicLearningProfile();
     const all=(p.examples||[]).filter(x=>Array.isArray(x.vector)&&x.vector.length===ITALIC_FEATURE_NAMES.length);
@@ -5025,7 +5065,23 @@
     const raw=ia+ra?ia/(ia+ra):null;
     if(raw==null) return null;
     const support=Math.min(1,Math.min(italic.length,roman.length)/5);
-    return .5+(raw-.5)*support;
+    let learned=.5+(raw-.5)*support;
+
+    // Italic-specific refinement: compare measured slant/shear to human-labeled
+    // classes. This is style geometry, never word identity or book content.
+    const rs=italicSlantSignal(run);
+    const classSlant=rows=>{
+      const vals=rows.map(x=>Number(x.slantSignal)).filter(Number.isFinite);
+      if(!vals.length) return null;
+      return vals.reduce((a,b)=>a+b,0)/vals.length;
+    };
+    const iMean=classSlant(italic), rMean=classSlant(roman);
+    if(iMean!=null && rMean!=null && Math.abs(iMean-rMean)>.01){
+      const di=Math.abs(rs-iMean), dr=Math.abs(rs-rMean);
+      const slantP=(di+dr)>0?dr/(di+dr):.5;
+      learned=learned*.72+slantP*.28;
+    }
+    return learned;
   }
 
   function removeItalicTrainingExample(run) {
