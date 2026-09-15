@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "47";
+  const BUILD_VERSION = "48";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -4370,6 +4370,87 @@
     }).sort((a,b) => b.calibrationScore - a.calibrationScore)
       .map((word, index) => ({ ...word, calibrationRank: index + 1 }));
 
+
+    // Build 48: generic local typography-change diagnostics. Instead of asking
+    // whether an isolated word crosses an absolute "italic" threshold, compare
+    // every contiguous word window with nearby words on the SAME OCR line.
+    // This is deliberately book/corpus/text agnostic and diagnostic-only: it
+    // never marks formatting. External QA can later compare these rankings with
+    // independently known examples without leaking those answers into Studio.
+    const typographyFeatureVector = w => {
+      const occ = Array.isArray(w.bandOccupancy) ? w.bandOccupancy : [];
+      const left = Array.isArray(w.leftEdgeBands) ? w.leftEdgeBands : [];
+      const right = Array.isArray(w.rightEdgeBands) ? w.rightEdgeBands : [];
+      const hist = w.orientationHistogram || {};
+      return [
+        Math.abs(Number(w.slant || 0)), Number(w.gain || 0),
+        Math.abs(Number((w.shearStrength ?? w.shear) || 0)), Number(w.inkDensity || 0),
+        Number(w.topBottomWidthRatio || 0), Number(w.leftEdgeShear || 0), Number(w.rightEdgeShear || 0),
+        ...[0,1,2,3].map(i=>Number(occ[i]||0)),
+        ...[0,1,2].map(i=>Number(left[i]||0)), ...[0,1,2].map(i=>Number(right[i]||0)),
+        Number(hist.left||0), Number(hist.neutral||0), Number(hist.right||0),
+        Number(w.componentCount||0), Number(w.componentWidthMedian||0), Number(w.componentWidthSpread||0)
+      ];
+    };
+    const vecMean = vs => vs.length ? vs[0].map((_,i)=>vs.reduce((a,v)=>a+Number(v[i]||0),0)/vs.length) : [];
+    const featureScale = (peers, idx) => {
+      const vals=peers.map(w=>typographyFeatureVector(w)[idx]).filter(Number.isFinite);
+      const med=median(vals), mad=median(vals.map(v=>Math.abs(v-med)));
+      // Keep a small relative floor so near-constant features do not explode.
+      return Math.max(1e-4, 1.4826*mad, Math.abs(med)*0.035);
+    };
+    const typographyChangeWindows=[];
+    lineGroups.forEach((peers,key)=>{
+      const ordered=[...peers].sort((a,b)=>Number(a.wordIndex||0)-Number(b.wordIndex||0));
+      if(ordered.length<2) return;
+      const vectors=ordered.map(typographyFeatureVector);
+      const dims=vectors[0]?.length||0;
+      const scales=Array.from({length:dims},(_,i)=>featureScale(ordered,i));
+      for(let start=0;start<ordered.length;start++){
+        for(let len=1;len<=Math.min(6,ordered.length-start);len++){
+          const end=start+len;
+          // Local controls only. Prefer up to three words on either side, and
+          // require at least one outside word so the window has a comparison.
+          const contextIdx=[];
+          for(let i=Math.max(0,start-3);i<start;i++) contextIdx.push(i);
+          for(let i=end;i<Math.min(ordered.length,end+3);i++) contextIdx.push(i);
+          if(!contextIdx.length) continue;
+          const runMean=vecMean(vectors.slice(start,end));
+          const ctxMean=vecMean(contextIdx.map(i=>vectors[i]));
+          const deltas=runMean.map((v,i)=>(v-ctxMean[i])/scales[i]);
+          // Trim extreme dimensions. A real local face change should move more
+          // than one measurement; one pathological glyph must not own the score.
+          const abs=deltas.map(Math.abs).sort((a,b)=>b-a);
+          const top=abs.slice(0,Math.min(8,abs.length)).map(x=>Math.min(x,6));
+          const changeMagnitude=top.length?top.reduce((a,b)=>a+b,0)/top.length:0;
+          const coherentDimensions=deltas.filter(d=>Math.abs(d)>=1.25).length;
+          const internalVectors=vectors.slice(start,end);
+          let internalConsistency=1;
+          if(internalVectors.length>1){
+            const mean=runMean;
+            const deviations=internalVectors.map(v=>v.reduce((a,x,i)=>a+Math.min(Math.abs((x-mean[i])/scales[i]),6),0)/dims);
+            internalConsistency=1/(1+median(deviations));
+          }
+          // Multiword spans receive only a small evidence bonus. Singletons stay
+          // eligible, but must earn their ranking from stronger visual change.
+          const runBonus=len>=2?Math.min(0.35,(len-1)*0.07)*internalConsistency:0;
+          const typographyChangeScore=changeMagnitude*(0.70+0.30*internalConsistency)+runBonus;
+          typographyChangeWindows.push({
+            pageIndex:ordered[0].pageIndex,pageNumber:ordered[0].pageNumber,fileName:ordered[0].fileName,
+            lineIndex:ordered[0].lineIndex,startWordIndex:ordered[start].wordIndex,endWordIndex:ordered[end-1].wordIndex,
+            wordCount:len,text:ordered.slice(start,end).map(w=>w.text).join(' '),
+            leftContext:ordered.slice(Math.max(0,start-3),start).map(w=>w.text).join(' '),
+            rightContext:ordered.slice(end,Math.min(ordered.length,end+3)).map(w=>w.text).join(' '),
+            fullLineText:ordered.map(w=>w.text).join(' '),contextWordCount:contextIdx.length,
+            typographyChangeScore,changeMagnitude,internalConsistency,coherentDimensions,
+            normalizedFeatureDeltas:deltas
+          });
+        }
+      }
+    });
+    typographyChangeWindows.sort((a,b)=>b.typographyChangeScore-a.typographyChangeScore)
+      .forEach((r,i)=>r.typographyChangeRank=i+1);
+
     // v40 supervised calibration: rank contiguous multiword runs using the v39
     // word scores. True book italics are commonly phrases/runs, while noisy
     // roman outliers are often isolated. This remains diagnostic-only.
@@ -4531,7 +4612,7 @@
     // an evaluator to join external ground truth without leaking it into detection.
 
     const payload = {
-      format: "book-ocr-studio-italic-calibration-v17",
+      format: "book-ocr-studio-italic-calibration-v18",
       buildVersion: BUILD_VERSION,
       exportedAt: new Date().toISOString(),
       summary: {
@@ -4577,6 +4658,7 @@
         cloudIowanRobustLineNormalizationDiagnosticOnly: true,
         cloudIowanRunCalibrationRankingDiagnosticOnly: true,
         cloudIowanSupervisedReviewSetDiagnosticOnly: true,
+        cloudIowanLocalTypographyChangeDiagnosticOnly: true,
         cloudIowanSupervisedRankingOrder: "v44-diverse-human-label-sampler/length-aware-density/no-corroboration-gate/shear-weak",
         calibrationFeatures: ["slant","gain","score","shear","shearStrength","inkDensity","medianRowWidth","upperMedianWidth","lowerMedianWidth","topBottomWidthRatio","leftEdgeShear","rightEdgeShear","aspectRatio","bandOccupancy","leftEdgeBands","rightEdgeBands","orientationHistogram","componentCount","componentWidthMedian","componentWidthSpread","localSlantLift","localGainLift","localShearLift"],
         cloudIowanTokenSplitAtDash: true,
@@ -4585,6 +4667,7 @@
       topWordCandidatesByGain: rankedWords.slice(0, 250),
       topLocalCalibrationCandidates: calibrationWords.slice(0, 300),
       topRunCalibrationCandidates: calibrationRuns.slice(0, 300),
+      topLocalTypographyChangeWindows: typographyChangeWindows.slice(0, 500),
       supervisedCalibrationReviewSet: supervisedReviewSet,
       acceptedRuns: runs.filter(x => x.accepted),
       rejectedRuns: runs.filter(x => !x.accepted),
