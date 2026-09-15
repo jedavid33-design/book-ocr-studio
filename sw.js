@@ -1,7 +1,7 @@
-const CACHE_NAME = "book-ocr-studio-shell-v2-8-2-polish-false-split-repair";
+const CACHE_NAME = "book-ocr-studio-shell-v2-8-3";
 const APP_SHELL = [
-  "./styles.css?v=2.8.2-polish-false-split-repair",
-  "./epub-polish.js?v=2.8.2-polish-false-split-repair",
+  "./styles.css?v=2.8.3",
+  "./epub-polish.js?v=2.8.3",
   "./manifest.webmanifest",
   "./icon-192.png",
   "./icon-512.png",

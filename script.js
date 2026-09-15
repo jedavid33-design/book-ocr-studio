@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.8.2-polish-false-split-repair";
+  const BUILD_VERSION = "2.8.3";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -4045,7 +4045,7 @@
         if (typeof progressCallback === "function") {
           progressCallback(index + 1, state.pages.length, italicPct);
         } else {
-          setStatus(`Automatic italic scan 2.8.2 ${state.sourceProfile === "cloud-iowan" ? "CloudLibrary/Iowan" : "profile"}: page ${index + 1} of ${state.pages.length}…`);
+          setStatus(`Automatic italic scan 2.8.3 ${state.sourceProfile === "cloud-iowan" ? "CloudLibrary/Iowan" : "profile"}: page ${index + 1} of ${state.pages.length}…`);
         }
         const img = await loadImageFromFile(file);
         const canvas = makeCroppedCanvas(img);
@@ -4124,7 +4124,7 @@
       // projected onto the authoritative current page text instead.
       saveCheckpoint();
       if (els.italicStatus) els.italicStatus.textContent = `${markedRuns} run${markedRuns === 1 ? "" : "s"} · ${markedWords} words`;
-      setStatus(`Automatic italic scan 2.8.2 checked ${scannedWords} words across ${scannedLines} OCR lines and marked ${markedRuns} hybrid run${markedRuns === 1 ? "" : "s"} (${markedWords} words). Formatting evidence was projected onto ${projectedItalicPages} current page${projectedItalicPages === 1 ? "" : "s"} without rebuilding repaired text.`);
+      setStatus(`Automatic italic scan 2.8.3 checked ${scannedWords} words across ${scannedLines} OCR lines and marked ${markedRuns} hybrid run${markedRuns === 1 ? "" : "s"} (${markedWords} words). Formatting evidence was projected onto ${projectedItalicPages} current page${projectedItalicPages === 1 ? "" : "s"} without rebuilding repaired text.`);
       return { markedRuns, markedWords, scannedWords, scannedLines, projectedItalicPages };
     } catch (err) {
       console.error(err);
@@ -4627,6 +4627,74 @@
     });
   }
 
+  function messageBubbleWrapEvidence(page, para, direction = "next") {
+    // v2.8.3: CloudLibrary message bubbles can contain multiple visual OCR lines.
+    // Final Polish must not treat those wrapped lines as separate prose paragraphs.
+    // This is intentionally audit-only: it does not alter the known-good paragraph
+    // lane/reconstruction model or Kindle's dedicated message workflow.
+    if (state.sourceProfile !== "cloud-iowan") return false;
+    const lines = Array.isArray(page?.layoutLines) ? page.layoutLines : [];
+    if (lines.length < 2) return false;
+
+    const norm = value => stripItalicMarkers(String(value || ""))
+      .replace(/[“”]/g, '"').replace(/[‘’]/g, "'").replace(/\s+/g, " ").trim().toLowerCase();
+    const target = norm(para);
+    if (!target) return false;
+
+    const profile = state.bookLayoutProfile || buildBookLayoutProfile(state.pages);
+    const bodyLeft = Number(profile?.bodyLeft);
+    const indentLeft = Number(profile?.indentLeft);
+    const typicalH = Number(profile?.typicalH) || 38;
+    const laneTol = Number(profile?.laneTolerance) || Math.max(10, typicalH * 0.32);
+    const lineNorm = line => norm(line?.text || "");
+
+    let idx = -1;
+    for (let i = 0; i < lines.length; i++) {
+      const t = lineNorm(lines[i]);
+      if (!t) continue;
+      const probe = target.slice(0, Math.min(36, target.length));
+      if (t === target || t.startsWith(probe) || target.startsWith(t.slice(0, Math.min(28, t.length)))) {
+        idx = i;
+        break;
+      }
+    }
+    if (idx < 0) return false;
+    const otherIdx = direction === "previous" ? idx - 1 : idx + 1;
+    if (otherIdx < 0 || otherIdx >= lines.length) return false;
+    const a = direction === "previous" ? lines[otherIdx] : lines[idx];
+    const b = direction === "previous" ? lines[idx] : lines[otherIdx];
+    if (!a?.box || !b?.box) return false;
+
+    const ax = Number(a.box.x), bx = Number(b.box.x);
+    const aBottom = Number(a.box.y) + Number(a.box.h);
+    const gap = Number(b.box.y) - aBottom;
+    if (![ax, bx, gap].every(Number.isFinite)) return false;
+
+    // Wrapped lines inside one bubble are tightly stacked and share a bubble text
+    // lane. Normal book prose lives on the learned 181/229 lanes; exclude those so
+    // this cannot become another general paragraph-merging heuristic.
+    const sameBubbleLane = Math.abs(ax - bx) <= Math.max(34, typicalH * 0.9);
+    const tightlyStacked = gap >= -6 && gap <= Math.max(typicalH * 0.72, 30);
+    const offBookLanes = Number.isFinite(bodyLeft) && Number.isFinite(indentLeft) &&
+      Math.min(Math.abs(ax - bodyLeft), Math.abs(ax - indentLeft),
+               Math.abs(bx - bodyLeft), Math.abs(bx - indentLeft)) > laneTol;
+    if (!sameBubbleLane || !tightlyStacked || !offBookLanes) return false;
+
+    // Require message-layout context too. A repeated all-caps speaker label is
+    // strong evidence, while alternating off-lane text blocks handles unlabeled
+    // outgoing bubbles on the same page.
+    const blocks = pageBlocks(page).map(norm);
+    const speakerLabels = blocks.filter(t => /^[a-z][a-z .'-]{1,24}$/.test(t) && t === t.toLowerCase())
+      .filter(t => /^[a-z]+(?: [a-z]+)?$/.test(t));
+    const rawSpeakerCount = (String(page.text || "").match(/(?:^|\n\n)[A-Z][A-Z .'-]{2,24}(?=\n\n|$)/gm) || []).length;
+    const offLaneCount = lines.filter(line => {
+      const x = Number(line?.box?.x);
+      return Number.isFinite(x) && Number.isFinite(bodyLeft) && Number.isFinite(indentLeft) &&
+        Math.min(Math.abs(x - bodyLeft), Math.abs(x - indentLeft)) > laneTol;
+    }).length;
+    return rawSpeakerCount >= 1 || offLaneCount >= 4 || speakerLabels.length >= 2;
+  }
+
   function finalPolishAudit() {
     const issues = [];
     const checks = [];
@@ -4913,6 +4981,9 @@
         // periods. Do not invent punctuation automatically. Surface prose that
         // ends in a letter/number so the screenshot can confirm the mark.
         if (/[A-Za-z0-9)]$/.test(plain)) {
+          // A visual line ending inside a CloudLibrary text bubble is not a
+          // paragraph ending, so it must never become a punctuation review card.
+          if (messageBubbleWrapEvidence(page, para, "next")) return;
           addIssue({
             type: "Terminal punctuation",
             pageIndex,
@@ -5010,6 +5081,9 @@
             !/^(?:CHAPTER\b|PROLOGUE\b|EPILOGUE\b)/i.test(plain) &&
             !/^[A-Z][A-Z .'-]{2,}$/.test(plain) &&
             !/[.!?…"”']$/.test(plain)) {
+          // Likewise, the second visual line of a message bubble is not a tiny
+          // paragraph fragment. Suppress the audit card without changing text.
+          if (messageBubbleWrapEvidence(page, para, "previous")) return;
           const issue = {
             type: "Short paragraph",
             pageIndex,
