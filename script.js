@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "2.8.0-cloudlibrary-iowan-italics";
+  const BUILD_VERSION = "2.8.1-cloudlibrary-iowan-recovery";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -3841,11 +3841,11 @@
       return runs;
     }
 
-    // v2.8.0 Route I: CloudLibrary / Iowan Old Style. The multi-font benchmark
-    // showed that true Iowan italics can have essentially zero overlap gain.
-    // Use a second, independent row-shear signal and accept only coherent
-    // multiword windows that stand out from the rest of the line. This route is
-    // profile-specific so Kindle/Georgia keeps its existing classifier.
+    // v2.8.1 recovery: the v2.8.0 CloudLibrary/Iowan shear experiment is
+    // diagnostic-only. We still calculate/export per-word shear and shearStrength,
+    // but shear must not create italic markup or accepted runs. Keep the code path
+    // disabled here so the measurements remain available for supervised calibration
+    // without disturbing the pre-2.8 legacy classifier or Kindle/Georgia behavior.
     if (profile === "cloud-iowan" && alphaWords.length >= 2) {
       const lineRoman = alphaWords;
       const baseShear = median(lineRoman.map(w=>Math.abs(w.shear || 0)));
@@ -3879,12 +3879,14 @@
         let overlaps = false;
         for (let k=win.start;k<=win.end;k++) if (occupied.has(k)) overlaps = true;
         if (overlaps) continue;
-        for (let k=win.start;k<=win.end;k++) { scored[k].italic = true; occupied.add(k); }
+        // Diagnostic-only: record the coherent shear window, but never mark its
+        // words italic and never short-circuit the legacy classifier below.
+        for (let k=win.start;k<=win.end;k++) occupied.add(k);
         runs.push({ startWord:win.start, endWord:win.end, wordCount:win.len, sign:win.sign,
           avgGain:win.avgGain, avgAbsSlant:win.avgAbsSlant, avgAbsShear:win.avgAbsShear,
-          shearLift:win.shearLift, baseShear, accepted:true, route:'iowan-shear' });
+          shearLift:win.shearLift, baseShear, accepted:false, diagnosticOnly:true,
+          route:'iowan-shear-diagnostic' });
       }
-      if (runs.length) return runs;
     }
 
     // Route B: inline emphasis. Slant by itself proved noisy, so an inline run
@@ -4043,7 +4045,7 @@
         if (typeof progressCallback === "function") {
           progressCallback(index + 1, state.pages.length, italicPct);
         } else {
-          setStatus(`Automatic italic scan 2.8.0 ${state.sourceProfile === "cloud-iowan" ? "CloudLibrary/Iowan" : "profile"}: page ${index + 1} of ${state.pages.length}…`);
+          setStatus(`Automatic italic scan 2.8.1 ${state.sourceProfile === "cloud-iowan" ? "CloudLibrary/Iowan" : "profile"}: page ${index + 1} of ${state.pages.length}…`);
         }
         const img = await loadImageFromFile(file);
         const canvas = makeCroppedCanvas(img);
@@ -4082,9 +4084,9 @@
             const minSlant = letters <= 3 ? 0.20 : 0.17;
             const legacyCandidate = letters >= 2 && Math.abs(r.slant) >= minSlant &&
               r.gain >= minGain && r.score >= 0.72;
-            const iowanShearCandidate = state.sourceProfile === "cloud-iowan" && letters >= 2 &&
-              (r.shearStrength || 0) >= 0.12 && r.score >= 0.72;
-            const candidate = legacyCandidate || iowanShearCandidate;
+            // v2.8.1: Iowan shear is diagnostic-only. Do not let shear promote a
+            // word into the automatic candidate pool; retain the measurements below.
+            const candidate = legacyCandidate;
             return { ...w, ...r, letters, candidate, italic:false };
           });
 
@@ -4122,7 +4124,7 @@
       // projected onto the authoritative current page text instead.
       saveCheckpoint();
       if (els.italicStatus) els.italicStatus.textContent = `${markedRuns} run${markedRuns === 1 ? "" : "s"} · ${markedWords} words`;
-      setStatus(`Automatic italic scan 2.8.0 checked ${scannedWords} words across ${scannedLines} OCR lines and marked ${markedRuns} hybrid run${markedRuns === 1 ? "" : "s"} (${markedWords} words). Formatting evidence was projected onto ${projectedItalicPages} current page${projectedItalicPages === 1 ? "" : "s"} without rebuilding repaired text.`);
+      setStatus(`Automatic italic scan 2.8.1 checked ${scannedWords} words across ${scannedLines} OCR lines and marked ${markedRuns} hybrid run${markedRuns === 1 ? "" : "s"} (${markedWords} words). Formatting evidence was projected onto ${projectedItalicPages} current page${projectedItalicPages === 1 ? "" : "s"} without rebuilding repaired text.`);
       return { markedRuns, markedWords, scannedWords, scannedLines, projectedItalicPages };
     } catch (err) {
       console.error(err);
@@ -4200,7 +4202,8 @@
       boundaryExpansionMinScore: 0.72,
         automaticSingleWordItalics: true,
         italicsCommittedImmediatelyAfterBatchOcr: true,
-        cloudIowanShearDetector: true,
+        cloudIowanShearDetector: false,
+        cloudIowanShearDiagnosticOnly: true,
         cloudIowanTokenSplitAtDash: true,
       },
       topLineCandidatesByGain: rankedLines.slice(0, 100),
@@ -4357,6 +4360,30 @@
 
   function autoMergeStrongContinuations() {
     let merged = 0;
+    const norm = value => stripItalicMarkers(String(value || ""))
+      .replace(/[“”]/g, '"').replace(/[‘’]/g, "'").replace(/\s+/g, " ").trim().toLowerCase();
+
+    // Polish is downstream of the known-good geometry reconstruction. For the
+    // CloudLibrary/Iowan production profile, only merge an existing boundary when
+    // saved source geometry independently reconstructs BOTH sides inside the same
+    // paragraph. If geometry reconstructs B as its own paragraph, preserve it.
+    const geometrySupportsMerge = (page, a, b) => {
+      if (state.sourceProfile !== "cloud-iowan") return true;
+      if (!Array.isArray(page?.layoutLines) || !page.layoutLines.length) return false;
+      const rebuilt = reconstructParagraphsFromLayout(page.layoutLines, {
+        messageMode: !!page.messageMode,
+        bookProfile: state.bookLayoutProfile || buildBookLayoutProfile(state.pages)
+      });
+      const paras = (rebuilt?.paragraphs || []).map(p => norm(p.text)).filter(Boolean);
+      const na = norm(a), nb = norm(b);
+      if (!na || !nb) return false;
+      // Dialogue starts are source-significant paragraph boundaries in this corpus.
+      if (/^["']/.test(nb)) return false;
+      const aTail = na.slice(-Math.min(90, na.length));
+      const bHead = nb.slice(0, Math.min(90, nb.length));
+      return paras.some(p => p.includes(aTail) && p.includes(bHead) && p.indexOf(aTail) <= p.lastIndexOf(bHead));
+    };
+
     state.pages.forEach(page => {
       const blocks = pageBlocks(page);
       let changed = false;
@@ -4365,7 +4392,8 @@
         const b = stripItalicMarkers(blocks[i + 1]).trim();
         const aEndsOpen = /[A-Za-z0-9,;:]$/.test(a) && !/[.!?…]["”'’)]?$/.test(a);
         const bContinues = /^[“"‘']?[a-z]/.test(b);
-        if (!isStructuralBlock(a) && !isStructuralBlock(b) && aEndsOpen && bContinues) {
+        const geometryOkay = geometrySupportsMerge(page, a, b);
+        if (!isStructuralBlock(a) && !isStructuralBlock(b) && aEndsOpen && bContinues && geometryOkay) {
           blocks[i] = `${blocks[i].trim()} ${blocks[i + 1].trim()}`.replace(/\s+/g, " ");
           blocks.splice(i + 1, 1);
           merged++;
