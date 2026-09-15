@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "64";
+  const BUILD_VERSION = "65";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -4706,7 +4706,39 @@
     });
 
     const eligibleRuns=supervisedRuns.filter(r=>!r.alreadyTrained && r.reviewBox && !state.italicCalibrationLabels[italicCalibrationKey(r)]);
-    const supervisedReviewSet=[...eligibleRuns];
+
+    // Build 65: deduplicate BEFORE learned ranking/random shuffle.
+    // The legacy candidate builder intentionally creates many overlapping windows
+    // around the same OCR words. Review needs one physical OCR specimen, not every
+    // possible window containing it.
+    const dedupedByPhysicalWord=new Map();
+    eligibleRuns.forEach(run=>{
+      const wordKeys=italicCalibrationWordKeys(run);
+      // Prefer a single-word specimen. Multiword windows are kept only when there
+      // is no single-word representation for their first physical word.
+      const physicalKey=wordKeys.length ? wordKeys[0] : italicCalibrationKey(run);
+      const current=dedupedByPhysicalWord.get(physicalKey);
+      if(!current){
+        dedupedByPhysicalWord.set(physicalKey,run);
+        return;
+      }
+      const currentKeys=italicCalibrationWordKeys(current);
+      const runSingle=wordKeys.length===1, currentSingle=currentKeys.length===1;
+      if(runSingle && !currentSingle){
+        dedupedByPhysicalWord.set(physicalKey,run);
+        return;
+      }
+      if(runSingle===currentSingle){
+        // For equivalent representations keep the tighter crop, then stronger
+        // typography measurement as a deterministic tie-breaker.
+        const area=r=>Math.max(1,Number(r.reviewBox?.width||0))*Math.max(1,Number(r.reviewBox?.height||0));
+        const a=area(run), b=area(current);
+        if(a<b || (a===b && Number(run.supervisedScore||0)>Number(current.supervisedScore||0))){
+          dedupedByPhysicalWord.set(physicalKey,run);
+        }
+      }
+    });
+    const supervisedReviewSet=[...dedupedByPhysicalWord.values()];
 
     if(state.italicReviewSelectionMode==="learned" && learnedExamples.filter(x=>x.label==="ITALIC").length>=2){
       supervisedReviewSet.sort((a,b)=>{
@@ -4828,7 +4860,7 @@
       downloadBlob(new Blob([JSON.stringify(payload, null, 2)], {type:"application/json"}), `${safeTitle}-italic-diagnostics.json`);
       setStatus(`Downloaded word-level italic diagnostics: ${words.length} words, ${runs.length} candidate runs, ${runs.filter(x=>x.accepted).length} accepted. Spoiler-safe review set is ready.`);
     } else {
-      setStatus(`Built ${state.italicReviewSelectionMode === "learned" ? "a learned-ranked" : "an unlimited randomized"} spoiler-safe queue from ${supervisedReviewSet.length} unseen OCR specimens.`);
+      setStatus(`Built ${state.italicReviewSelectionMode === "learned" ? "a learned-ranked" : "an unlimited randomized"} spoiler-safe queue from ${supervisedReviewSet.length} unique OCR specimens (${eligibleRuns.length} legacy candidate windows before deduplication).`);
     }
     return payload;
   }
@@ -7645,7 +7677,7 @@ ${coverSpine}${spine.join("\n")}
 
     const queue = state.italicCalibrationReviewSet || [];
     setStatus(queue.length
-      ? `Built ${mode === "learned" ? "learned-ranked" : "random"} spoiler-safe review from ${queue.length} measured OCR specimens.`
+      ? `Built ${mode === "learned" ? "learned-ranked" : "random"} spoiler-safe review from ${queue.length} unique measured OCR specimens.`
       : "No eligible review specimens were produced. Typography measurements are present, but the review population is empty.");
 
     els.italicCalibrationReview?.scrollIntoView({behavior:"smooth", block:"start"});
