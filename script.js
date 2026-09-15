@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "31";
+  const BUILD_VERSION = "32";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -4068,7 +4068,7 @@
         if (typeof progressCallback === "function") {
           progressCallback(index + 1, state.pages.length, italicPct);
         } else {
-          setStatus(`Automatic italic scan 31 ${state.sourceProfile === "cloud-iowan" ? "CloudLibrary/Iowan" : "profile"}: page ${index + 1} of ${state.pages.length}…`);
+          setStatus(`Automatic italic scan 32 ${state.sourceProfile === "cloud-iowan" ? "CloudLibrary/Iowan" : "profile"}: page ${index + 1} of ${state.pages.length}…`);
         }
         const img = await loadImageFromFile(file);
         const canvas = makeCroppedCanvas(img);
@@ -4147,7 +4147,7 @@
       // projected onto the authoritative current page text instead.
       saveCheckpoint();
       if (els.italicStatus) els.italicStatus.textContent = `${markedRuns} run${markedRuns === 1 ? "" : "s"} · ${markedWords} words`;
-      setStatus(`Automatic italic scan 31 checked ${scannedWords} words across ${scannedLines} OCR lines and marked ${markedRuns} hybrid run${markedRuns === 1 ? "" : "s"} (${markedWords} words). Formatting evidence was projected onto ${projectedItalicPages} current page${projectedItalicPages === 1 ? "" : "s"} without rebuilding repaired text.`);
+      setStatus(`Automatic italic scan 32 checked ${scannedWords} words across ${scannedLines} OCR lines and marked ${markedRuns} hybrid run${markedRuns === 1 ? "" : "s"} (${markedWords} words). Formatting evidence was projected onto ${projectedItalicPages} current page${projectedItalicPages === 1 ? "" : "s"} without rebuilding repaired text.`);
       return { markedRuns, markedWords, scannedWords, scannedLines, projectedItalicPages };
     } catch (err) {
       console.error(err);
@@ -4379,6 +4379,50 @@
     return !s || s === "* * *" ||
       /^(?:CHAPTER\b|PROLOGUE\b|EPILOGUE\b)/i.test(s) ||
       /^[A-Z][A-Z .'-]{2,}$/.test(s);
+  }
+
+  // v32: Guided Repair must persist source-supported wrapped continuations in
+  // the canonical page text, not merely understand them later during Final Polish.
+  // This is intentionally narrow: both text blocks must map to two consecutive raw
+  // OCR lines, the first must be syntactically open, the second must begin lowercase,
+  // and the source lines must be vertically adjacent. It fixes chapter-opening wrap
+  // cases such as "...do manual / labor on Christmas Eve." without changing lanes.
+  function mergeSourceAdjacentOpenParagraphs(page) {
+    if (state.sourceProfile !== "cloud-iowan" || !Array.isArray(page?.layoutLines) || !page.layoutLines.length) return 0;
+    const blocks = pageBlocks(page);
+    if (blocks.length < 2) return 0;
+    const norm = value => stripItalicMarkers(String(value || ""))
+      .replace(/[“”]/g, '"').replace(/[‘’]/g, "'").replace(/\s+/g, " ").trim().toLowerCase();
+    const lines = page.layoutLines;
+    const profile = state.bookLayoutProfile || buildBookLayoutProfile(state.pages);
+    const typicalH = Number(profile?.typicalH) || 38;
+    let merged = 0;
+
+    for (let i = 0; i < blocks.length - 1; ) {
+      const a = norm(blocks[i]), b = norm(blocks[i + 1]);
+      if (!a || !b || isStructuralBlock(a) || isStructuralBlock(b) ||
+          /[.!?…]["'’)]?$/.test(a) || !/^[a-z]/.test(b)) { i++; continue; }
+      const aProbe = a.slice(-Math.min(56, a.length));
+      const bProbe = b.slice(0, Math.min(56, b.length));
+      let matched = false;
+      for (let li = 0; li < lines.length - 1; li++) {
+        const la = norm(lines[li]?.text), lb = norm(lines[li + 1]?.text);
+        if (!la || !lb) continue;
+        const aMatch = a.endsWith(la) || la.endsWith(aProbe) || a.includes(la.slice(-Math.min(36, la.length)));
+        const bMatch = b.startsWith(lb) || lb.startsWith(bProbe) || bProbe.startsWith(lb.slice(0, Math.min(36, lb.length)));
+        if (!aMatch || !bMatch) continue;
+        const prevBottom = Number(lines[li]?.box?.y) + Number(lines[li]?.box?.h);
+        const gap = Number(lines[li + 1]?.box?.y) - prevBottom;
+        const adjacent = Number.isFinite(gap) && gap >= -6 && gap <= Math.max(typicalH * 0.72, 30);
+        if (adjacent) { matched = true; break; }
+      }
+      if (!matched) { i++; continue; }
+      blocks[i] = `${blocks[i].trim()} ${blocks[i + 1].trim()}`.replace(/\s+/g, " ");
+      blocks.splice(i + 1, 1);
+      merged++;
+    }
+    if (merged) writePageBlocks(page, blocks);
+    return merged;
   }
 
   function autoMergeStrongContinuations() {
@@ -5697,6 +5741,12 @@
       // temporarily replace page.text, so restore the durable edited-page
       // overlay before Dropcap Rescue inspects or modifies chapter openings.
       applyRepairOverlay();
+
+      // v32: overlays/manual-safe stages can reintroduce an OCR-era blank-line split.
+      // Reconcile only source-proven adjacent lowercase continuations before Review/Polish.
+      let sourceContinuationMerges = 0;
+      for (const pageIndex of pageIndexes) sourceContinuationMerges += mergeSourceAdjacentOpenParagraphs(state.pages[pageIndex]);
+      if (sourceContinuationMerges) saveCheckpoint();
 
       repairStage = els.geometryAssist?.checked ? "Dropcap Rescue · geometry on" : "Dropcap Rescue · geometry off";
       setGuidedProgress("5/5 · Dropcaps", 100, "reconstructing");

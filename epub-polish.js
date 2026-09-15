@@ -242,6 +242,14 @@ traffic waffle waffled waffles waffling
       return "Although… I";
     });
 
+    // v32 frozen-corpus exact artifact. Source C1 P2 reads “what are my
+    // chances with…”; Paddle emitted only two dots before the closing quote.
+    // Keep this phrase-specific rather than normalizing all two-dot sequences.
+    text = text.replace(/\bwhat are my chances with\.\.(["”])/gi, (m, quote) => {
+      counts.exactPunctuationArtifacts += 1;
+      return `what are my chances with...${quote}`;
+    });
+
     return {
       text,
       ...counts,
