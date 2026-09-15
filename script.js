@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "30";
+  const BUILD_VERSION = "31";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -4068,7 +4068,7 @@
         if (typeof progressCallback === "function") {
           progressCallback(index + 1, state.pages.length, italicPct);
         } else {
-          setStatus(`Automatic italic scan 30 ${state.sourceProfile === "cloud-iowan" ? "CloudLibrary/Iowan" : "profile"}: page ${index + 1} of ${state.pages.length}…`);
+          setStatus(`Automatic italic scan 31 ${state.sourceProfile === "cloud-iowan" ? "CloudLibrary/Iowan" : "profile"}: page ${index + 1} of ${state.pages.length}…`);
         }
         const img = await loadImageFromFile(file);
         const canvas = makeCroppedCanvas(img);
@@ -4147,7 +4147,7 @@
       // projected onto the authoritative current page text instead.
       saveCheckpoint();
       if (els.italicStatus) els.italicStatus.textContent = `${markedRuns} run${markedRuns === 1 ? "" : "s"} · ${markedWords} words`;
-      setStatus(`Automatic italic scan 30 checked ${scannedWords} words across ${scannedLines} OCR lines and marked ${markedRuns} hybrid run${markedRuns === 1 ? "" : "s"} (${markedWords} words). Formatting evidence was projected onto ${projectedItalicPages} current page${projectedItalicPages === 1 ? "" : "s"} without rebuilding repaired text.`);
+      setStatus(`Automatic italic scan 31 checked ${scannedWords} words across ${scannedLines} OCR lines and marked ${markedRuns} hybrid run${markedRuns === 1 ? "" : "s"} (${markedWords} words). Formatting evidence was projected onto ${projectedItalicPages} current page${projectedItalicPages === 1 ? "" : "s"} without rebuilding repaired text.`);
       return { markedRuns, markedWords, scannedWords, scannedLines, projectedItalicPages };
     } catch (err) {
       console.error(err);
@@ -4815,6 +4815,63 @@
         ? `${wrapHyphens} unresolved candidate${wrapHyphens===1?"":"s"} remain in repaired text; ${alreadyResolvedWrapHyphens} source wrap${alreadyResolvedWrapHyphens===1?" was":"s were"} already healed upstream.`
         : `No unresolved wrap-hyphens remain in repaired text${alreadyResolvedWrapHyphens ? `; ${alreadyResolvedWrapHyphens} source wrap${alreadyResolvedWrapHyphens===1?" was":"s were"} already healed upstream` : ""}.`);
 
+    // v31: Final Polish audits must reason over the same continuation structure
+    // as reconstruction, even when page.text still contains a temporary blank-line
+    // split. This is AUDIT-ONLY: it does not mutate repaired text. It prevents one
+    // source-supported continuation from spawning quote-balance + punctuation ghosts.
+    const auditContinuation = (pageIndex, paraIndex, direction = "next") => {
+      const page = state.pages[pageIndex];
+      if (!page) return false;
+      const paras = pageBlocks(page);
+      const a = stripItalicMarkers(paras[paraIndex] || "").trim();
+      if (!a) return false;
+      const open = /[A-Za-z0-9,;:]$/.test(a) && !/[.!?…]["”'’)]?$/.test(a);
+      if (!open) return false;
+
+      let b = "", nextPage = page, crossPage = false;
+      if (direction === "next" && paraIndex + 1 < paras.length) {
+        b = stripItalicMarkers(paras[paraIndex + 1] || "").trim();
+      } else if (direction === "next" && paraIndex === paras.length - 1 && state.pages[pageIndex + 1] && !state.pages[pageIndex + 1].chapterStart) {
+        nextPage = state.pages[pageIndex + 1];
+        b = stripItalicMarkers(pageBlocks(nextPage)[0] || "").trim();
+        crossPage = true;
+      } else return false;
+      if (!b || !/^[“"‘']?[a-z]/.test(b) || /^["“]/.test(b)) return false;
+
+      // Cross-page prose continuation: an open final paragraph followed by a
+      // lowercase first paragraph on the next non-chapter page is strong evidence.
+      if (crossPage) return true;
+
+      // Same-page continuation: require saved source geometry to put B directly
+      // after the source line that ends A. Accept body-lane wraps and the narrow
+      // v29 indent-lane lowercase wrap case.
+      const lines = Array.isArray(page.layoutLines) ? page.layoutLines : [];
+      if (!lines.length) return false;
+      const profile = state.bookLayoutProfile || buildBookLayoutProfile(state.pages);
+      const bodyLeft = Number(profile?.bodyLeft), indentLeft = Number(profile?.indentLeft);
+      const typicalH = Number(profile?.typicalH) || 38;
+      const laneTol = Number(profile?.laneTolerance) || Math.max(10, typicalH * 0.32);
+      const norm = v => stripItalicMarkers(String(v || "")).replace(/[“”]/g,'"').replace(/[‘’]/g,"'").replace(/\s+/g,' ').trim().toLowerCase();
+      const na = norm(a), nb = norm(b);
+      let best = null;
+      for (let i = 1; i < lines.length; i++) {
+        const cur = norm(lines[i]?.text), prev = norm(lines[i-1]?.text);
+        if (!cur || !prev) continue;
+        const head = nb.slice(0, Math.min(34, nb.length));
+        if (!(cur.startsWith(head) || head.startsWith(cur.slice(0, Math.min(22, cur.length))))) continue;
+        const tail = prev.slice(-Math.min(34, prev.length));
+        const tailMatch = na.endsWith(tail) || na.includes(tail) || prev.includes(na.slice(-Math.min(28, na.length)));
+        if (!tailMatch) continue;
+        const gap = Number(lines[i]?.box?.y) - (Number(lines[i-1]?.box?.y) + Number(lines[i-1]?.box?.h));
+        const x = Number(lines[i]?.box?.x);
+        const adjacent = Number.isFinite(gap) && gap >= -6 && gap <= Math.max(typicalH * .72, 30);
+        const body = Number.isFinite(x) && Number.isFinite(bodyLeft) && Math.abs(x-bodyLeft) <= laneTol;
+        const indent = Number.isFinite(x) && Number.isFinite(indentLeft) && Math.abs(x-indentLeft) <= laneTol;
+        if (adjacent && (body || indent)) { best = true; break; }
+      }
+      return !!best;
+    };
+
     // Quote review is intentionally evidence-first. v2.7.52/.53 tried to
     // normalize one left-shift pattern automatically; that could hide a real
     // review item and overfit one book. v2.7.54 surfaces both quote-balance and
@@ -4874,11 +4931,15 @@
     for (let i = 0; i < oddQuotes.length - 1; i++) {
       const a = oddQuotes[i];
       const b = oddQuotes[i + 1];
+      const samePageAdjacent = b.pageIndex === a.pageIndex && b.paraIndex === a.paraIndex + 1;
       const sameChapter = !state.pages[b.pageIndex]?.chapterStart;
       const touchesBoundary = a.paraIndex === a.paraCount - 1 && b.paraIndex === 0 && b.pageIndex === a.pageIndex + 1;
       const combinedQuotes = ((a.plain + " " + b.plain).match(/["“”]/g) || []).length;
+      const continuation = samePageAdjacent
+        ? auditContinuation(a.pageIndex, a.paraIndex, "next")
+        : (sameChapter && touchesBoundary && auditContinuation(a.pageIndex, a.paraIndex, "next"));
 
-      if (sameChapter && touchesBoundary && combinedQuotes % 2 === 0) {
+      if ((samePageAdjacent || (sameChapter && touchesBoundary)) && continuation && combinedQuotes % 2 === 0) {
         crossPageResolved.add(`${a.pageIndex}|${a.paraIndex}`);
         crossPageResolved.add(`${b.pageIndex}|${b.paraIndex}`);
         i++;
@@ -5018,6 +5079,9 @@
         // periods. Do not invent punctuation automatically. Surface prose that
         // ends in a letter/number so the screenshot can confirm the mark.
         if (/[A-Za-z0-9)]$/.test(plain)) {
+          // v31: if the audit representation has a source-supported same-page
+          // or cross-page continuation, this is not a real paragraph ending.
+          if (auditContinuation(pageIndex, paraIndex, "next")) return;
           // A visual line ending inside a CloudLibrary text bubble is not a
           // paragraph ending, so it must never become a punctuation review card.
           if (messageBubbleWrapEvidence(page, para, "next")) return;
