@@ -4790,7 +4790,7 @@
       supervisedReviewSet.forEach(r=>r.activeLearningReason="random-bootstrap");
     }
     if(state.italicReviewSelectionMode==="hunt"){
-      // v78: positive-acquisition mode. Hunt is intentionally NOT another attempt
+      // v79: positive-acquisition mode, tightened after v78 acquisition QA. Hunt is intentionally NOT another attempt
       // to rank the whole population perfectly. It searches broadly around the
       // visual neighborhoods established by confirmed italics, removes known
       // negatives/repeats, then diversifies the queue so each review has a better
@@ -4808,6 +4808,12 @@
         // One normalized OCR word/phrase per hunt queue. Persisted text is only
         // used for suppression, never as a typography feature or lexical signal.
         if(text && (seenTexts.has(text)||knownTexts.has(text))) continue;
+        // v79: low-information crops were consuming Hunt reviews in v78. Require
+        // at least two Unicode letters in the normalized specimen. This removes
+        // punctuation/symbol debris, detached single letters, and numeric-only
+        // artifacts from positive acquisition without using any word identity.
+        const letterCount=(text.match(/\p{L}/gu)||[]).length;
+        if(letterCount<2) continue;
         if(text) seenTexts.add(text);
         candidates.push(r);
       }
@@ -4827,19 +4833,31 @@
         }
         return Math.sqrt(d/dims);
       };
-      const nearest=(v,rows)=>rows.length?Math.min(...rows.map(x=>distance(v,x.vector))):Infinity;
+      const kNearestMean=(v,rows,k)=>{
+        if(!rows.length)return Infinity;
+        const ds=rows.map(x=>distance(v,x.vector)).filter(Number.isFinite).sort((a,b)=>a-b);
+        const take=ds.slice(0,Math.max(1,Math.min(k,ds.length)));
+        return take.reduce((a,b)=>a+b,0)/take.length;
+      };
       const scored=candidates.map(r=>{
         const v=italicLearningVector(r);
-        const dI=nearest(v,positives), dR=nearest(v,negatives);
-        // Similarity to confirmed positives is the acquisition anchor. Roman
-        // distance is only a modest contrast signal so Hunt can still range into
-        // unexplored neighborhoods instead of collapsing onto the classifier.
+        // v79: use a small neighborhood instead of one nearest example. A single
+        // accidental positive can no longer pull a large Roman neighborhood to
+        // the front of Hunt, while genuine positive families still reinforce one
+        // another as the training pool grows.
+        const dI=kNearestMean(v,positives,3), dR=kNearestMean(v,negatives,5);
         const positiveSimilarity=Number.isFinite(dI)?1/(1+dI):.5;
         const romanContrast=(Number.isFinite(dI)&&Number.isFinite(dR))?Math.max(-1,Math.min(1,(dR-dI)/(dR+dI+1e-6))):0;
         const p=Number.isFinite(r.learnedItalicProbability)?r.learnedItalicProbability:.5;
-        return {r,v,positiveSimilarity,romanContrast,p};
+        const structural=Math.max(0,Math.min(1,Number(r.supervisedScore||0)));
+        // Roman contrast now matters materially. v78's 12% contrast weight let
+        // visually common Roman specimens dominate simply because they happened
+        // to sit near one confirmed italic. Learned probability stays modest so
+        // this does not turn Hunt back into Learned Review.
+        const acquisitionScore=positiveSimilarity*.48+romanContrast*.34+p*.10+structural*.08;
+        return {r,v,positiveSimilarity,romanContrast,p,structural,acquisitionScore};
       });
-      scored.sort((a,b)=>(b.positiveSimilarity+.12*b.romanContrast+.08*b.p)-(a.positiveSimilarity+.12*a.romanContrast+.08*a.p));
+      scored.sort((a,b)=>b.acquisitionScore-a.acquisitionScore);
       const picked=[], remaining=[...scored], target=Math.min(250,scored.length);
       if(remaining.length) picked.push(remaining.shift());
       while(picked.length<target && remaining.length){
@@ -4847,8 +4865,10 @@
         for(let i=0;i<remaining.length;i++){
           const c=remaining[i];
           const minD=picked.length?Math.min(...picked.map(p=>distance(c.v,p.v))):1;
-          const diversity=Math.min(1.5,minD);
-          const score=c.positiveSimilarity*.55+diversity*.30+c.romanContrast*.10+c.p*.05;
+          const diversity=Math.min(1.5,minD)/1.5;
+          // Diversity remains useful, but v79 makes it a tie-breaker rather than
+          // a license to spend most of the review queue exploring Roman space.
+          const score=c.acquisitionScore*.85+diversity*.15;
           if(score>best){best=score;bestIndex=i;}
         }
         picked.push(remaining.splice(bestIndex,1)[0]);
