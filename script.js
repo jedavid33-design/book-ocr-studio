@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "72";
+  const BUILD_VERSION = "73";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -4837,6 +4837,23 @@
       supervisedReviewSet.forEach(r=>r.activeLearningReason="italic-hunt-diverse");
     }
 
+    // v73 diagnostic: freeze the untouched rank BEFORE review removes/reorders anything.
+    supervisedReviewSet.forEach((r,index)=>{
+      r.originalReviewRank=index+1;
+      r.originalLearnedProbability=r.learnedItalicProbability;
+      r.originalGeometryProbability=italicGeometryProbability(r);
+    });
+    state.italicUntouchedTop100=supervisedReviewSet.slice(0,100).map(r=>({
+      originalRank:r.originalReviewRank,
+      specimenKey:italicCalibrationKey(r),
+      learnedProbability:r.originalLearnedProbability,
+      geometryProbability:r.originalGeometryProbability,
+      glyphClass:italicGlyphClassFromRun(r),
+      slantSignal:italicSlantSignal(r),
+      vector:italicLearningVector(r),
+      reviewBox:r.reviewBox
+    }));
+
     supervisedReviewSet.forEach(r=>{
       r.reviewLabel=null;
       r.reviewInstruction='Spoiler-safe human typography label: ITALIC, ROMAN, or UNSURE.';
@@ -7882,8 +7899,8 @@ ${coverSpine}${spine.join("\n")}
   els.italicValidationBtn?.addEventListener("click",async()=>{els.italicValidationBtn.disabled=true;try{await launchItalicLearningReview("validation");}finally{els.italicValidationBtn.disabled=false;}});
   els.exportItalicValidation?.addEventListener("click",()=>{
     const queue=state.italicCalibrationReviewSet||[];
-    const controls=queue.filter(r=>r.validationLabel==="ITALIC").map(r=>({queueRank:queue.indexOf(r)+1,specimenKey:italicCalibrationKey(r),learnedProbability:r.learnedItalicProbability,geometryProbability:italicGeometryProbability(r),glyphClass:italicGlyphClassFromRun(r),vector:italicLearningVector(r),slantSignal:italicSlantSignal(r),reviewBox:r.reviewBox}));
-    const payload={build:BUILD_VERSION,sourceProfile:state.sourceProfile,timing:state.italicReviewTiming,deepTiming:state.italicDiagnosticsTiming||null,populationTiming:state.italicPopulationTiming||null,geometryModel:italicGeometryModel(),queueSize:queue.length,knownItalicControls:controls,note:"Ground-truth validation only; controls were not added to training."};
+    const controls=queue.filter(r=>r.validationLabel==="ITALIC").map(r=>({queueRank:r.originalReviewRank??(queue.indexOf(r)+1),originalRank:r.originalReviewRank??null,specimenKey:italicCalibrationKey(r),learnedProbability:r.learnedItalicProbability,originalLearnedProbability:r.originalLearnedProbability??null,geometryProbability:italicGeometryProbability(r),originalGeometryProbability:r.originalGeometryProbability??null,glyphClass:italicGlyphClassFromRun(r),vector:italicLearningVector(r),slantSignal:italicSlantSignal(r),reviewBox:r.reviewBox}));
+    const payload={build:BUILD_VERSION,sourceProfile:state.sourceProfile,timing:state.italicReviewTiming,deepTiming:state.italicDiagnosticsTiming||null,populationTiming:state.italicPopulationTiming||null,geometryModel:italicGeometryModel(),queueSize:queue.length,untouchedTop100:state.italicUntouchedTop100||[],knownItalicControls:controls,note:"Ground-truth validation only; controls were not added to training."};
     downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),`italic-validation-v${BUILD_VERSION}.json`);
   });
   updatePreview();
