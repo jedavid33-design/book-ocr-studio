@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "82";
+  const BUILD_VERSION = "83";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -4707,20 +4707,39 @@
     const sessionSignature=checkpointSignature().map(signatureFileName).join("|");
     const trainedById=new Map(learnedExamples.map(x=>[String(x.id||""),x]));
     const previouslyTrainedIds=new Set(trainedById.keys());
+    // v83: persisted example IDs contain the session signature plus the physical
+    // OCR coordinates. File names/session signatures can legitimately change when
+    // the same saved sample is reloaded, and the candidate builder can represent a
+    // reviewed word as a different-sized window. Index labels by page/line/start
+    // word as well as exact ID so retrospective validation can reconnect to the
+    // physical specimen without depending on either of those unstable details.
+    const physicalTrainingKeyFromId=id=>{
+      const tail=String(id||"").split("::").pop()||"";
+      const m=tail.match(/^(\d+):(\d+):(\d+):(\d+)$/);
+      return m?`${m[1]}:${m[2]}:${m[3]}`:null;
+    };
+    const physicalRunKey=run=>`${run.pageIndex}:${run.lineIndex}:${run.startWordIndex}`;
+    const trainedByPhysical=new Map();
+    for(const ex of learnedExamples){
+      const k=physicalTrainingKeyFromId(ex.id);
+      if(k && !trainedByPhysical.has(k)) trainedByPhysical.set(k,ex);
+    }
 
     supervisedRuns.forEach(run=>{
       run.learnedItalicProbability=cachedItalicLearnedProbability(run);
       const sid=`${sessionSignature}::${italicCalibrationKey(run)}`;
-      run.alreadyTrained=previouslyTrainedIds.has(sid);
-      // v82 validation wiring: reuse the human label already attached to this
-      // exact physical specimen as retrospective ground truth. The label is
-      // attached only after production scores are computed and is never used as
-      // an input feature or detector rule.
+      const trainedExact=trainedById.get(sid);
+      const trainedPhysical=trainedByPhysical.get(physicalRunKey(run));
+      run.alreadyTrained=previouslyTrainedIds.has(sid)||!!trainedPhysical;
+      // Ground truth is attached only as evaluation metadata. No production score,
+      // eligibility rule, or rank reads validationLabel.
       if(state.italicReviewSelectionMode==="validation"){
-        const trained=trainedById.get(sid);
+        const trained=trainedExact||trainedPhysical;
         run.validationLabel=(trained?.label==="ITALIC"||trained?.label==="ROMAN")?trained.label:null;
+        run.validationMatch=trainedExact?"exact-id":(trainedPhysical?"physical-word":null);
       } else {
         run.validationLabel=null;
+        run.validationMatch=null;
       }
     });
 
@@ -4922,7 +4941,7 @@
       const pickedRuns=picked.map(x=>x.r);
       const pickedSet=new Set(pickedRuns);
       supervisedReviewSet.splice(0,supervisedReviewSet.length,...pickedRuns,...candidates.filter(r=>!pickedSet.has(r)));
-      supervisedReviewSet.forEach((r,i)=>{ r.activeLearningReason="italic-hunt-positive-acquisition-v82"; r.validationHuntRank=i+1; });
+      supervisedReviewSet.forEach((r,i)=>{ r.activeLearningReason="italic-hunt-positive-acquisition-v83"; r.validationHuntRank=i+1; });
       state.italicHuntTiming={totalMs:Math.round((globalThis.performance?.now?.()??Date.now())-__huntT0),population:supervisedReviewSet.length,shortlist:shortlist.length,picked:picked.length};
     }
 
@@ -8172,7 +8191,10 @@ ${coverSpine}${spine.join("\n")}
       return out;
     };
     const controlRows=controls.map(r=>({specimenKey:italicCalibrationKey(r),standardRank:r.validationStandardRank??null,learnedRank:r.validationLearnedRank??null,huntRank:r.validationHuntRank??null,learnedProbability:r.learnedItalicProbability,geometryProbability:italicGeometryProbability(r),featureWeightedProbability:italicFeatureWeightedProbability(r),singleWordTypographyProbability:italicSingleWordTypographyProbability(r),glyphClass:italicGlyphClassFromRun(r),vector:italicLearningVector(r),slantSignal:italicSlantSignal(r),reviewBox:r.reviewBox}));
-    const payload={build:BUILD_VERSION,sourceProfile:state.sourceProfile,timing:state.italicReviewTiming,deepTiming:state.italicDiagnosticsTiming||null,populationTiming:state.italicPopulationTiming||null,huntTiming:state.italicHuntTiming||null,validation:{labelsReviewed:labeled.length,knownItalics:controls.length,knownRomans:romans.length,standard:modeSummary("validationStandardRank"),learned:modeSummary("validationLearnedRank"),hunt:modeSummary("validationHuntRank")},geometryModel:italicGeometryModel(),featureSeparation:italicFeatureSeparationReport(),queueSize:queue.length,knownItalicControls:controlRows,note:"v82 retrospective validation: Standard, Learned, and Hunt are measured over the same labeled physical-specimen population. Existing human training labels provide ground truth for counting/ranks but are not read by the ranking code. Because Learned/Hunt models were trained on these examples, these are retrospective diagnostics, not held-out generalization estimates."};
+    const learningExamples=(currentItalicLearningProfile().examples||[]).filter(x=>(x.label==="ITALIC"||x.label==="ROMAN")&&Array.isArray(x.vector)&&x.vector.length===ITALIC_FEATURE_NAMES.length);
+    const matchedExact=labeled.filter(r=>r.validationMatch==="exact-id").length;
+    const matchedPhysical=labeled.filter(r=>r.validationMatch==="physical-word").length;
+    const payload={build:BUILD_VERSION,sourceProfile:state.sourceProfile,timing:state.italicReviewTiming,deepTiming:state.italicDiagnosticsTiming||null,populationTiming:state.italicPopulationTiming||null,huntTiming:state.italicHuntTiming||null,validation:{labelsReviewed:labeled.length,knownItalics:controls.length,knownRomans:romans.length,persistedLabels:learningExamples.length,matchedExact,matchedPhysical,unmatchedPersisted:Math.max(0,learningExamples.length-labeled.length),standard:modeSummary("validationStandardRank"),learned:modeSummary("validationLearnedRank"),hunt:modeSummary("validationHuntRank")},geometryModel:italicGeometryModel(),featureSeparation:italicFeatureSeparationReport(),queueSize:queue.length,knownItalicControls:controlRows,note:"v83 retrospective validation: Standard, Learned, and Hunt are measured over the same labeled physical-specimen population. Persisted human labels are reconnected by exact ID when possible and otherwise by page/line/start-word coordinates; match diagnostics expose any labels that still cannot be reattached. Ground-truth labels are evaluation-only and are never read by ranking code. Because Learned/Hunt models were trained on these examples, these are retrospective diagnostics, not held-out generalization estimates."};
     downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),`italic-validation-v${BUILD_VERSION}.json`);
   });
   updatePreview();
