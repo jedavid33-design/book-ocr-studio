@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "74";
+  const BUILD_VERSION = "75";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -5102,6 +5102,50 @@
     };
   }
 
+  function italicFeatureWeightedProbability(run){
+    const p=currentItalicLearningProfile(), examples=(p.examples||[]).filter(x=>
+      (x.label==="ITALIC"||x.label==="ROMAN") &&
+      Array.isArray(x.vector) && x.vector.length===ITALIC_FEATURE_NAMES.length
+    );
+    const I=examples.filter(x=>x.label==="ITALIC"), R=examples.filter(x=>x.label==="ROMAN");
+    // Stay neutral until we have enough positive examples to avoid early overfitting.
+    if(I.length<10 || R.length<40)return .5;
+
+    const chosen=[
+      {i:0,w:.7087980703}, // structuralAverage
+      {i:1,w:.6675001632}, // structuralMinimum
+      {i:5,w:.6465410980}, // shearSupport (do not double-count meanLocalShearLift)
+      {i:8,w:.5703953230}, // meanAbsEdgeDelta
+      {i:9,w:.5517625230}, // meanAbsWidthRatioDelta
+      {i:4,w:.4999866091}  // gainSupport (do not double-count meanLocalGainLift)
+    ];
+    const stat=(rows,i)=>{
+      const a=rows.map(x=>Number(x.vector[i])).filter(Number.isFinite);
+      if(!a.length)return null;
+      const mean=a.reduce((x,y)=>x+y,0)/a.length;
+      const variance=a.reduce((x,y)=>x+(y-mean)**2,0)/Math.max(1,a.length-1);
+      return {mean,sd:Math.sqrt(variance)};
+    };
+
+    let weighted=0, weights=0;
+    for(const f of chosen){
+      const is=stat(I,f.i), rs=stat(R,f.i), v=Number(italicLearningVector(run)[f.i]);
+      if(!is||!rs||!Number.isFinite(v))continue;
+      const pooled=Math.sqrt((is.sd**2+rs.sd**2)/2);
+      if(!(pooled>1e-9))continue;
+      // Positive z means "toward the italic mean" regardless of raw feature direction.
+      const midpoint=(is.mean+rs.mean)/2;
+      const direction=is.mean>=rs.mean?1:-1;
+      const z=direction*(v-midpoint)/pooled;
+      // Clamp individual features so one noisy measurement cannot dominate.
+      weighted+=Math.max(-2,Math.min(2,z))*f.w;
+      weights+=f.w;
+    }
+    if(!weights)return .5;
+    const z=weighted/weights;
+    return 1/(1+Math.exp(-1.35*z));
+  }
+
   function italicGeometryProbability(run){
     const m=italicGeometryModel();if(!m.italic||!m.roman||m.italic.n<2||m.roman.n<2)return null;
     const x=italicSlantSignal(run),d=(x,z)=>Math.exp(-.5*((x-z.mean)/z.sd)**2)/z.sd,i=d(x,m.italic),r=d(x,m.roman);
@@ -5186,7 +5230,10 @@
     if(italicFastScoreCache.has(key))return italicFastScoreCache.get(key);
     const value=italicLearnedProbabilityUncached(run);
     italicFastScoreCache.set(key,value);
-    return value;
+    const baseLearned=(value);
+    const featureLearned=italicFeatureWeightedProbability(run);
+    // v75: 80% existing learner + 20% feature-separation signal.
+    return Math.max(0,Math.min(1,baseLearned*.80+featureLearned*.20));
   }
 
   function removeItalicTrainingExample(run) {
@@ -7933,7 +7980,7 @@ ${coverSpine}${spine.join("\n")}
   els.italicValidationBtn?.addEventListener("click",async()=>{els.italicValidationBtn.disabled=true;try{await launchItalicLearningReview("validation");}finally{els.italicValidationBtn.disabled=false;}});
   els.exportItalicValidation?.addEventListener("click",()=>{
     const queue=state.italicCalibrationReviewSet||[];
-    const controls=queue.filter(r=>r.validationLabel==="ITALIC").map(r=>({queueRank:r.originalReviewRank??(queue.indexOf(r)+1),originalRank:r.originalReviewRank??null,specimenKey:italicCalibrationKey(r),learnedProbability:r.learnedItalicProbability,originalLearnedProbability:r.originalLearnedProbability??null,geometryProbability:italicGeometryProbability(r),originalGeometryProbability:r.originalGeometryProbability??null,glyphClass:italicGlyphClassFromRun(r),vector:italicLearningVector(r),slantSignal:italicSlantSignal(r),reviewBox:r.reviewBox}));
+    const controls=queue.filter(r=>r.validationLabel==="ITALIC").map(r=>({queueRank:r.originalReviewRank??(queue.indexOf(r)+1),originalRank:r.originalReviewRank??null,specimenKey:italicCalibrationKey(r),learnedProbability:r.learnedItalicProbability,originalLearnedProbability:r.originalLearnedProbability??null,geometryProbability:italicGeometryProbability(r),originalGeometryProbability:r.originalGeometryProbability??null,featureWeightedProbability:italicFeatureWeightedProbability(r),glyphClass:italicGlyphClassFromRun(r),vector:italicLearningVector(r),slantSignal:italicSlantSignal(r),reviewBox:r.reviewBox}));
     const payload={build:BUILD_VERSION,sourceProfile:state.sourceProfile,timing:state.italicReviewTiming,deepTiming:state.italicDiagnosticsTiming||null,populationTiming:state.italicPopulationTiming||null,geometryModel:italicGeometryModel(),featureSeparation:italicFeatureSeparationReport(),queueSize:queue.length,untouchedTop100:state.italicUntouchedTop100||[],knownItalicControls:controls,note:"Ground-truth validation only; controls were not added to training."};
     downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),`italic-validation-v${BUILD_VERSION}.json`);
   });
