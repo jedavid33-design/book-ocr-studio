@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "89";
+  const BUILD_VERSION = "90";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -5155,8 +5155,17 @@
   }
   function saveItalicLearningStore(store) { try { localStorage.setItem(ITALIC_LEARNING_KEY,JSON.stringify(store)); } catch(err){ console.warn("Could not save italic learning profile",err); } }
   function currentItalicLearningProfile() {
-    const store=loadItalicLearningStore();
     const key=state.sourceProfile||"default";
+    // v90 performance surgery: the learning profile is immutable during a Hunt
+    // population build. Re-parsing the full localStorage training store for every
+    // probability helper multiplied thousands of predictions into minute-scale
+    // synchronous work. saveItalicTrainingExample/remove/import already refresh
+    // state.italicLearningProfile, so reuse that in-memory profile whenever it is
+    // for the active source profile. This changes no vectors, weights, labels, or
+    // probability math; it only removes redundant JSON/localStorage reads.
+    const cached=state.italicLearningProfile;
+    if(cached && cached.sourceProfile===key && Array.isArray(cached.examples)) return cached;
+    const store=loadItalicLearningStore();
     const p=store[key]||{version:1,sourceProfile:key,featureNames:ITALIC_FEATURE_NAMES,examples:[]};
     if(!Array.isArray(p.examples)) p.examples=[];
     state.italicLearningProfile=p;
