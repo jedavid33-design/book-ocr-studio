@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "81";
+  const BUILD_VERSION = "82";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -4705,18 +4705,30 @@
     const profile=currentItalicLearningProfile();
     const learnedExamples=(profile.examples||[]).filter(x=>Array.isArray(x.vector)&&x.vector.length===ITALIC_FEATURE_NAMES.length);
     const sessionSignature=checkpointSignature().map(signatureFileName).join("|");
-    const previouslyTrainedIds=new Set(learnedExamples.map(x=>String(x.id||"")));
+    const trainedById=new Map(learnedExamples.map(x=>[String(x.id||""),x]));
+    const previouslyTrainedIds=new Set(trainedById.keys());
 
     supervisedRuns.forEach(run=>{
       run.learnedItalicProbability=cachedItalicLearnedProbability(run);
       const sid=`${sessionSignature}::${italicCalibrationKey(run)}`;
       run.alreadyTrained=previouslyTrainedIds.has(sid);
+      // v82 validation wiring: reuse the human label already attached to this
+      // exact physical specimen as retrospective ground truth. The label is
+      // attached only after production scores are computed and is never used as
+      // an input feature or detector rule.
+      if(state.italicReviewSelectionMode==="validation"){
+        const trained=trainedById.get(sid);
+        run.validationLabel=(trained?.label==="ITALIC"||trained?.label==="ROMAN")?trained.label:null;
+      } else {
+        run.validationLabel=null;
+      }
     });
 
     _itMark("supervisedBuildMs");
     __popMark("candidateGenerationMs");
     const eligibleRuns=supervisedRuns.filter(r=>{
-      if(r.alreadyTrained || !r.reviewBox || state.italicCalibrationLabels[italicCalibrationKey(r)]) return false;
+      const validationMode=state.italicReviewSelectionMode==="validation";
+      if((!validationMode && r.alreadyTrained) || !r.reviewBox || (!validationMode && state.italicCalibrationLabels[italicCalibrationKey(r)])) return false;
       const text=String(r.text||r.words?.map(w=>w?.text||"").join(" ")||"").normalize("NFKC");
       // Review/training requires real alphanumeric content. Punctuation may ride
       // along with text, but punctuation/symbol-only crops never enter any mode.
@@ -4817,7 +4829,10 @@
       const seenTexts=new Set(), candidates=[];
       for(const r of supervisedReviewSet){
         const text=italicNormalizedSpecimenText(r);
-        if(text && (seenTexts.has(text)||knownTexts.has(text))) continue;
+        // Production Hunt suppresses normalized text it has already trained on.
+        // Validation must retain those exact labeled controls so their Hunt rank
+        // can be measured; the labels themselves remain hidden from scoring.
+        if(text && (seenTexts.has(text)||(state.italicReviewSelectionMode!=="validation"&&knownTexts.has(text)))) continue;
         const letterCount=(text.match(/\p{L}/gu)||[]).length;
         if(letterCount<2) continue;
         // v80: reject tiny OCR labels attached to very wide, shallow crops. These
@@ -4907,7 +4922,7 @@
       const pickedRuns=picked.map(x=>x.r);
       const pickedSet=new Set(pickedRuns);
       supervisedReviewSet.splice(0,supervisedReviewSet.length,...pickedRuns,...candidates.filter(r=>!pickedSet.has(r)));
-      supervisedReviewSet.forEach((r,i)=>{ r.activeLearningReason="italic-hunt-positive-acquisition-v81"; r.validationHuntRank=i+1; });
+      supervisedReviewSet.forEach((r,i)=>{ r.activeLearningReason="italic-hunt-positive-acquisition-v82"; r.validationHuntRank=i+1; });
       state.italicHuntTiming={totalMs:Math.round((globalThis.performance?.now?.()??Date.now())-__huntT0),population:supervisedReviewSet.length,shortlist:shortlist.length,picked:picked.length};
     }
 
@@ -5174,7 +5189,7 @@
       romanCount:R.length,
       featureCount:ITALIC_FEATURE_NAMES.length,
       features,
-      note:"Diagnostic only. Build 74 does not use these separation values to change ranking or learned probabilities."
+      note:`Diagnostic only. Build ${BUILD_VERSION} does not use these separation values to change ranking or learned probabilities.`
     };
   }
 
@@ -8138,6 +8153,8 @@ ${coverSpine}${spine.join("\n")}
   els.italicValidationBtn?.addEventListener("click",async()=>{els.italicValidationBtn.disabled=true;try{await launchItalicLearningReview("validation");}finally{els.italicValidationBtn.disabled=false;}});
   els.exportItalicValidation?.addEventListener("click",()=>{
     const queue=state.italicCalibrationReviewSet||[];
+    // v82: validationLabel is populated from the existing persistent label for
+    // the same physical specimen. No second manual labeling pass is required.
     const labeled=queue.filter(r=>r.validationLabel==="ITALIC"||r.validationLabel==="ROMAN");
     const controls=labeled.filter(r=>r.validationLabel==="ITALIC");
     const romans=labeled.filter(r=>r.validationLabel==="ROMAN");
@@ -8155,7 +8172,7 @@ ${coverSpine}${spine.join("\n")}
       return out;
     };
     const controlRows=controls.map(r=>({specimenKey:italicCalibrationKey(r),standardRank:r.validationStandardRank??null,learnedRank:r.validationLearnedRank??null,huntRank:r.validationHuntRank??null,learnedProbability:r.learnedItalicProbability,geometryProbability:italicGeometryProbability(r),featureWeightedProbability:italicFeatureWeightedProbability(r),singleWordTypographyProbability:italicSingleWordTypographyProbability(r),glyphClass:italicGlyphClassFromRun(r),vector:italicLearningVector(r),slantSignal:italicSlantSignal(r),reviewBox:r.reviewBox}));
-    const payload={build:BUILD_VERSION,sourceProfile:state.sourceProfile,timing:state.italicReviewTiming,deepTiming:state.italicDiagnosticsTiming||null,populationTiming:state.italicPopulationTiming||null,huntTiming:state.italicHuntTiming||null,validation:{labelsReviewed:labeled.length,knownItalics:controls.length,knownRomans:romans.length,standard:modeSummary("validationStandardRank"),learned:modeSummary("validationLearnedRank"),hunt:modeSummary("validationHuntRank")},geometryModel:italicGeometryModel(),featureSeparation:italicFeatureSeparationReport(),queueSize:queue.length,knownItalicControls:controlRows,note:"v81 ground-truth validation: Standard, Learned, and Hunt are measured over the same specimen population. Control labels are evaluation-only and are not added to training."};
+    const payload={build:BUILD_VERSION,sourceProfile:state.sourceProfile,timing:state.italicReviewTiming,deepTiming:state.italicDiagnosticsTiming||null,populationTiming:state.italicPopulationTiming||null,huntTiming:state.italicHuntTiming||null,validation:{labelsReviewed:labeled.length,knownItalics:controls.length,knownRomans:romans.length,standard:modeSummary("validationStandardRank"),learned:modeSummary("validationLearnedRank"),hunt:modeSummary("validationHuntRank")},geometryModel:italicGeometryModel(),featureSeparation:italicFeatureSeparationReport(),queueSize:queue.length,knownItalicControls:controlRows,note:"v82 retrospective validation: Standard, Learned, and Hunt are measured over the same labeled physical-specimen population. Existing human training labels provide ground truth for counting/ranks but are not read by the ranking code. Because Learned/Hunt models were trained on these examples, these are retrospective diagnostics, not held-out generalization estimates."};
     downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),`italic-validation-v${BUILD_VERSION}.json`);
   });
   updatePreview();
