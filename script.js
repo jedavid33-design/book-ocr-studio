@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "78";
+  const BUILD_VERSION = "81";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -4789,8 +4789,22 @@
       }
       supervisedReviewSet.forEach(r=>r.activeLearningReason="random-bootstrap");
     }
-    if(state.italicReviewSelectionMode==="hunt"){
-      // v80: positive-acquisition Hunt quality + speed pass. Keep the existing
+    // v81 validation bridge: preserve comparable ranks for all three review paths
+    // over the same deduplicated specimen population. These ranks are diagnostic
+    // only and never feed ground-truth answers back into production detection.
+    const standardOrder=[...supervisedReviewSet].sort((a,b)=>Number(b.supervisedScore||0)-Number(a.supervisedScore||0));
+    standardOrder.forEach((r,i)=>r.validationStandardRank=i+1);
+    const learnedOrder=[...supervisedReviewSet].sort((a,b)=>{
+      const ap=Number.isFinite(a.learnedItalicProbability)?a.learnedItalicProbability:-1;
+      const bp=Number.isFinite(b.learnedItalicProbability)?b.learnedItalicProbability:-1;
+      return bp!==ap?bp-ap:Number(b.supervisedScore||0)-Number(a.supervisedScore||0);
+    });
+    learnedOrder.forEach((r,i)=>r.validationLearnedRank=i+1);
+
+    if(state.italicReviewSelectionMode==="hunt"||state.italicReviewSelectionMode==="validation"){
+      const __huntT0=(globalThis.performance?.now?.()??Date.now());
+      // v81: validation executes the exact Hunt acquisition path too, so one
+      // control-label pass can measure Standard, Learned, and Hunt together. Keep the existing
       // learned labels intact, but avoid spending review time on low-information
       // glyph/ornament crops and avoid the old O(queue * picked * target) selector.
       const labeled=(profile.examples||[]).filter(x=>
@@ -4893,7 +4907,8 @@
       const pickedRuns=picked.map(x=>x.r);
       const pickedSet=new Set(pickedRuns);
       supervisedReviewSet.splice(0,supervisedReviewSet.length,...pickedRuns,...candidates.filter(r=>!pickedSet.has(r)));
-      supervisedReviewSet.forEach(r=>r.activeLearningReason="italic-hunt-positive-acquisition-v80");
+      supervisedReviewSet.forEach((r,i)=>{ r.activeLearningReason="italic-hunt-positive-acquisition-v81"; r.validationHuntRank=i+1; });
+      state.italicHuntTiming={totalMs:Math.round((globalThis.performance?.now?.()??Date.now())-__huntT0),population:supervisedReviewSet.length,shortlist:shortlist.length,picked:picked.length};
     }
 
     // v73 diagnostic: freeze the untouched rank BEFORE review removes/reorders anything.
@@ -8123,8 +8138,24 @@ ${coverSpine}${spine.join("\n")}
   els.italicValidationBtn?.addEventListener("click",async()=>{els.italicValidationBtn.disabled=true;try{await launchItalicLearningReview("validation");}finally{els.italicValidationBtn.disabled=false;}});
   els.exportItalicValidation?.addEventListener("click",()=>{
     const queue=state.italicCalibrationReviewSet||[];
-    const controls=queue.filter(r=>r.validationLabel==="ITALIC").map(r=>({queueRank:r.originalReviewRank??(queue.indexOf(r)+1),originalRank:r.originalReviewRank??null,specimenKey:italicCalibrationKey(r),learnedProbability:r.learnedItalicProbability,originalLearnedProbability:r.originalLearnedProbability??null,geometryProbability:italicGeometryProbability(r),originalGeometryProbability:r.originalGeometryProbability??null,featureWeightedProbability:italicFeatureWeightedProbability(r),singleWordTypographyProbability:italicSingleWordTypographyProbability(r),glyphClass:italicGlyphClassFromRun(r),vector:italicLearningVector(r),slantSignal:italicSlantSignal(r),reviewBox:r.reviewBox}));
-    const payload={build:BUILD_VERSION,sourceProfile:state.sourceProfile,timing:state.italicReviewTiming,deepTiming:state.italicDiagnosticsTiming||null,populationTiming:state.italicPopulationTiming||null,geometryModel:italicGeometryModel(),featureSeparation:italicFeatureSeparationReport(),queueSize:queue.length,untouchedTop100:state.italicUntouchedTop100||[],generalizationTop100:state.italicGeneralizationTop100||[],reviewedGeneralization:(state.italicReviewHistory||[]).map(r=>({originalRank:r.originalReviewRank??null,chosenLabel:r.reviewChosenLabel??null,...(r.reviewGeneralization||{})})),knownItalicControls:controls,note:"Ground-truth validation only; controls were not added to training."};
+    const labeled=queue.filter(r=>r.validationLabel==="ITALIC"||r.validationLabel==="ROMAN");
+    const controls=labeled.filter(r=>r.validationLabel==="ITALIC");
+    const romans=labeled.filter(r=>r.validationLabel==="ROMAN");
+    const cutoffs=[20,50,100,250];
+    const modeSummary=(rankField)=>{
+      const ranked=labeled.filter(r=>Number.isFinite(Number(r[rankField])));
+      const out={labeled:ranked.length,knownItalics:controls.length,knownRomans:romans.length,cutoffs:{}};
+      for(const n of cutoffs){
+        const selected=ranked.filter(r=>Number(r[rankField])<=n);
+        const tp=selected.filter(r=>r.validationLabel==="ITALIC").length;
+        const fp=selected.filter(r=>r.validationLabel==="ROMAN").length;
+        out.cutoffs[n]={selectedLabeled:selected.length,trueItalics:tp,romans:fp,precision:selected.length?tp/selected.length:null,recall:controls.length?tp/controls.length:null};
+      }
+      out.italicRanks=controls.map(r=>Number(r[rankField])).filter(Number.isFinite).sort((a,b)=>a-b);
+      return out;
+    };
+    const controlRows=controls.map(r=>({specimenKey:italicCalibrationKey(r),standardRank:r.validationStandardRank??null,learnedRank:r.validationLearnedRank??null,huntRank:r.validationHuntRank??null,learnedProbability:r.learnedItalicProbability,geometryProbability:italicGeometryProbability(r),featureWeightedProbability:italicFeatureWeightedProbability(r),singleWordTypographyProbability:italicSingleWordTypographyProbability(r),glyphClass:italicGlyphClassFromRun(r),vector:italicLearningVector(r),slantSignal:italicSlantSignal(r),reviewBox:r.reviewBox}));
+    const payload={build:BUILD_VERSION,sourceProfile:state.sourceProfile,timing:state.italicReviewTiming,deepTiming:state.italicDiagnosticsTiming||null,populationTiming:state.italicPopulationTiming||null,huntTiming:state.italicHuntTiming||null,validation:{labelsReviewed:labeled.length,knownItalics:controls.length,knownRomans:romans.length,standard:modeSummary("validationStandardRank"),learned:modeSummary("validationLearnedRank"),hunt:modeSummary("validationHuntRank")},geometryModel:italicGeometryModel(),featureSeparation:italicFeatureSeparationReport(),queueSize:queue.length,knownItalicControls:controlRows,note:"v81 ground-truth validation: Standard, Learned, and Hunt are measured over the same specimen population. Control labels are evaluation-only and are not added to training."};
     downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),`italic-validation-v${BUILD_VERSION}.json`);
   });
   updatePreview();
