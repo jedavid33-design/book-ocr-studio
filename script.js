@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "77";
+  const BUILD_VERSION = "78";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -4790,14 +4790,31 @@
       supervisedReviewSet.forEach(r=>r.activeLearningReason="random-bootstrap");
     }
     if(state.italicReviewSelectionMode==="hunt"){
-      // Positive-example discovery mode. Start from candidates with some italic
-      // evidence, then greedily maximize visual diversity so the reviewer sees
-      // different typography neighborhoods rather than twenty cousins of "cuts".
-      const candidates=supervisedReviewSet.filter(r=>!italicGlyphClassFromRun(r).startsWith("single:"));
-      const vectors=candidates.map(r=>italicLearningVector(r));
+      // v78: positive-acquisition mode. Hunt is intentionally NOT another attempt
+      // to rank the whole population perfectly. It searches broadly around the
+      // visual neighborhoods established by confirmed italics, removes known
+      // negatives/repeats, then diversifies the queue so each review has a better
+      // chance of adding a genuinely new positive example.
+      const labeled=(profile.examples||[]).filter(x=>
+        (x.label==="ITALIC"||x.label==="ROMAN") &&
+        Array.isArray(x.vector) && x.vector.length===ITALIC_FEATURE_NAMES.length
+      );
+      const positives=labeled.filter(x=>x.label==="ITALIC");
+      const negatives=labeled.filter(x=>x.label==="ROMAN");
+      const knownTexts=new Set(labeled.map(x=>String(x.normalizedText||"")).filter(Boolean));
+      const seenTexts=new Set(), candidates=[];
+      for(const r of supervisedReviewSet){
+        const text=italicNormalizedSpecimenText(r);
+        // One normalized OCR word/phrase per hunt queue. Persisted text is only
+        // used for suppression, never as a typography feature or lexical signal.
+        if(text && (seenTexts.has(text)||knownTexts.has(text))) continue;
+        if(text) seenTexts.add(text);
+        candidates.push(r);
+      }
+      const allVectors=[...labeled.map(x=>x.vector),...candidates.map(r=>italicLearningVector(r))];
       const dims=ITALIC_FEATURE_NAMES.length;
       const scales=Array.from({length:dims},(_,i)=>{
-        const vals=vectors.map(v=>Number(v[i]||0)).filter(Number.isFinite).sort((a,b)=>a-b);
+        const vals=allVectors.map(v=>Number(v[i]||0)).filter(Number.isFinite).sort((a,b)=>a-b);
         if(!vals.length) return 1;
         const q=p=>vals[Math.min(vals.length-1,Math.max(0,Math.floor((vals.length-1)*p)))];
         return Math.max(1e-4,q(.9)-q(.1),vals[vals.length-1]-vals[0]);
@@ -4810,23 +4827,28 @@
         }
         return Math.sqrt(d/dims);
       };
-      const scored=candidates.map((r,i)=>({
-        r,v:vectors[i],
-        p:Number.isFinite(r.learnedItalicProbability)?r.learnedItalicProbability:.5
-      }));
-      // Seed from the strongest non-single learned candidate, but do not let
-      // classifier score alone control the rest of the hunt.
-      scored.sort((a,b)=>b.p-a.p);
-      const picked=[], remaining=[...scored];
+      const nearest=(v,rows)=>rows.length?Math.min(...rows.map(x=>distance(v,x.vector))):Infinity;
+      const scored=candidates.map(r=>{
+        const v=italicLearningVector(r);
+        const dI=nearest(v,positives), dR=nearest(v,negatives);
+        // Similarity to confirmed positives is the acquisition anchor. Roman
+        // distance is only a modest contrast signal so Hunt can still range into
+        // unexplored neighborhoods instead of collapsing onto the classifier.
+        const positiveSimilarity=Number.isFinite(dI)?1/(1+dI):.5;
+        const romanContrast=(Number.isFinite(dI)&&Number.isFinite(dR))?Math.max(-1,Math.min(1,(dR-dI)/(dR+dI+1e-6))):0;
+        const p=Number.isFinite(r.learnedItalicProbability)?r.learnedItalicProbability:.5;
+        return {r,v,positiveSimilarity,romanContrast,p};
+      });
+      scored.sort((a,b)=>(b.positiveSimilarity+.12*b.romanContrast+.08*b.p)-(a.positiveSimilarity+.12*a.romanContrast+.08*a.p));
+      const picked=[], remaining=[...scored], target=Math.min(250,scored.length);
       if(remaining.length) picked.push(remaining.shift());
-      const target=Math.min(250, scored.length);
       while(picked.length<target && remaining.length){
         let bestIndex=0,best=-Infinity;
         for(let i=0;i<remaining.length;i++){
           const c=remaining[i];
-          const minD=Math.min(...picked.map(p=>distance(c.v,p.v)));
-          // Diversity dominates; modest learned evidence breaks ties.
-          const score=minD*0.82+c.p*0.18;
+          const minD=picked.length?Math.min(...picked.map(p=>distance(c.v,p.v))):1;
+          const diversity=Math.min(1.5,minD);
+          const score=c.positiveSimilarity*.55+diversity*.30+c.romanContrast*.10+c.p*.05;
           if(score>best){best=score;bestIndex=i;}
         }
         picked.push(remaining.splice(bestIndex,1)[0]);
@@ -4834,7 +4856,7 @@
       const pickedRuns=picked.map(x=>x.r);
       const pickedSet=new Set(pickedRuns);
       supervisedReviewSet.splice(0,supervisedReviewSet.length,...pickedRuns,...candidates.filter(r=>!pickedSet.has(r)));
-      supervisedReviewSet.forEach(r=>r.activeLearningReason="italic-hunt-diverse");
+      supervisedReviewSet.forEach(r=>r.activeLearningReason="italic-hunt-positive-acquisition");
     }
 
     // v73 diagnostic: freeze the untouched rank BEFORE review removes/reorders anything.
@@ -5007,7 +5029,7 @@
     const id=`${sessionSignature}::${specimenId}`;
     const existing=p.examples.find(x=>x.id===id);
     const glyphClass=italicGlyphClassFromRun(run);
-    const example={id,label,vector,glyphClass,slantSignal:italicSlantSignal(run),createdAt:existing?.createdAt||new Date().toISOString(),updatedAt:new Date().toISOString()};
+    const example={id,label,vector,glyphClass,slantSignal:italicSlantSignal(run),normalizedText:italicNormalizedSpecimenText(run),createdAt:existing?.createdAt||new Date().toISOString(),updatedAt:new Date().toISOString()};
     if(existing) Object.assign(existing,example); else p.examples.push(example);
     p.updatedAt=new Date().toISOString(); p.featureNames=ITALIC_FEATURE_NAMES;
     store[key]=p; saveItalicLearningStore(store); state.italicLearningProfile=p;
@@ -5338,7 +5360,7 @@
       if(payload?.format!=="book-ocr-studio-italic-learning-v1"||!p||!Array.isArray(p.examples)) throw new Error("Not an OCR Studio italic learning profile");
       if(p.sourceProfile!==state.sourceProfile) throw new Error(`This profile is for ${p.sourceProfile}, not ${state.sourceProfile}`);
       const clean=p.examples.filter(x=>(x.label==="ITALIC"||x.label==="ROMAN")&&Array.isArray(x.vector)&&x.vector.length===ITALIC_FEATURE_NAMES.length)
-        .map(x=>({id:String(x.id||crypto.randomUUID()),label:x.label,vector:x.vector.map(Number),createdAt:x.createdAt||new Date().toISOString(),updatedAt:x.updatedAt||new Date().toISOString()}));
+        .map(x=>({id:String(x.id||crypto.randomUUID()),label:x.label,vector:x.vector.map(Number),normalizedText:String(x.normalizedText||""),createdAt:x.createdAt||new Date().toISOString(),updatedAt:x.updatedAt||new Date().toISOString()}));
       const store=loadItalicLearningStore(), cur=currentItalicLearningProfile();
       const byId=new Map((cur.examples||[]).map(x=>[x.id,x])); clean.forEach(x=>byId.set(x.id,x));
       store[state.sourceProfile]={version:1,sourceProfile:state.sourceProfile,featureNames:ITALIC_FEATURE_NAMES,examples:[...byId.values()],updatedAt:new Date().toISOString()};
