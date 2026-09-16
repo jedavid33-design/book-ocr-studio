@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "93";
+  const BUILD_VERSION = "94";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -4287,6 +4287,10 @@
   }
 
   function downloadItalicDiagnostics(shouldDownload = true) {const __popNow=()=>globalThis.performance?.now?.()??Date.now(),__popT0=__popNow();let __popLast=__popT0;const __popTiming={};const __popMark=n=>{const q=__popNow();__popTiming[n]=Math.round((q-__popLast)*10)/10;__popLast=q;};
+    // Build 94: independently instrument the large pre-supervised setup bucket.
+    // This timer does not disturb the existing population stage timings.
+    let __setupLast=__popT0; const __setupTiming={};
+    const __setupMark=n=>{const q=__popNow();__setupTiming[n]=Math.round((q-__setupLast)*10)/10;__setupLast=q;};
     const _itNow=()=>globalThis.performance?.now?.()??Date.now(),_itT0=_itNow();let _itLast=_itT0;const _itDeep={};const _itMark=n=>{const q=_itNow();_itDeep[n]=Math.round((q-_itLast)*10)/10;_itLast=q;};
     
     const lines = [];
@@ -4314,6 +4318,7 @@
     }
     const rankedLines = [...lines].sort((a,b) => (b.gain || 0) - (a.gain || 0));
     const rankedWords = [...words].sort((a,b) => (b.gain || 0) - (a.gain || 0));
+    __setupMark("extractAndRankMs");
 
     // v39 calibration shortlist: compare each word with the roman texture of its
     // own OCR line. Raw shear proved too noisy to lead the ranking in v38, so v39
@@ -4384,6 +4389,7 @@
       };
     }).sort((a,b) => b.calibrationScore - a.calibrationScore)
       .map((word, index) => ({ ...word, calibrationRank: index + 1 }));
+    __setupMark("calibrationWordsMs");
 
 
     // Build 49: generic style-sensitive local typography-change diagnostics.
@@ -4485,6 +4491,7 @@
     });
     typographyChangeWindows.sort((a,b)=>b.typographyChangeScore-a.typographyChangeScore)
       .forEach((r,i)=>r.typographyChangeRank=i+1);
+    __setupMark("typographyChangeWindowsMs");
 
 
     // Build 50: corpus-generic glyph-composition-matched baseline experiment.
@@ -4556,6 +4563,7 @@
     });
     glyphMatchedTypographyWindows.sort((a,b)=>b.glyphMatchedScore-a.glyphMatchedScore)
       .forEach((r,i)=>r.glyphMatchedRank=i+1);
+    __setupMark("glyphMatchedTypographyMs");
 
     // v40 supervised calibration: rank contiguous multiword runs using the v39
     // word scores. True book italics are commonly phrases/runs, while noisy
@@ -4590,6 +4598,7 @@
     });
     calibrationRuns.sort((a,b)=>b.runCalibrationScore-a.runCalibrationScore)
       .forEach((r,i)=>r.runCalibrationRank=i+1);
+    __setupMark("calibrationRunsMs");
 
     // v44 supervised calibration sampler. v43 proved that requiring current
     // italic-correlated corroboration is too strict for Iowan: useful calibration
@@ -4624,6 +4633,7 @@
       if(Math.abs(Number(c.widthRatioDelta||0))>=0.08) signals++;
       return signals;
     };
+    __setupMark("supervisedPrepMs");
     _itMark("beforeSupervisedMs");
     __popMark("setupMs");
     const supervisedRuns=[];
@@ -5051,6 +5061,7 @@
     state.italicDiagnosticsTiming=_itDeep;
     __popMark("finalizeMs");
     __popTiming.totalMs=Math.round((__popNow()-__popT0)*10)/10;
+    __popTiming.setupBreakdown=__setupTiming;
     __popTiming.population={lines:lines.length,words:words.length,legacyWindows:supervisedRuns.length,eligible:eligibleRuns.length,deduped:supervisedReviewSet.length};
     state.italicPopulationTiming=__popTiming;
 
