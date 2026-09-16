@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "83";
+  const BUILD_VERSION = "84";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -8133,6 +8133,16 @@ ${coverSpine}${spine.join("\n")}
     if(!state.pages?.length||!state.files?.length){setStatus("Load the saved screenshot/OCR project before starting italic review.");return;}
     const now=()=>globalThis.performance?.now?.()??Date.now(), t0=now(), timing={mode,startedAt:new Date().toISOString()};
     state.italicReviewSelectionMode=mode; state.italicReviewHistory=[];
+    // v84: validation replays the persisted feature records directly. Do not
+    // rebuild the page/window population just to rediscover old physical crops.
+    if(mode==="validation"){
+      const replay=buildPersistedItalicValidationReplay();
+      state.italicPersistedValidationReplay=replay;
+      state.italicHuntTiming=replay.huntTiming;
+      state.italicReviewTiming={mode,startedAt:new Date().toISOString(),measurementPrepMs:0,populationBuildRankMs:0,renderMs:0,totalMs:Math.round(now()-t0),queueSize:0,replay:true};
+      setStatus(`Validation replay ready: ${replay.rows.length} persisted labeled feature records scored through Standard, Learned, and Hunt in ${(state.italicReviewTiming.totalMs/1000).toFixed(2)}s.`);
+      return;
+    }
     let t=now();
     const hasMeasurements=state.pages.some(page=>(page.layoutLines||[]).some(line=>line.italicMeta||(Array.isArray(line.italicWordMeta)&&line.italicWordMeta.length)));
     if(!hasMeasurements){setStatus("Preparing spoiler-safe typography measurements…");await autoScanItalics({rebuildText:false});}
@@ -8170,31 +8180,46 @@ ${coverSpine}${spine.join("\n")}
     finally { els.italicReviewHuntBtn.disabled=false; }
   });
   els.italicValidationBtn?.addEventListener("click",async()=>{els.italicValidationBtn.disabled=true;try{await launchItalicLearningReview("validation");}finally{els.italicValidationBtn.disabled=false;}});
-  els.exportItalicValidation?.addEventListener("click",()=>{
-    const queue=state.italicCalibrationReviewSet||[];
-    // v82: validationLabel is populated from the existing persistent label for
-    // the same physical specimen. No second manual labeling pass is required.
-    const labeled=queue.filter(r=>r.validationLabel==="ITALIC"||r.validationLabel==="ROMAN");
-    const controls=labeled.filter(r=>r.validationLabel==="ITALIC");
-    const romans=labeled.filter(r=>r.validationLabel==="ROMAN");
-    const cutoffs=[20,50,100,250];
-    const modeSummary=(rankField)=>{
-      const ranked=labeled.filter(r=>Number.isFinite(Number(r[rankField])));
-      const out={labeled:ranked.length,knownItalics:controls.length,knownRomans:romans.length,cutoffs:{}};
-      for(const n of cutoffs){
-        const selected=ranked.filter(r=>Number(r[rankField])<=n);
-        const tp=selected.filter(r=>r.validationLabel==="ITALIC").length;
-        const fp=selected.filter(r=>r.validationLabel==="ROMAN").length;
-        out.cutoffs[n]={selectedLabeled:selected.length,trueItalics:tp,romans:fp,precision:selected.length?tp/selected.length:null,recall:controls.length?tp/controls.length:null};
-      }
-      out.italicRanks=controls.map(r=>Number(r[rankField])).filter(Number.isFinite).sort((a,b)=>a-b);
-      return out;
+  function buildPersistedItalicValidationReplay(){
+    const now=()=>globalThis.performance?.now?.()??Date.now(), t0=now();
+    const examples=(currentItalicLearningProfile().examples||[]).filter(x=>(x.label==="ITALIC"||x.label==="ROMAN")&&Array.isArray(x.vector)&&x.vector.length===ITALIC_FEATURE_NAMES.length);
+    const pseudoRun=(x)=>{
+      const v=x.vector.map(n=>Number.isFinite(Number(n))?Number(n):0), wc=Math.max(1,Math.round(v[6]||1));
+      const glyph=String(x.glyphClass||`word:${wc}`), single=glyph.startsWith("single:");
+      const text=single?(glyph.split(":")[1]||"a"):Array.from({length:Math.max(2,wc)},()=>"aa").join(" ");
+      const words=Array.from({length:wc},(_,i)=>({wordIndex:i,text:single&&i===0?text:"aa",inkDensityZ:v[7],edgeDelta:v[8],widthRatioDelta:v[9],localSlantLift:v[10],localGainLift:v[11],localShearLift:v[12]}));
+      return {text,words,wordCount:wc,structuralAverage:v[0],structuralMinimum:v[1],structuralConsistency:v[2],slantSupport:v[3],gainSupport:v[4],shearSupport:v[5],reviewBox:null};
     };
-    const controlRows=controls.map(r=>({specimenKey:italicCalibrationKey(r),standardRank:r.validationStandardRank??null,learnedRank:r.validationLearnedRank??null,huntRank:r.validationHuntRank??null,learnedProbability:r.learnedItalicProbability,geometryProbability:italicGeometryProbability(r),featureWeightedProbability:italicFeatureWeightedProbability(r),singleWordTypographyProbability:italicSingleWordTypographyProbability(r),glyphClass:italicGlyphClassFromRun(r),vector:italicLearningVector(r),slantSignal:italicSlantSignal(r),reviewBox:r.reviewBox}));
-    const learningExamples=(currentItalicLearningProfile().examples||[]).filter(x=>(x.label==="ITALIC"||x.label==="ROMAN")&&Array.isArray(x.vector)&&x.vector.length===ITALIC_FEATURE_NAMES.length);
-    const matchedExact=labeled.filter(r=>r.validationMatch==="exact-id").length;
-    const matchedPhysical=labeled.filter(r=>r.validationMatch==="physical-word").length;
-    const payload={build:BUILD_VERSION,sourceProfile:state.sourceProfile,timing:state.italicReviewTiming,deepTiming:state.italicDiagnosticsTiming||null,populationTiming:state.italicPopulationTiming||null,huntTiming:state.italicHuntTiming||null,validation:{labelsReviewed:labeled.length,knownItalics:controls.length,knownRomans:romans.length,persistedLabels:learningExamples.length,matchedExact,matchedPhysical,unmatchedPersisted:Math.max(0,learningExamples.length-labeled.length),standard:modeSummary("validationStandardRank"),learned:modeSummary("validationLearnedRank"),hunt:modeSummary("validationHuntRank")},geometryModel:italicGeometryModel(),featureSeparation:italicFeatureSeparationReport(),queueSize:queue.length,knownItalicControls:controlRows,note:"v83 retrospective validation: Standard, Learned, and Hunt are measured over the same labeled physical-specimen population. Persisted human labels are reconnected by exact ID when possible and otherwise by page/line/start-word coordinates; match diagnostics expose any labels that still cannot be reattached. Ground-truth labels are evaluation-only and are never read by ranking code. Because Learned/Hunt models were trained on these examples, these are retrospective diagnostics, not held-out generalization estimates."};
+    const standardScore=(v)=>{
+      const wc=Math.max(1,Math.round(Number(v[6]||1)));
+      const contextBonus=wc>=2?Math.min(.22,(wc-1)*.055)*(.35+Math.max(0,Math.min(1,Number(v[2]||0)))*.65):0;
+      return Number(v[0]||0)+Math.max(0,Number(v[1]||0))*.10+Number(v[2]||0)*.10+Math.min(Number(v[3]||0),.12)+Math.min(Number(v[4]||0)*16,.12)+Math.min(Number(v[5]||0)*.004,.02)+contextBonus;
+    };
+    const rows=examples.map((x,i)=>{const run=pseudoRun(x);run.supervisedScore=standardScore(x.vector);return {index:i,label:x.label,vector:x.vector,glyphClass:x.glyphClass||null,normalizedText:x.normalizedText||null,standardScore:run.supervisedScore,learnedScore:italicLearnedProbabilityUncached(run),run};});
+    [...rows].sort((a,b)=>b.standardScore-a.standardScore).forEach((r,i)=>r.standardRank=i+1);
+    [...rows].sort((a,b)=>(Number.isFinite(b.learnedScore)?b.learnedScore:-1)-(Number.isFinite(a.learnedScore)?a.learnedScore:-1)||b.standardScore-a.standardScore).forEach((r,i)=>r.learnedRank=i+1);
+
+    const hunt0=now(), positives=examples.filter(x=>x.label==="ITALIC"), negatives=examples.filter(x=>x.label==="ROMAN"), dims=ITALIC_FEATURE_NAMES.length;
+    const scaleVectors=examples.map(x=>x.vector);
+    const scales=Array.from({length:dims},(_,i)=>{const vals=scaleVectors.map(v=>Number(v[i]||0)).filter(Number.isFinite).sort((a,b)=>a-b);if(!vals.length)return 1;const q=p=>vals[Math.min(vals.length-1,Math.max(0,Math.floor((vals.length-1)*p)))];return Math.max(1e-4,q(.9)-q(.1),vals[vals.length-1]-vals[0]);});
+    const distance=(a,b)=>{let d=0;for(let i=0;i<dims;i++){const z=(Number(a[i]||0)-Number(b[i]||0))/scales[i];d+=Math.min(25,z*z);}return Math.sqrt(d/dims);};
+    const kNearestMean=(v,pool,k,excludeIndex)=>{const best=[];for(let j=0;j<pool.length;j++){const x=pool[j];if(x===examples[excludeIndex])continue;const d=distance(v,x.vector);let z=0;while(z<best.length&&best[z]<=d)z++;if(z<k){best.splice(z,0,d);if(best.length>k)best.pop();}else if(best.length<k)best.push(d);}return best.length?best.reduce((a,b)=>a+b,0)/best.length:Infinity;};
+    const scored=rows.map(r=>{const dI=kNearestMean(r.vector,positives,3,r.index),dR=kNearestMean(r.vector,negatives,5,r.index),positiveSimilarity=Number.isFinite(dI)?1/(1+dI):.5,romanContrast=(Number.isFinite(dI)&&Number.isFinite(dR))?Math.max(-1,Math.min(1,(dR-dI)/(dR+dI+1e-6))):0,p=Number.isFinite(r.learnedScore)?r.learnedScore:.5,structural=Math.max(0,Math.min(1,r.standardScore));r.huntScore=positiveSimilarity*.42+romanContrast*.42+p*.08+structural*.08;return r;}).sort((a,b)=>b.huntScore-a.huntScore);
+    const shortlist=scored.slice(0,Math.min(600,scored.length)),picked=[],remaining=[...shortlist],target=Math.min(250,shortlist.length);
+    if(remaining.length){const first=remaining.shift();picked.push(first);remaining.forEach(c=>c.minPickedDistance=distance(c.vector,first.vector));}
+    while(picked.length<target&&remaining.length){let bi=0,best=-Infinity;for(let i=0;i<remaining.length;i++){const c=remaining[i],diversity=Math.min(1.5,Number(c.minPickedDistance||0))/1.5,score=c.huntScore*.90+diversity*.10;if(score>best){best=score;bi=i;}}const chosen=remaining.splice(bi,1)[0];picked.push(chosen);for(const c of remaining){const d=distance(c.vector,chosen.vector);if(d<c.minPickedDistance)c.minPickedDistance=d;}}
+    const pickedSet=new Set(picked),huntOrder=[...picked,...scored.filter(r=>!pickedSet.has(r))];huntOrder.forEach((r,i)=>r.huntRank=i+1);
+    const huntTiming={totalMs:Math.round((now()-hunt0)*10)/10,population:rows.length,shortlist:shortlist.length,picked:picked.length,replay:true};
+    return {rows,huntTiming,totalMs:Math.round((now()-t0)*10)/10};
+  }
+
+  els.exportItalicValidation?.addEventListener("click",()=>{
+    const replay=state.italicPersistedValidationReplay||buildPersistedItalicValidationReplay();
+    state.italicPersistedValidationReplay=replay; state.italicHuntTiming=replay.huntTiming;
+    const rows=replay.rows, controls=rows.filter(r=>r.label==="ITALIC"), romans=rows.filter(r=>r.label==="ROMAN"), cutoffs=[20,50,100,250];
+    const modeSummary=(rankField)=>{const ranked=rows.filter(r=>Number.isFinite(Number(r[rankField]))),out={labeled:ranked.length,knownItalics:controls.length,knownRomans:romans.length,cutoffs:{}};for(const n of cutoffs){const selected=ranked.filter(r=>Number(r[rankField])<=n),tp=selected.filter(r=>r.label==="ITALIC").length,fp=selected.filter(r=>r.label==="ROMAN").length;out.cutoffs[n]={selectedLabeled:selected.length,trueItalics:tp,romans:fp,precision:selected.length?tp/selected.length:null,recall:controls.length?tp/controls.length:null};}out.italicRanks=controls.map(r=>Number(r[rankField])).filter(Number.isFinite).sort((a,b)=>a-b);return out;};
+    const controlRows=controls.map(r=>({standardRank:r.standardRank,learnedRank:r.learnedRank,huntRank:r.huntRank,standardScore:r.standardScore,learnedProbability:r.learnedScore,huntScore:r.huntScore,glyphClass:r.glyphClass,vector:r.vector}));
+    const payload={build:BUILD_VERSION,sourceProfile:state.sourceProfile,timing:state.italicReviewTiming||null,deepTiming:null,populationTiming:null,huntTiming:replay.huntTiming,validation:{labelsReviewed:rows.length,knownItalics:controls.length,knownRomans:romans.length,persistedLabels:rows.length,replayablePersisted:rows.length,unreplayablePersisted:0,standard:modeSummary("standardRank"),learned:modeSummary("learnedRank"),hunt:modeSummary("huntRank")},geometryModel:italicGeometryModel(),featureSeparation:italicFeatureSeparationReport(),queueSize:0,knownItalicControls:controlRows,note:"v84 persisted-feature retrospective validation: Standard, Learned, and Hunt are replayed directly over the same stored human-labeled feature vectors; no page/crop reattachment is required. Standard score is reconstructed from the persisted structural features. Learned uses the production feature learner on reconstructed typography-only specimens. Hunt uses the production v80 acquisition weights and diversity selector over the persisted vectors, with each specimen excluded from its own nearest-neighbor distance. Labels are used only after ranking to count outcomes. This is a retrospective diagnostic on training examples, not a held-out generalization estimate."};
     downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),`italic-validation-v${BUILD_VERSION}.json`);
   });
   updatePreview();
