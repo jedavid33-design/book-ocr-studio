@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "73";
+  const BUILD_VERSION = "74";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -5068,6 +5068,40 @@
     const stat=a=>{if(!a.length)return null;const mean=a.reduce((x,y)=>x+y,0)/a.length;const sd=Math.max(.05,Math.sqrt(a.reduce((x,y)=>x+(y-mean)**2,0)/Math.max(1,a.length-1)));return{mean,sd,n:a.length};};
     italicGeometryCache={italic:stat(I),roman:stat(R)};italicGeometryRevision=rev;return italicGeometryCache;
   }
+  function italicFeatureSeparationReport(){
+    const p=currentItalicLearningProfile(), examples=(p.examples||[]).filter(x=>
+      (x.label==="ITALIC"||x.label==="ROMAN") &&
+      Array.isArray(x.vector) && x.vector.length===ITALIC_FEATURE_NAMES.length
+    );
+    const I=examples.filter(x=>x.label==="ITALIC"), R=examples.filter(x=>x.label==="ROMAN");
+    const stat=(rows,i)=>{
+      const a=rows.map(x=>Number(x.vector[i])).filter(Number.isFinite);
+      if(!a.length)return null;
+      const mean=a.reduce((x,y)=>x+y,0)/a.length;
+      const variance=a.reduce((x,y)=>x+(y-mean)**2,0)/Math.max(1,a.length-1);
+      return {mean,sd:Math.sqrt(variance),n:a.length};
+    };
+    const features=ITALIC_FEATURE_NAMES.map((name,i)=>{
+      const italic=stat(I,i),roman=stat(R,i);
+      if(!italic||!roman)return {index:i,name,italic,roman,separation:null};
+      const pooled=Math.sqrt((italic.sd**2+roman.sd**2)/2);
+      const signed=pooled>1e-9?(italic.mean-roman.mean)/pooled:0;
+      return {
+        index:i,name,italic,roman,
+        signedSeparation:signed,
+        separation:Math.abs(signed),
+        italicHigher:italic.mean>roman.mean
+      };
+    }).sort((a,b)=>(b.separation??-1)-(a.separation??-1));
+    return {
+      italicCount:I.length,
+      romanCount:R.length,
+      featureCount:ITALIC_FEATURE_NAMES.length,
+      features,
+      note:"Diagnostic only. Build 74 does not use these separation values to change ranking or learned probabilities."
+    };
+  }
+
   function italicGeometryProbability(run){
     const m=italicGeometryModel();if(!m.italic||!m.roman||m.italic.n<2||m.roman.n<2)return null;
     const x=italicSlantSignal(run),d=(x,z)=>Math.exp(-.5*((x-z.mean)/z.sd)**2)/z.sd,i=d(x,m.italic),r=d(x,m.roman);
@@ -7900,7 +7934,7 @@ ${coverSpine}${spine.join("\n")}
   els.exportItalicValidation?.addEventListener("click",()=>{
     const queue=state.italicCalibrationReviewSet||[];
     const controls=queue.filter(r=>r.validationLabel==="ITALIC").map(r=>({queueRank:r.originalReviewRank??(queue.indexOf(r)+1),originalRank:r.originalReviewRank??null,specimenKey:italicCalibrationKey(r),learnedProbability:r.learnedItalicProbability,originalLearnedProbability:r.originalLearnedProbability??null,geometryProbability:italicGeometryProbability(r),originalGeometryProbability:r.originalGeometryProbability??null,glyphClass:italicGlyphClassFromRun(r),vector:italicLearningVector(r),slantSignal:italicSlantSignal(r),reviewBox:r.reviewBox}));
-    const payload={build:BUILD_VERSION,sourceProfile:state.sourceProfile,timing:state.italicReviewTiming,deepTiming:state.italicDiagnosticsTiming||null,populationTiming:state.italicPopulationTiming||null,geometryModel:italicGeometryModel(),queueSize:queue.length,untouchedTop100:state.italicUntouchedTop100||[],knownItalicControls:controls,note:"Ground-truth validation only; controls were not added to training."};
+    const payload={build:BUILD_VERSION,sourceProfile:state.sourceProfile,timing:state.italicReviewTiming,deepTiming:state.italicDiagnosticsTiming||null,populationTiming:state.italicPopulationTiming||null,geometryModel:italicGeometryModel(),featureSeparation:italicFeatureSeparationReport(),queueSize:queue.length,untouchedTop100:state.italicUntouchedTop100||[],knownItalicControls:controls,note:"Ground-truth validation only; controls were not added to training."};
     downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),`italic-validation-v${BUILD_VERSION}.json`);
   });
   updatePreview();
