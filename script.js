@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "90";
+  const BUILD_VERSION = "91";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -8195,10 +8195,13 @@ ${coverSpine}${spine.join("\n")}
     console.error("Book OCR Studio promise error", event.reason);
   });
 
-  async function launchItalicLearningReview(mode) {
+  async function launchItalicLearningReview(mode, buttonTiming = null) {
     if(state.sourceProfile!=="cloud-iowan"){setStatus("Italic learning review currently uses the CloudLibrary / Iowan Old Style profile.");return;}
     if(!state.pages?.length||!state.files?.length){setStatus("Load the saved screenshot/OCR project before starting italic review.");return;}
-    const now=()=>globalThis.performance?.now?.()??Date.now(), t0=now(), timing={mode,startedAt:new Date().toISOString()};
+    const now=()=>globalThis.performance?.now?.()??Date.now();
+    const t0=buttonTiming?.performanceNow ?? now();
+    const wallStartedAt=buttonTiming?.wallStartedAt ?? Date.now();
+    const timing={mode,startedAt:new Date(wallStartedAt).toISOString(),buttonToHandlerMs:Math.round(now()-t0)};
     state.italicReviewSelectionMode=mode; state.italicReviewHistory=[];
     // v86: Validation does two jobs in one button press. First execute the live
     // specimen-population path so its real latency is measured stage-by-stage;
@@ -8229,14 +8232,21 @@ ${coverSpine}${spine.join("\n")}
       return;
     }
     let t=now();
+    const queueAtButton=Number(buttonTiming?.queueAtButton ?? (state.italicCalibrationReviewSet?.length||0));
     const hasMeasurements=state.pages.some(page=>(page.layoutLines||[]).some(line=>line.italicMeta||(Array.isArray(line.italicWordMeta)&&line.italicWordMeta.length)));
+    timing.runTemperature=(hasMeasurements || queueAtButton>0) ? "warm-or-reused" : "cold";
+    timing.measurementsAtButton=hasMeasurements;
+    timing.queueAtButton=queueAtButton;
+    timing.preparationStartedMs=Math.round(now()-t0);
     if(!hasMeasurements){setStatus("Preparing spoiler-safe typography measurements…");await autoScanItalics({rebuildText:false});}
     timing.measurementPrepMs=Math.round(now()-t);
+    timing.afterMeasurementMs=Math.round(now()-t0);
     t=now();
     const beforeDiagPages=state.pages?.length||0;
     const beforeDiagQueue=state.italicCalibrationReviewSet?.length||0;
     downloadItalicDiagnostics(false);
     timing.populationBuildRankMs=Math.round(now()-t);
+    timing.afterPopulationRankMs=Math.round(now()-t0);
     timing.actualPopulationPath={
       pages:beforeDiagPages,
       queueBefore:beforeDiagQueue,
@@ -8244,7 +8254,12 @@ ${coverSpine}${spine.join("\n")}
       diagnosticsInternal:state.italicDiagnosticsTiming||null
     };
     t=now(); renderItalicCalibrationReview(); timing.renderMs=Math.round(now()-t);
-    timing.totalMs=Math.round(now()-t0); timing.queueSize=(state.italicCalibrationReviewSet||[]).length; state.italicReviewTiming=timing;
+    timing.firstCardVisibleMs=Math.round(now()-t0);
+    timing.totalMs=timing.firstCardVisibleMs;
+    timing.wallClockTotalMs=Date.now()-wallStartedAt;
+    timing.queueSize=(state.italicCalibrationReviewSet||[]).length;
+    state.italicReviewTiming=timing;
+    if(mode==="hunt") state.lastRealItalicHuntTiming={...timing};
     setStatus(`Built ${mode} review from ${timing.queueSize} unique specimens in ${(timing.totalMs/1000).toFixed(1)}s.`);
     els.italicCalibrationReview?.scrollIntoView({behavior:"smooth",block:"start"});
   }
@@ -8260,8 +8275,9 @@ ${coverSpine}${spine.join("\n")}
     finally { els.italicReviewRandomBtn.disabled=false; }
   });
   els.italicReviewHuntBtn?.addEventListener("click", async () => {
+    const buttonTiming={performanceNow:(globalThis.performance?.now?.()??Date.now()),wallStartedAt:Date.now(),queueAtButton:state.italicCalibrationReviewSet?.length||0};
     els.italicReviewHuntBtn.disabled=true;
-    try { await launchItalicLearningReview("hunt"); }
+    try { await launchItalicLearningReview("hunt", buttonTiming); }
     finally { els.italicReviewHuntBtn.disabled=false; }
   });
   els.italicValidationBtn?.addEventListener("click",async()=>{els.italicValidationBtn.disabled=true;try{await launchItalicLearningReview("validation");}finally{els.italicValidationBtn.disabled=false;}});
@@ -8304,7 +8320,7 @@ ${coverSpine}${spine.join("\n")}
     const rows=replay.rows, controls=rows.filter(r=>r.label==="ITALIC"), romans=rows.filter(r=>r.label==="ROMAN"), cutoffs=[20,50,100,250];
     const modeSummary=(rankField)=>{const ranked=rows.filter(r=>Number.isFinite(Number(r[rankField]))),out={labeled:ranked.length,knownItalics:controls.length,knownRomans:romans.length,cutoffs:{}};for(const n of cutoffs){const selected=ranked.filter(r=>Number(r[rankField])<=n),tp=selected.filter(r=>r.label==="ITALIC").length,fp=selected.filter(r=>r.label==="ROMAN").length;out.cutoffs[n]={selectedLabeled:selected.length,trueItalics:tp,romans:fp,precision:selected.length?tp/selected.length:null,recall:controls.length?tp/controls.length:null};}out.italicRanks=controls.map(r=>Number(r[rankField])).filter(Number.isFinite).sort((a,b)=>a-b);return out;};
     const controlRows=controls.map(r=>({standardRank:r.standardRank,learnedRank:r.learnedRank,huntRank:r.huntRank,standardScore:r.standardScore,learnedProbability:r.learnedScore,huntScore:r.huntScore,glyphClass:r.glyphClass,vector:r.vector}));
-    const payload={build:BUILD_VERSION,sourceProfile:state.sourceProfile,timing:state.italicReviewTiming||null,deepTiming:state.italicValidationDeepTiming||state.italicDiagnosticsTiming||null,populationTiming:state.italicValidationPopulationTiming||state.italicPopulationTiming||null,huntTiming:{replay:replay.huntTiming,live:state.italicValidationLiveHuntTiming||null},validation:{labelsReviewed:rows.length,knownItalics:controls.length,knownRomans:romans.length,persistedLabels:rows.length,replayablePersisted:rows.length,unreplayablePersisted:0,standard:modeSummary("standardRank"),learned:modeSummary("learnedRank"),hunt:modeSummary("huntRank")},geometryModel:italicGeometryModel(),featureSeparation:italicFeatureSeparationReport(),queueSize:0,knownItalicControls:controlRows,note:"v86 combined validation: the live specimen-population path is timed stage-by-stage, then Standard, Learned, and Hunt are replayed directly over the same stored human-labeled feature vectors for retrospective quality counts; no page/crop reattachment is required. Standard score is reconstructed from the persisted structural features. Learned uses the production feature learner on reconstructed typography-only specimens. Hunt uses the production v86 acquisition weights and diversity selector over the persisted vectors, with each specimen excluded from its own nearest-neighbor distance. Labels are used only after ranking to count outcomes. This is a retrospective diagnostic on training examples, not a held-out generalization estimate."};
+    const payload={build:BUILD_VERSION,sourceProfile:state.sourceProfile,timing:state.italicReviewTiming||null,deepTiming:state.italicValidationDeepTiming||state.italicDiagnosticsTiming||null,populationTiming:state.italicValidationPopulationTiming||state.italicPopulationTiming||null,huntTiming:{replay:replay.huntTiming,live:state.italicValidationLiveHuntTiming||null,lastRealHunt:state.lastRealItalicHuntTiming||((state.italicReviewTiming?.mode==="hunt")?state.italicReviewTiming:null)},validation:{labelsReviewed:rows.length,knownItalics:controls.length,knownRomans:romans.length,persistedLabels:rows.length,replayablePersisted:rows.length,unreplayablePersisted:0,standard:modeSummary("standardRank"),learned:modeSummary("learnedRank"),hunt:modeSummary("huntRank")},geometryModel:italicGeometryModel(),featureSeparation:italicFeatureSeparationReport(),queueSize:0,knownItalicControls:controlRows,note:"v86 combined validation: the live specimen-population path is timed stage-by-stage, then Standard, Learned, and Hunt are replayed directly over the same stored human-labeled feature vectors for retrospective quality counts; no page/crop reattachment is required. Standard score is reconstructed from the persisted structural features. Learned uses the production feature learner on reconstructed typography-only specimens. Hunt uses the production v86 acquisition weights and diversity selector over the persisted vectors, with each specimen excluded from its own nearest-neighbor distance. Labels are used only after ranking to count outcomes. This is a retrospective diagnostic on training examples, not a held-out generalization estimate."};
     downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),`italic-validation-v${BUILD_VERSION}.json`);
   });
   updatePreview();
