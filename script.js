@@ -4790,11 +4790,9 @@
       supervisedReviewSet.forEach(r=>r.activeLearningReason="random-bootstrap");
     }
     if(state.italicReviewSelectionMode==="hunt"){
-      // v79: positive-acquisition mode, tightened after v78 acquisition QA. Hunt is intentionally NOT another attempt
-      // to rank the whole population perfectly. It searches broadly around the
-      // visual neighborhoods established by confirmed italics, removes known
-      // negatives/repeats, then diversifies the queue so each review has a better
-      // chance of adding a genuinely new positive example.
+      // v80: positive-acquisition Hunt quality + speed pass. Keep the existing
+      // learned labels intact, but avoid spending review time on low-information
+      // glyph/ornament crops and avoid the old O(queue * picked * target) selector.
       const labeled=(profile.examples||[]).filter(x=>
         (x.label==="ITALIC"||x.label==="ROMAN") &&
         Array.isArray(x.vector) && x.vector.length===ITALIC_FEATURE_NAMES.length
@@ -4805,22 +4803,29 @@
       const seenTexts=new Set(), candidates=[];
       for(const r of supervisedReviewSet){
         const text=italicNormalizedSpecimenText(r);
-        // One normalized OCR word/phrase per hunt queue. Persisted text is only
-        // used for suppression, never as a typography feature or lexical signal.
         if(text && (seenTexts.has(text)||knownTexts.has(text))) continue;
-        // v79: low-information crops were consuming Hunt reviews in v78. Require
-        // at least two Unicode letters in the normalized specimen. This removes
-        // punctuation/symbol debris, detached single letters, and numeric-only
-        // artifacts from positive acquisition without using any word identity.
         const letterCount=(text.match(/\p{L}/gu)||[]).length;
         if(letterCount<2) continue;
+        // v80: reject tiny OCR labels attached to very wide, shallow crops. These
+        // are commonly flourishes/rules/ornaments that OCR hallucinates as two
+        // letters. Longer lexical specimens remain eligible regardless of shape.
+        const bw=Math.max(1,Number(r.reviewBox?.w||r.reviewBox?.width||0));
+        const bh=Math.max(1,Number(r.reviewBox?.h||r.reviewBox?.height||0));
+        if(letterCount<=2 && bw/bh>=3.25) continue;
         if(text) seenTexts.add(text);
         candidates.push(r);
       }
-      const allVectors=[...labeled.map(x=>x.vector),...candidates.map(r=>italicLearningVector(r))];
+
+      // Compute each candidate vector once. Scale estimation only needs a bounded,
+      // evenly-spaced sample of the unseen population; scanning every vector into
+      // a giant temporary matrix was pure latency and did not improve Hunt labels.
+      const candidateRows=candidates.map(r=>({r,v:italicLearningVector(r)}));
+      const scaleSample=candidateRows.length<=1200 ? candidateRows :
+        Array.from({length:1200},(_,i)=>candidateRows[Math.floor(i*(candidateRows.length-1)/1199)]);
+      const scaleVectors=[...labeled.map(x=>x.vector),...scaleSample.map(x=>x.v)];
       const dims=ITALIC_FEATURE_NAMES.length;
       const scales=Array.from({length:dims},(_,i)=>{
-        const vals=allVectors.map(v=>Number(v[i]||0)).filter(Number.isFinite).sort((a,b)=>a-b);
+        const vals=scaleVectors.map(v=>Number(v[i]||0)).filter(Number.isFinite).sort((a,b)=>a-b);
         if(!vals.length) return 1;
         const q=p=>vals[Math.min(vals.length-1,Math.max(0,Math.floor((vals.length-1)*p)))];
         return Math.max(1e-4,q(.9)-q(.1),vals[vals.length-1]-vals[0]);
@@ -4835,48 +4840,60 @@
       };
       const kNearestMean=(v,rows,k)=>{
         if(!rows.length)return Infinity;
-        const ds=rows.map(x=>distance(v,x.vector)).filter(Number.isFinite).sort((a,b)=>a-b);
-        const take=ds.slice(0,Math.max(1,Math.min(k,ds.length)));
-        return take.reduce((a,b)=>a+b,0)/take.length;
+        // Training sets are small; keep only k nearest values without sorting the
+        // full Roman pool for every candidate.
+        const best=[];
+        for(const x of rows){
+          const d=distance(v,x.vector); if(!Number.isFinite(d))continue;
+          let j=0; while(j<best.length && best[j]<=d)j++;
+          if(j<k){best.splice(j,0,d); if(best.length>k)best.pop();}
+          else if(best.length<k)best.push(d);
+        }
+        return best.length?best.reduce((a,b)=>a+b,0)/best.length:Infinity;
       };
-      const scored=candidates.map(r=>{
-        const v=italicLearningVector(r);
-        // v79: use a small neighborhood instead of one nearest example. A single
-        // accidental positive can no longer pull a large Roman neighborhood to
-        // the front of Hunt, while genuine positive families still reinforce one
-        // another as the training pool grows.
+      const scored=candidateRows.map(({r,v})=>{
         const dI=kNearestMean(v,positives,3), dR=kNearestMean(v,negatives,5);
         const positiveSimilarity=Number.isFinite(dI)?1/(1+dI):.5;
         const romanContrast=(Number.isFinite(dI)&&Number.isFinite(dR))?Math.max(-1,Math.min(1,(dR-dI)/(dR+dI+1e-6))):0;
         const p=Number.isFinite(r.learnedItalicProbability)?r.learnedItalicProbability:.5;
         const structural=Math.max(0,Math.min(1,Number(r.supervisedScore||0)));
-        // Roman contrast now matters materially. v78's 12% contrast weight let
-        // visually common Roman specimens dominate simply because they happened
-        // to sit near one confirmed italic. Learned probability stays modest so
-        // this does not turn Hunt back into Learned Review.
-        const acquisitionScore=positiveSimilarity*.48+romanContrast*.34+p*.10+structural*.08;
-        return {r,v,positiveSimilarity,romanContrast,p,structural,acquisitionScore};
+        // v80 leans harder on separation from the much larger confirmed Roman
+        // population. Positive resemblance still leads, but "near an italic" is
+        // no longer sufficient when the specimen is even nearer known Roman text.
+        const acquisitionScore=positiveSimilarity*.42+romanContrast*.42+p*.08+structural*.08;
+        return {r,v,acquisitionScore};
       });
       scored.sort((a,b)=>b.acquisitionScore-a.acquisitionScore);
-      const picked=[], remaining=[...scored], target=Math.min(250,scored.length);
-      if(remaining.length) picked.push(remaining.shift());
+
+      // Diversity is useful only among plausible positives. Restrict its search to
+      // the strongest acquisition neighborhood, then maintain each candidate's
+      // nearest-picked distance incrementally. This turns the former geological
+      // wait into a bounded ~250 x 600 distance pass.
+      const shortlist=scored.slice(0,Math.min(600,scored.length));
+      const picked=[], remaining=[...shortlist], target=Math.min(250,shortlist.length);
+      if(remaining.length){
+        const first=remaining.shift(); picked.push(first);
+        remaining.forEach(c=>c.minPickedDistance=distance(c.v,first.v));
+      }
       while(picked.length<target && remaining.length){
         let bestIndex=0,best=-Infinity;
         for(let i=0;i<remaining.length;i++){
           const c=remaining[i];
-          const minD=picked.length?Math.min(...picked.map(p=>distance(c.v,p.v))):1;
-          const diversity=Math.min(1.5,minD)/1.5;
-          // Diversity remains useful, but v79 makes it a tie-breaker rather than
-          // a license to spend most of the review queue exploring Roman space.
-          const score=c.acquisitionScore*.85+diversity*.15;
+          const diversity=Math.min(1.5,Number(c.minPickedDistance||0))/1.5;
+          const score=c.acquisitionScore*.90+diversity*.10;
           if(score>best){best=score;bestIndex=i;}
         }
-        picked.push(remaining.splice(bestIndex,1)[0]);
+        const chosen=remaining.splice(bestIndex,1)[0];
+        picked.push(chosen);
+        for(const c of remaining){
+          const d=distance(c.v,chosen.v);
+          if(d<c.minPickedDistance)c.minPickedDistance=d;
+        }
       }
       const pickedRuns=picked.map(x=>x.r);
       const pickedSet=new Set(pickedRuns);
       supervisedReviewSet.splice(0,supervisedReviewSet.length,...pickedRuns,...candidates.filter(r=>!pickedSet.has(r)));
-      supervisedReviewSet.forEach(r=>r.activeLearningReason="italic-hunt-positive-acquisition");
+      supervisedReviewSet.forEach(r=>r.activeLearningReason="italic-hunt-positive-acquisition-v80");
     }
 
     // v73 diagnostic: freeze the untouched rank BEFORE review removes/reorders anything.
