@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "88";
+  const BUILD_VERSION = "89";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -4796,15 +4796,21 @@
     _itMark("dedupeMs");
     __popMark("dedupeMs");
     const supervisedReviewSet=[...dedupedByPhysicalWord.values()];
-    // v70: score only unique physical OCR specimens, never the 18k overlapping windows.
-    __popMark("scoringMs");
+    // v70: score only unique physical OCR specimens, never the overlapping legacy windows.
+    // v89: split the old reviewOrdering bucket around the learned-probability pass.
+    // v87-v88 showed ~105 s here even in Hunt, while Hunt's own scorer took only
+    // ~150 ms. These marks intentionally change no ranking or learning behavior.
+    const __learnedProbT0=__popNow();
     supervisedReviewSet.forEach(run=>{
       run.learnedItalicProbability=cachedItalicLearnedProbability(run);
     });
+    const __learnedProbT1=__popNow();
+    __popTiming.learnedProbabilityPassMs=Math.round((__learnedProbT1-__learnedProbT0)*10)/10;
+    __popLast=__learnedProbT1;
 
     if((state.italicReviewSelectionMode==="learned"||state.italicReviewSelectionMode==="validation") && learnedExamples.filter(x=>x.label==="ITALIC").length>=2){
       _itMark("scoreAndPrepMs");
-    __popMark("preSortMs");
+      const __learnedSortT0=__popNow();
     supervisedReviewSet.sort((a,b)=>{
         const ap=Number.isFinite(a.learnedItalicProbability)?a.learnedItalicProbability:-1;
         const bp=Number.isFinite(b.learnedItalicProbability)?b.learnedItalicProbability:-1;
@@ -4814,7 +4820,11 @@
         if(bp!==ap) return bp-ap;
         return Number(b.supervisedScore||0)-Number(a.supervisedScore||0);
       });
+      const __learnedSortT1=__popNow();
+      __popTiming.learnedReviewSortMs=Math.round((__learnedSortT1-__learnedSortT0)*10)/10;
+      const __reasonT0=__popNow();
       supervisedReviewSet.forEach(r=>r.activeLearningReason="learned-ranked");
+      __popTiming.reviewReasonPrepMs=Math.round((__popNow()-__reasonT0)*10)/10;
     } else if(state.italicReviewSelectionMode==="hunt") {
       // v88 performance surgery: Hunt immediately replaces this provisional
       // order with its own scored/diversified acquisition order below. The old
@@ -4822,7 +4832,9 @@
       // per specimen (~2.9k calls), which v87 measured as ~105 seconds in this
       // browser. Skipping that throwaway shuffle changes no Hunt ranking or
       // eligibility; it only removes work whose result was never consumed.
+      const __reasonT0=__popNow();
       supervisedReviewSet.forEach(r=>r.activeLearningReason="hunt-pending");
+      __popTiming.reviewReasonPrepMs=Math.round((__popNow()-__reasonT0)*10)/10;
     } else {
       // Preserve the unbiased random-bootstrap behavior for Standard review.
       // Use one cryptographic seed instead of thousands of synchronous crypto
@@ -4838,7 +4850,10 @@
       }
       supervisedReviewSet.forEach(r=>r.activeLearningReason="random-bootstrap");
     }
-    __popMark("reviewOrderingMs");
+    const __reviewOrderEnd=__popNow();
+    __popTiming.reviewOrderingResidualMs=Math.round((__reviewOrderEnd-__popLast)*10)/10;
+    __popTiming.reviewOrderingMs=Math.round((__reviewOrderEnd-__learnedProbT0)*10)/10;
+    __popLast=__reviewOrderEnd;
     // v81 validation bridge: preserve comparable ranks for all three review paths
     // over the same deduplicated specimen population. These ranks are diagnostic
     // only and never feed ground-truth answers back into production detection.
