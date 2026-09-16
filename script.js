@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "94";
+  const BUILD_VERSION = "95";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -4510,7 +4510,12 @@
       tokenOccurrenceMap.get(token).push(w);
     });
     const matchedWordEvidence = new Map();
-    allTypographyWords.forEach(w => {
+    // v95: this entire same-token glyph-matched pass is diagnostic-only and was
+    // consuming ~9 minutes on a 204-page book before Hunt could render. It has
+    // never contributed to production review ranking, learned probabilities, or
+    // automatic italic decisions. Build it only for an explicit diagnostics
+    // download; normal Learned/Random/Hunt/Validation queue construction skips it.
+    if (shouldDownload) allTypographyWords.forEach(w => {
       const token = normalizeTypographyToken(w.text);
       const occurrences = (tokenOccurrenceMap.get(token) || []).filter(o => o !== w);
       if (occurrences.length < 2) return; // require at least 3 total observations
@@ -4531,7 +4536,7 @@
         deltas:Object.fromEntries(deltas.map(d=>[typographyFeatureNames[d.i],d.z]))});
     });
     const glyphMatchedTypographyWindows=[];
-    lineGroups.forEach(peers => {
+    if (shouldDownload) lineGroups.forEach(peers => {
       const ordered=[...peers].sort((a,b)=>Number(a.wordIndex||0)-Number(b.wordIndex||0));
       for(let start=0;start<ordered.length;start++){
         for(let len=1;len<=Math.min(6,ordered.length-start);len++){
@@ -4889,7 +4894,11 @@
       );
       const positives=labeled.filter(x=>x.label==="ITALIC");
       const negatives=labeled.filter(x=>x.label==="ROMAN");
-      const knownTexts=new Set(labeled.map(x=>String(x.normalizedText||"")).filter(Boolean));
+      const persistedGlyphs=(profile.examples||[]).filter(x=>x.label==="GLYPH");
+      const knownTexts=new Set([
+        ...labeled.map(x=>String(x.normalizedText||"")),
+        ...persistedGlyphs.map(x=>String(x.normalizedText||""))
+      ].filter(Boolean));
       const seenTexts=new Set(), candidates=[];
       for(const r of supervisedReviewSet){
         const text=italicNormalizedSpecimenText(r);
@@ -5025,7 +5034,7 @@
 
     supervisedReviewSet.forEach(r=>{
       r.reviewLabel=null;
-      r.reviewInstruction='Spoiler-safe human typography label: ITALIC, ROMAN, or UNSURE.';
+      r.reviewInstruction='Spoiler-safe human typography label: ITALIC, ROMAN, GLYPH/DECORATIVE, or UNSURE.';
     });
     __popMark("reviewMetadataMs");
     // Build 55: mixed-style review specimens can be split into their existing
@@ -5183,7 +5192,9 @@
     return p;
   }
   function saveItalicTrainingExample(run,label) {
-    if(label!=="ITALIC"&&label!=="ROMAN") return; // UNSURE never trains.
+    if(label!=="ITALIC"&&label!=="ROMAN"&&label!=="GLYPH") return; // UNSURE never persists.
+    // GLYPH is a persisted exclusion class. It is intentionally ignored by the
+    // Italic-vs-Roman learner but lets review/Hunt remember decorative material.
     const store=loadItalicLearningStore(), key=state.sourceProfile||"default";
     const p=store[key]||{version:1,sourceProfile:key,featureNames:ITALIC_FEATURE_NAMES,examples:[]};
     if(!Array.isArray(p.examples)) p.examples=[];
@@ -5201,7 +5212,7 @@
   }
   function italicLearningStats() {
     const p=currentItalicLearningProfile(), ex=p.examples||[];
-    return {total:ex.length,italic:ex.filter(x=>x.label==="ITALIC").length,roman:ex.filter(x=>x.label==="ROMAN").length};
+    return {total:ex.length,italic:ex.filter(x=>x.label==="ITALIC").length,roman:ex.filter(x=>x.label==="ROMAN").length,glyph:ex.filter(x=>x.label==="GLYPH").length};
   }
   function italicGlyphClassFromRun(run) {
     const raw=String(run?.text||run?.words?.map(w=>w?.text||"").join("")||"").normalize("NFKC");
@@ -5534,7 +5545,7 @@
 
   function updateItalicLearningUi() {
     const st=italicLearningStats();
-    if(els.italicLearningStatus) els.italicLearningStatus.textContent=`Learned: ${st.italic} italic · ${st.roman} Roman`;
+    if(els.italicLearningStatus) els.italicLearningStatus.textContent=`Learned: ${st.italic} italic · ${st.roman} Roman${st.glyph?` · ${st.glyph} glyph/decorative`:""}`;
   }
   function exportItalicLearningProfile() {
     const p=currentItalicLearningProfile();
@@ -5646,12 +5657,13 @@
           <button class="button secondary" data-previous ${state.italicReviewHistory?.length?"":"disabled"}>← Previous</button>
           <button class="button secondary" data-label="ITALIC">Italic</button>
           <button class="button secondary" data-label="ROMAN">Roman</button>
+          <button class="button secondary" data-label="GLYPH">Glyph / Decorative</button>
           <button class="button secondary" data-label="UNSURE">Unsure</button>
           ${Array.isArray(run.splitChildren)&&run.splitChildren.length>1?'<button class="button secondary" data-split="words">Split</button>':''}
         </div>`;
       if(state.italicReviewSelectionMode==="validation"){
-        const ib=card.querySelector('[data-label="ITALIC"]'), rb=card.querySelector('[data-label="ROMAN"]'), ub=card.querySelector('[data-label="UNSURE"]');
-        if(ib) ib.textContent="Known italic"; if(rb) rb.textContent="Not a control"; if(ub) ub.textContent="Skip";
+        const ib=card.querySelector('[data-label="ITALIC"]'), rb=card.querySelector('[data-label="ROMAN"]'), gb=card.querySelector('[data-label="GLYPH"]'), ub=card.querySelector('[data-label="UNSURE"]');
+        if(ib) ib.textContent="Known italic"; if(rb) rb.textContent="Not a control"; if(gb) gb.textContent="Glyph / decorative"; if(ub) ub.textContent="Skip";
       }
       card.querySelectorAll("[data-label]").forEach(btn => btn.addEventListener("click", () => {
         if (state.italicCalibrationLabels[key]) return;
