@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "76";
+  const BUILD_VERSION = "77";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -5138,6 +5138,36 @@
     });
   }
 
+  function italicSingleWordTypographyProbability(run){
+    const text=italicNormalizedSpecimenText(run);
+    const words=text?text.split(" ").filter(Boolean):[];
+    if(words.length!==1)return null;
+    const p=currentItalicLearningProfile();
+    const examples=(p.examples||[]).filter(x=>
+      (x.label==="ITALIC"||x.label==="ROMAN") &&
+      Array.isArray(x.vector) && x.vector.length===ITALIC_FEATURE_NAMES.length
+    );
+    const I=examples.filter(x=>x.label==="ITALIC"),R=examples.filter(x=>x.label==="ROMAN");
+    if(I.length<10||R.length<40)return null;
+
+    // Same strongest non-duplicate typography features established in v74.
+    const chosen=[0,1,5,8,9,4], v=italicLearningVector(run);
+    let score=0,n=0;
+    for(const i of chosen){
+      const vals=rows=>rows.map(x=>Number(x.vector[i])).filter(Number.isFinite);
+      const ia=vals(I),ra=vals(R); if(!ia.length||!ra.length)continue;
+      const mean=a=>a.reduce((x,y)=>x+y,0)/a.length;
+      const im=mean(ia),rm=mean(ra);
+      const variance=(a,m)=>a.reduce((x,y)=>x+(y-m)**2,0)/Math.max(1,a.length-1);
+      const pooled=Math.sqrt((variance(ia,im)+variance(ra,rm))/2);
+      const x=Number(v[i]); if(!Number.isFinite(x)||!(pooled>1e-9))continue;
+      const midpoint=(im+rm)/2,direction=im>=rm?1:-1;
+      score+=Math.max(-2,Math.min(2,direction*(x-midpoint)/pooled)); n++;
+    }
+    if(!n)return null;
+    return 1/(1+Math.exp(-1.35*(score/n)));
+  }
+
   function italicFeatureWeightedProbability(run){
     const p=currentItalicLearningProfile(), examples=(p.examples||[]).filter(x=>
       (x.label==="ITALIC"||x.label==="ROMAN") &&
@@ -5269,7 +5299,14 @@
     const baseLearned=(value);
     const featureLearned=italicFeatureWeightedProbability(run);
     // v75: 80% existing learner + 20% feature-separation signal.
-    return Math.max(0,Math.min(1,baseLearned*.80+featureLearned*.20));
+    let finalLearned=Math.max(0,Math.min(1,baseLearned*.80+featureLearned*.20));
+    const singleWordTypography=italicSingleWordTypographyProbability(run);
+    // v77: isolated words were 0/20 in v76. Give typography-only evidence a
+    // conservative rescue path without using the word's lexical identity.
+    if(singleWordTypography!=null){
+      finalLearned=Math.max(0,Math.min(1,finalLearned*.82+singleWordTypography*.18));
+    }
+    return finalLearned;
   }
 
   function removeItalicTrainingExample(run) {
@@ -8027,7 +8064,7 @@ ${coverSpine}${spine.join("\n")}
   els.italicValidationBtn?.addEventListener("click",async()=>{els.italicValidationBtn.disabled=true;try{await launchItalicLearningReview("validation");}finally{els.italicValidationBtn.disabled=false;}});
   els.exportItalicValidation?.addEventListener("click",()=>{
     const queue=state.italicCalibrationReviewSet||[];
-    const controls=queue.filter(r=>r.validationLabel==="ITALIC").map(r=>({queueRank:r.originalReviewRank??(queue.indexOf(r)+1),originalRank:r.originalReviewRank??null,specimenKey:italicCalibrationKey(r),learnedProbability:r.learnedItalicProbability,originalLearnedProbability:r.originalLearnedProbability??null,geometryProbability:italicGeometryProbability(r),originalGeometryProbability:r.originalGeometryProbability??null,featureWeightedProbability:italicFeatureWeightedProbability(r),glyphClass:italicGlyphClassFromRun(r),vector:italicLearningVector(r),slantSignal:italicSlantSignal(r),reviewBox:r.reviewBox}));
+    const controls=queue.filter(r=>r.validationLabel==="ITALIC").map(r=>({queueRank:r.originalReviewRank??(queue.indexOf(r)+1),originalRank:r.originalReviewRank??null,specimenKey:italicCalibrationKey(r),learnedProbability:r.learnedItalicProbability,originalLearnedProbability:r.originalLearnedProbability??null,geometryProbability:italicGeometryProbability(r),originalGeometryProbability:r.originalGeometryProbability??null,featureWeightedProbability:italicFeatureWeightedProbability(r),singleWordTypographyProbability:italicSingleWordTypographyProbability(r),glyphClass:italicGlyphClassFromRun(r),vector:italicLearningVector(r),slantSignal:italicSlantSignal(r),reviewBox:r.reviewBox}));
     const payload={build:BUILD_VERSION,sourceProfile:state.sourceProfile,timing:state.italicReviewTiming,deepTiming:state.italicDiagnosticsTiming||null,populationTiming:state.italicPopulationTiming||null,geometryModel:italicGeometryModel(),featureSeparation:italicFeatureSeparationReport(),queueSize:queue.length,untouchedTop100:state.italicUntouchedTop100||[],generalizationTop100:state.italicGeneralizationTop100||[],reviewedGeneralization:(state.italicReviewHistory||[]).map(r=>({originalRank:r.originalReviewRank??null,chosenLabel:r.reviewChosenLabel??null,...(r.reviewGeneralization||{})})),knownItalicControls:controls,note:"Ground-truth validation only; controls were not added to training."};
     downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),`italic-validation-v${BUILD_VERSION}.json`);
   });
