@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "87";
+  const BUILD_VERSION = "88";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -4815,13 +4815,25 @@
         return Number(b.supervisedScore||0)-Number(a.supervisedScore||0);
       });
       supervisedReviewSet.forEach(r=>r.activeLearningReason="learned-ranked");
+    } else if(state.italicReviewSelectionMode==="hunt") {
+      // v88 performance surgery: Hunt immediately replaces this provisional
+      // order with its own scored/diversified acquisition order below. The old
+      // bootstrap path nevertheless performed one crypto.getRandomValues call
+      // per specimen (~2.9k calls), which v87 measured as ~105 seconds in this
+      // browser. Skipping that throwaway shuffle changes no Hunt ranking or
+      // eligibility; it only removes work whose result was never consumed.
+      supervisedReviewSet.forEach(r=>r.activeLearningReason="hunt-pending");
     } else {
+      // Preserve the unbiased random-bootstrap behavior for Standard review.
+      // Use one cryptographic seed instead of thousands of synchronous crypto
+      // calls, then Fisher-Yates with a tiny deterministic PRNG.
+      let seed=(Date.now()>>>0)^0x9e3779b9;
+      if(globalThis.crypto?.getRandomValues){
+        const a=new Uint32Array(1); globalThis.crypto.getRandomValues(a); seed=a[0]>>>0;
+      }
+      const rand=()=>{ seed=(seed+0x6D2B79F5)|0; let t=seed; t=Math.imul(t^(t>>>15),t|1); t^=t+Math.imul(t^(t>>>7),t|61); return ((t^(t>>>14))>>>0)/4294967296; };
       for(let i=supervisedReviewSet.length-1;i>0;i--){
-        let j;
-        if(globalThis.crypto?.getRandomValues){
-          const a=new Uint32Array(1); globalThis.crypto.getRandomValues(a);
-          j=a[0]%(i+1);
-        } else j=Math.floor(Math.random()*(i+1));
+        const j=Math.floor(rand()*(i+1));
         [supervisedReviewSet[i],supervisedReviewSet[j]]=[supervisedReviewSet[j],supervisedReviewSet[i]];
       }
       supervisedReviewSet.forEach(r=>r.activeLearningReason="random-bootstrap");
