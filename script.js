@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "86";
+  const BUILD_VERSION = "87";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -4826,6 +4826,7 @@
       }
       supervisedReviewSet.forEach(r=>r.activeLearningReason="random-bootstrap");
     }
+    __popMark("reviewOrderingMs");
     // v81 validation bridge: preserve comparable ranks for all three review paths
     // over the same deduplicated specimen population. These ranks are diagnostic
     // only and never feed ground-truth answers back into production detection.
@@ -4838,6 +4839,7 @@
     });
     learnedOrder.forEach((r,i)=>r.validationLearnedRank=i+1);
 
+    __popMark("validationOrdersMs");
     if(state.italicReviewSelectionMode==="hunt"||state.italicReviewSelectionMode==="validation"){
       const __huntT0=(globalThis.performance?.now?.()??Date.now());
       // v81: validation executes the exact Hunt acquisition path too, so one
@@ -4870,10 +4872,12 @@
         candidates.push(r);
       }
 
+      __popMark("huntEligibilityMs");
       // Compute each candidate vector once. Scale estimation only needs a bounded,
       // evenly-spaced sample of the unseen population; scanning every vector into
       // a giant temporary matrix was pure latency and did not improve Hunt labels.
       const candidateRows=candidates.map(r=>({r,v:italicLearningVector(r)}));
+      __popMark("huntVectorizeMs");
       const scaleSample=candidateRows.length<=1200 ? candidateRows :
         Array.from({length:1200},(_,i)=>candidateRows[Math.floor(i*(candidateRows.length-1)/1199)]);
       const scaleVectors=[...labeled.map(x=>x.vector),...scaleSample.map(x=>x.v)];
@@ -4884,6 +4888,7 @@
         const q=p=>vals[Math.min(vals.length-1,Math.max(0,Math.floor((vals.length-1)*p)))];
         return Math.max(1e-4,q(.9)-q(.1),vals[vals.length-1]-vals[0]);
       });
+      __popMark("huntScaleMs");
       const distance=(a,b)=>{
         let d=0;
         for(let i=0;i<dims;i++){
@@ -4921,7 +4926,9 @@
         const acquisitionScore=positiveSimilarity*.27+romanContrast*.27+p*.41+structural*.05;
         return {r,v,acquisitionScore};
       });
+      __popMark("huntScoreMs");
       scored.sort((a,b)=>b.acquisitionScore-a.acquisitionScore);
+      __popMark("huntSortMs");
 
       // Diversity is useful only among plausible positives. Restrict its search to
       // the strongest acquisition neighborhood, then maintain each candidate's
@@ -4948,13 +4955,16 @@
           if(d<c.minPickedDistance)c.minPickedDistance=d;
         }
       }
+      __popMark("huntDiversityMs");
       const pickedRuns=picked.map(x=>x.r);
       const pickedSet=new Set(pickedRuns);
       supervisedReviewSet.splice(0,supervisedReviewSet.length,...pickedRuns,...candidates.filter(r=>!pickedSet.has(r)));
       supervisedReviewSet.forEach((r,i)=>{ r.activeLearningReason="italic-hunt-positive-acquisition-v86"; r.validationHuntRank=i+1; });
+      __popMark("huntReorderMs");
       state.italicHuntTiming={totalMs:Math.round((globalThis.performance?.now?.()??Date.now())-__huntT0),population:supervisedReviewSet.length,shortlist:shortlist.length,picked:picked.length};
     }
 
+    __popMark("huntBlockMs");
     // v73 diagnostic: freeze the untouched rank BEFORE review removes/reorders anything.
     supervisedReviewSet.forEach((r,index)=>{
       r.originalReviewRank=index+1;
@@ -4971,13 +4981,16 @@
       vector:italicLearningVector(r),
       reviewBox:r.reviewBox
     }));
+    __popMark("untouchedSnapshotMs");
     state.italicGeneralizationTop100=italicReviewGeneralizationSnapshot(supervisedReviewSet.slice(0,100));
+    __popMark("generalizationSnapshotMs");
 
 
     supervisedReviewSet.forEach(r=>{
       r.reviewLabel=null;
       r.reviewInstruction='Spoiler-safe human typography label: ITALIC, ROMAN, or UNSURE.';
     });
+    __popMark("reviewMetadataMs");
     // Build 55: mixed-style review specimens can be split into their existing
     // one-word OCR candidates. This is a training-data acquisition tool only:
     // the split is driven solely by OCR word boundaries, never book text or
@@ -4994,9 +5007,11 @@
         }
       }
     });
+    __popMark("splitChildrenMs");
     supervisedReviewSet.forEach((r,i)=>r.supervisedRank=i+1);
     state.italicCalibrationReviewSet = supervisedReviewSet;
     renderItalicCalibrationReview();
+    __popMark("reviewRenderMs");
 
     // Build 47: diagnostics are deliberately corpus-agnostic.
     // Human-confirmed examples belong in external QA only; production code and
