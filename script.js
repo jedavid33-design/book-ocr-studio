@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "91";
+  const BUILD_VERSION = "92";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -5394,37 +5394,67 @@
     return i+r?i/(i+r):.5;
   }
 
-  function italicLearnedProbabilityUncached(run) {
+  // v92: cache the immutable training-side preparation for each glyph class.
+  // Cold Hunt previously rebuilt the same filtered example sets, per-feature
+  // quantile scales, and class slant means once for every review specimen. Those
+  // values depend only on the saved learning profile + glyph class, not on the
+  // candidate being scored. Preparing them once preserves the exact learner math
+  // while making cold scoring follow the same cheap path as a warm population.
+  let italicPreparedLearnerCache=new Map();
+  let italicPreparedLearnerRevision="";
+  function preparedItalicLearner(target){
     const p=currentItalicLearningProfile();
+    const rev=`${(p.examples||[]).length}:${p.updatedAt||""}`;
+    if(rev!==italicPreparedLearnerRevision){
+      italicPreparedLearnerRevision=rev;
+      italicPreparedLearnerCache=new Map();
+    }
+    if(italicPreparedLearnerCache.has(target)) return italicPreparedLearnerCache.get(target);
     const all=(p.examples||[]).filter(x=>Array.isArray(x.vector)&&x.vector.length===ITALIC_FEATURE_NAMES.length);
-    const target=italicGlyphClassFromRun(run);
     const single=target.startsWith("single:");
     let ex;
     if(single){
       ex=all.filter(x=>x.glyphClass===target);
-      const hasItalic=ex.some(x=>x.label==="ITALIC"), hasRoman=ex.some(x=>x.label==="ROMAN");
-      // A single I/A/a cannot dominate merely because it resembles unrelated
-      // positive examples. It earns ranking only after that SAME glyph has both
-      // Roman and italic human labels.
-      if(!hasItalic || !hasRoman) return 0.01;
     } else {
       const len=Number(target.split(":")[1]||0);
       const classed=all.filter(x=>{
         if(!String(x.glyphClass||"").startsWith("word:")) return false;
         return Math.abs(Number(x.glyphClass.split(":")[1]||0)-len)<=2;
       });
-      const legacy=all.filter(x=>!x.glyphClass); // preserve pre-v66 training
+      const legacy=all.filter(x=>!x.glyphClass);
       ex=[...classed,...legacy];
     }
     const italic=ex.filter(x=>x.label==="ITALIC"), roman=ex.filter(x=>x.label==="ROMAN");
-    if(italic.length<2 || roman.length<2) return single?0.01:null;
+    let scales=null;
+    if(italic.length>=2 && roman.length>=2){
+      const dims=ITALIC_FEATURE_NAMES.length;
+      scales=Array.from({length:dims},(_,i)=>{
+        const vals=ex.map(x=>Number(x.vector[i]||0)).filter(Number.isFinite);
+        if(!vals.length) return 1e-4;
+        const sorted=[...vals].sort((a,b)=>a-b);
+        const q=qv=>sorted[Math.min(sorted.length-1,Math.max(0,Math.floor((sorted.length-1)*qv)))];
+        return Math.max(1e-4,q(.9)-q(.1),Math.max(...vals)-Math.min(...vals));
+      });
+    }
+    const classSlant=rows=>{
+      const vals=rows.map(x=>Number(x.slantSignal)).filter(Number.isFinite);
+      return vals.length?vals.reduce((a,b)=>a+b,0)/vals.length:null;
+    };
+    const prepared={single,italic,roman,scales,iMean:classSlant(italic),rMean:classSlant(roman)};
+    italicPreparedLearnerCache.set(target,prepared);
+    return prepared;
+  }
+
+  function italicLearnedProbabilityUncached(run) {
+    const target=italicGlyphClassFromRun(run);
+    const prepared=preparedItalicLearner(target);
+    const {single,italic,roman,scales,iMean,rMean}=prepared;
+    // A single I/A/a cannot dominate merely because it resembles unrelated
+    // positive examples. It earns ranking only after that SAME glyph has both
+    // Roman and italic human labels.
+    if(single && (!italic.length || !roman.length)) return 0.01;
+    if(italic.length<2 || roman.length<2 || !scales) return single?0.01:null;
     const v=italicLearningVector(run), dims=v.length;
-    const scales=Array.from({length:dims},(_,i)=>{
-      const vals=ex.map(x=>Number(x.vector[i]||0)).filter(Number.isFinite);
-      const sorted=[...vals].sort((a,b)=>a-b);
-      const q=p=>sorted[Math.min(sorted.length-1,Math.max(0,Math.floor((sorted.length-1)*p)))];
-      return Math.max(1e-4,q(.9)-q(.1),Math.max(...vals)-Math.min(...vals));
-    });
     const dist=x=>{
       let d=0;
       for(let i=0;i<dims;i++){
@@ -5446,12 +5476,6 @@
     // Italic-specific refinement: compare measured slant/shear to human-labeled
     // classes. This is style geometry, never word identity or book content.
     const rs=italicSlantSignal(run);
-    const classSlant=rows=>{
-      const vals=rows.map(x=>Number(x.slantSignal)).filter(Number.isFinite);
-      if(!vals.length) return null;
-      return vals.reduce((a,b)=>a+b,0)/vals.length;
-    };
-    const iMean=classSlant(italic), rMean=classSlant(roman);
     if(iMean!=null && rMean!=null && Math.abs(iMean-rMean)>.01){
       const di=Math.abs(rs-iMean), dr=Math.abs(rs-rMean);
       const slantP=(di+dr)>0?dr/(di+dr):.5;
