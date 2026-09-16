@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "92";
+  const BUILD_VERSION = "93";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -8304,7 +8304,17 @@ ${coverSpine}${spine.join("\n")}
     try { await launchItalicLearningReview("hunt", buttonTiming); }
     finally { els.italicReviewHuntBtn.disabled=false; }
   });
-  els.italicValidationBtn?.addEventListener("click",async()=>{els.italicValidationBtn.disabled=true;try{await launchItalicLearningReview("validation");}finally{els.italicValidationBtn.disabled=false;}});
+  els.italicValidationBtn?.addEventListener("click",async()=>{
+    els.italicValidationBtn.disabled=true;
+    try {
+      // v93: Validation is intentionally rerunnable. Never reuse a replay built
+      // before additional Italic/Roman labels were added in this session.
+      state.italicPersistedValidationReplay=null;
+      await launchItalicLearningReview("validation");
+    } finally {
+      els.italicValidationBtn.disabled=false;
+    }
+  });
   function buildPersistedItalicValidationReplay(){
     const now=()=>globalThis.performance?.now?.()??Date.now(), t0=now();
     const examples=(currentItalicLearningProfile().examples||[]).filter(x=>(x.label==="ITALIC"||x.label==="ROMAN")&&Array.isArray(x.vector)&&x.vector.length===ITALIC_FEATURE_NAMES.length);
@@ -8339,7 +8349,9 @@ ${coverSpine}${spine.join("\n")}
   }
 
   els.exportItalicValidation?.addEventListener("click",()=>{
-    const replay=state.italicPersistedValidationReplay||buildPersistedItalicValidationReplay();
+    // v93: Export always snapshots the learning profile as it exists NOW.
+    // This prevents a prior validation run from exporting stale label counts.
+    const replay=buildPersistedItalicValidationReplay();
     state.italicPersistedValidationReplay=replay; state.italicHuntTiming=replay.huntTiming;
     const rows=replay.rows, controls=rows.filter(r=>r.label==="ITALIC"), romans=rows.filter(r=>r.label==="ROMAN"), cutoffs=[20,50,100,250];
     const modeSummary=(rankField)=>{const ranked=rows.filter(r=>Number.isFinite(Number(r[rankField]))),out={labeled:ranked.length,knownItalics:controls.length,knownRomans:romans.length,cutoffs:{}};for(const n of cutoffs){const selected=ranked.filter(r=>Number(r[rankField])<=n),tp=selected.filter(r=>r.label==="ITALIC").length,fp=selected.filter(r=>r.label==="ROMAN").length;out.cutoffs[n]={selectedLabeled:selected.length,trueItalics:tp,romans:fp,precision:selected.length?tp/selected.length:null,recall:controls.length?tp/controls.length:null};}out.italicRanks=controls.map(r=>Number(r[rankField])).filter(Number.isFinite).sort((a,b)=>a-b);return out;};
