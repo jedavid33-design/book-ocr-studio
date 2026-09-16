@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "95";
+  const BUILD_VERSION = "96";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -4900,8 +4900,35 @@
         ...persistedGlyphs.map(x=>String(x.normalizedText||""))
       ].filter(Boolean));
       const seenTexts=new Set(), candidates=[];
+      // v96: suppress likely OCR-split word fragments before Hunt ranking. A
+      // fragment is only rejected when an immediately adjacent OCR token on the
+      // same line is essentially touching it, which is strong evidence that OCR
+      // divided one printed word into multiple boxes. Keep ordinary short words.
+      const lineWordLookup=new Map();
+      for(const [lineKey,peers] of lineGroups.entries()){
+        const byIndex=new Map();
+        for(const w of peers) byIndex.set(Number(w.wordIndex),w);
+        lineWordLookup.set(lineKey,byIndex);
+      }
+      const likelySplitOcrFragment=r=>{
+        if(Number(r.wordCount||1)!==1) return false;
+        const raw=String(r.text||"").normalize("NFKC");
+        if(!/\p{L}/u.test(raw)) return false;
+        const key=`${r.pageIndex}:${r.lineIndex}`, byIndex=lineWordLookup.get(key);
+        if(!byIndex) return false;
+        const w=byIndex.get(Number(r.startWordIndex));
+        if(!w?.box) return false;
+        const b=w.box, h=Math.max(1,Number(b.h||b.height||0));
+        const left=byIndex.get(Number(r.startWordIndex)-1), right=byIndex.get(Number(r.startWordIndex)+1);
+        const alpha=x=>/\p{L}/u.test(String(x?.text||""));
+        const gapLeft=left?.box ? Number(b.x||0)-(Number(left.box.x||0)+Number(left.box.w||left.box.width||0)) : Infinity;
+        const gapRight=right?.box ? Number(right.box.x||0)-(Number(b.x||0)+Number(b.w||b.width||0)) : Infinity;
+        const touching=Math.max(2,h*.08);
+        return (alpha(left)&&gapLeft<=touching)||(alpha(right)&&gapRight<=touching);
+      };
       for(const r of supervisedReviewSet){
         const text=italicNormalizedSpecimenText(r);
+        if(likelySplitOcrFragment(r)) continue;
         // Production Hunt suppresses normalized text it has already trained on.
         // Validation must retain those exact labeled controls so their Hunt rank
         // can be measured; the labels themselves remain hidden from scoring.
@@ -4962,14 +4989,14 @@
         const romanContrast=(Number.isFinite(dI)&&Number.isFinite(dR))?Math.max(-1,Math.min(1,(dR-dI)/(dR+dI+1e-6))):0;
         const p=Number.isFinite(r.learnedItalicProbability)?r.learnedItalicProbability:.5;
         const structural=Math.max(0,Math.min(1,Number(r.supervisedScore||0)));
-        // v80 leans harder on separation from the much larger confirmed Roman
-        // population. Positive resemblance still leads, but "near an italic" is
-        // no longer sufficient when the specimen is even nearer known Roman text.
-        // v85: the persisted validation bench showed Learned concentrating known
-        // positives materially better than the pure neighborhood Hunt. Use the
-        // learner as a co-equal acquisition signal while retaining independent
-        // positive-neighborhood and Roman-contrast evidence.
-        const acquisitionScore=positiveSimilarity*.27+romanContrast*.27+p*.41+structural*.05;
+        // v96: the full-book acquisition benchmark yielded only 1 new italic in
+        // 50 Hunt reviews, while retrospective validation continues to show the
+        // learned rank concentrating positives much better than the older Hunt
+        // blend. Let learned probability lead acquisition, with positive-neighbor
+        // resemblance and Roman contrast retained as supporting evidence.
+        // Diversity is deliberately small and applied only inside the top 300 so
+        // it cannot pull attractive-looking Romans far ahead of plausible positives.
+        const acquisitionScore=positiveSimilarity*.20+romanContrast*.10+p*.70;
         return {r,v,acquisitionScore};
       });
       __popMark("huntScoreMs");
@@ -4980,7 +5007,7 @@
       // the strongest acquisition neighborhood, then maintain each candidate's
       // nearest-picked distance incrementally. This turns the former geological
       // wait into a bounded ~250 x 600 distance pass.
-      const shortlist=scored.slice(0,Math.min(600,scored.length));
+      const shortlist=scored.slice(0,Math.min(300,scored.length));
       const picked=[], remaining=[...shortlist], target=Math.min(250,shortlist.length);
       if(remaining.length){
         const first=remaining.shift(); picked.push(first);
@@ -4991,7 +5018,7 @@
         for(let i=0;i<remaining.length;i++){
           const c=remaining[i];
           const diversity=Math.min(1.5,Number(c.minPickedDistance||0))/1.5;
-          const score=c.acquisitionScore*.90+diversity*.10;
+          const score=c.acquisitionScore*.96+diversity*.04;
           if(score>best){best=score;bestIndex=i;}
         }
         const chosen=remaining.splice(bestIndex,1)[0];
@@ -5005,7 +5032,7 @@
       const pickedRuns=picked.map(x=>x.r);
       const pickedSet=new Set(pickedRuns);
       supervisedReviewSet.splice(0,supervisedReviewSet.length,...pickedRuns,...candidates.filter(r=>!pickedSet.has(r)));
-      supervisedReviewSet.forEach((r,i)=>{ r.activeLearningReason="italic-hunt-positive-acquisition-v86"; r.validationHuntRank=i+1; });
+      supervisedReviewSet.forEach((r,i)=>{ r.activeLearningReason="italic-hunt-positive-acquisition-v96"; r.validationHuntRank=i+1; });
       __popMark("huntReorderMs");
       state.italicHuntTiming={totalMs:Math.round((globalThis.performance?.now?.()??Date.now())-__huntT0),population:supervisedReviewSet.length,shortlist:shortlist.length,picked:picked.length};
     }
@@ -8362,10 +8389,10 @@ ${coverSpine}${spine.join("\n")}
     const scales=Array.from({length:dims},(_,i)=>{const vals=scaleVectors.map(v=>Number(v[i]||0)).filter(Number.isFinite).sort((a,b)=>a-b);if(!vals.length)return 1;const q=p=>vals[Math.min(vals.length-1,Math.max(0,Math.floor((vals.length-1)*p)))];return Math.max(1e-4,q(.9)-q(.1),vals[vals.length-1]-vals[0]);});
     const distance=(a,b)=>{let d=0;for(let i=0;i<dims;i++){const z=(Number(a[i]||0)-Number(b[i]||0))/scales[i];d+=Math.min(25,z*z);}return Math.sqrt(d/dims);};
     const kNearestMean=(v,pool,k,excludeIndex)=>{const best=[];for(let j=0;j<pool.length;j++){const x=pool[j];if(x===examples[excludeIndex])continue;const d=distance(v,x.vector);let z=0;while(z<best.length&&best[z]<=d)z++;if(z<k){best.splice(z,0,d);if(best.length>k)best.pop();}else if(best.length<k)best.push(d);}return best.length?best.reduce((a,b)=>a+b,0)/best.length:Infinity;};
-    const scored=rows.map(r=>{const dI=kNearestMean(r.vector,positives,3,r.index),dR=kNearestMean(r.vector,negatives,5,r.index),positiveSimilarity=Number.isFinite(dI)?1/(1+dI):.5,romanContrast=(Number.isFinite(dI)&&Number.isFinite(dR))?Math.max(-1,Math.min(1,(dR-dI)/(dR+dI+1e-6))):0,p=Number.isFinite(r.learnedScore)?r.learnedScore:.5,structural=Math.max(0,Math.min(1,r.standardScore));r.huntScore=String(r.glyphClass||"").startsWith("single:")?-Infinity:positiveSimilarity*.27+romanContrast*.27+p*.41+structural*.05;return r;}).sort((a,b)=>b.huntScore-a.huntScore);
-    const shortlist=scored.slice(0,Math.min(600,scored.length)),picked=[],remaining=[...shortlist],target=Math.min(250,shortlist.length);
+    const scored=rows.map(r=>{const dI=kNearestMean(r.vector,positives,3,r.index),dR=kNearestMean(r.vector,negatives,5,r.index),positiveSimilarity=Number.isFinite(dI)?1/(1+dI):.5,romanContrast=(Number.isFinite(dI)&&Number.isFinite(dR))?Math.max(-1,Math.min(1,(dR-dI)/(dR+dI+1e-6))):0,p=Number.isFinite(r.learnedScore)?r.learnedScore:.5,structural=Math.max(0,Math.min(1,r.standardScore));r.huntScore=String(r.glyphClass||"").startsWith("single:")?-Infinity:positiveSimilarity*.20+romanContrast*.10+p*.70;return r;}).sort((a,b)=>b.huntScore-a.huntScore);
+    const shortlist=scored.slice(0,Math.min(300,scored.length)),picked=[],remaining=[...shortlist],target=Math.min(250,shortlist.length);
     if(remaining.length){const first=remaining.shift();picked.push(first);remaining.forEach(c=>c.minPickedDistance=distance(c.vector,first.vector));}
-    while(picked.length<target&&remaining.length){let bi=0,best=-Infinity;for(let i=0;i<remaining.length;i++){const c=remaining[i],diversity=Math.min(1.5,Number(c.minPickedDistance||0))/1.5,score=c.huntScore*.90+diversity*.10;if(score>best){best=score;bi=i;}}const chosen=remaining.splice(bi,1)[0];picked.push(chosen);for(const c of remaining){const d=distance(c.vector,chosen.vector);if(d<c.minPickedDistance)c.minPickedDistance=d;}}
+    while(picked.length<target&&remaining.length){let bi=0,best=-Infinity;for(let i=0;i<remaining.length;i++){const c=remaining[i],diversity=Math.min(1.5,Number(c.minPickedDistance||0))/1.5,score=c.huntScore*.96+diversity*.04;if(score>best){best=score;bi=i;}}const chosen=remaining.splice(bi,1)[0];picked.push(chosen);for(const c of remaining){const d=distance(c.vector,chosen.vector);if(d<c.minPickedDistance)c.minPickedDistance=d;}}
     const pickedSet=new Set(picked),huntOrder=[...picked,...scored.filter(r=>!pickedSet.has(r))];huntOrder.forEach((r,i)=>r.huntRank=i+1);
     const huntTiming={totalMs:Math.round((now()-hunt0)*10)/10,population:rows.length,shortlist:shortlist.length,picked:picked.length,replay:true};
     return {rows,huntTiming,totalMs:Math.round((now()-t0)*10)/10};
