@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "71";
+  const BUILD_VERSION = "72";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -4286,7 +4286,8 @@
     }
   }
 
-  function downloadItalicDiagnostics(shouldDownload = true) {const _itNow=()=>globalThis.performance?.now?.()??Date.now(),_itT0=_itNow();let _itLast=_itT0;const _itDeep={};const _itMark=n=>{const q=_itNow();_itDeep[n]=Math.round((q-_itLast)*10)/10;_itLast=q;};
+  function downloadItalicDiagnostics(shouldDownload = true) {const __popNow=()=>globalThis.performance?.now?.()??Date.now(),__popT0=__popNow();let __popLast=__popT0;const __popTiming={};const __popMark=n=>{const q=__popNow();__popTiming[n]=Math.round((q-__popLast)*10)/10;__popLast=q;};
+    const _itNow=()=>globalThis.performance?.now?.()??Date.now(),_itT0=_itNow();let _itLast=_itT0;const _itDeep={};const _itMark=n=>{const q=_itNow();_itDeep[n]=Math.round((q-_itLast)*10)/10;_itLast=q;};
     
     const lines = [];
     const words = [];
@@ -4624,6 +4625,7 @@
       return signals;
     };
     _itMark("beforeSupervisedMs");
+    __popMark("setupMs");
     const supervisedRuns=[];
     lineGroups.forEach((peers,key)=>{
       const ordered=[...peers].sort((a,b)=>Number(a.wordIndex||0)-Number(b.wordIndex||0));
@@ -4712,6 +4714,7 @@
     });
 
     _itMark("supervisedBuildMs");
+    __popMark("candidateGenerationMs");
     const eligibleRuns=supervisedRuns.filter(r=>{
       if(r.alreadyTrained || !r.reviewBox || state.italicCalibrationLabels[italicCalibrationKey(r)]) return false;
       const text=String(r.text||r.words?.map(w=>w?.text||"").join(" ")||"").normalize("NFKC");
@@ -4725,6 +4728,7 @@
     // around the same OCR words. Review needs one physical OCR specimen, not every
     // possible window containing it.
     _itMark("eligibleFilterMs");
+    __popMark("eligibilityMs");
     const dedupedByPhysicalWord=new Map();
     eligibleRuns.forEach(run=>{
       const wordKeys=italicCalibrationWordKeys(run);
@@ -4753,14 +4757,17 @@
       }
     });
     _itMark("dedupeMs");
+    __popMark("dedupeMs");
     const supervisedReviewSet=[...dedupedByPhysicalWord.values()];
     // v70: score only unique physical OCR specimens, never the 18k overlapping windows.
+    __popMark("scoringMs");
     supervisedReviewSet.forEach(run=>{
       run.learnedItalicProbability=cachedItalicLearnedProbability(run);
     });
 
     if((state.italicReviewSelectionMode==="learned"||state.italicReviewSelectionMode==="validation") && learnedExamples.filter(x=>x.label==="ITALIC").length>=2){
       _itMark("scoreAndPrepMs");
+    __popMark("preSortMs");
     supervisedReviewSet.sort((a,b)=>{
         const ap=Number.isFinite(a.learnedItalicProbability)?a.learnedItalicProbability:-1;
         const bp=Number.isFinite(b.learnedItalicProbability)?b.learnedItalicProbability:-1;
@@ -5033,7 +5040,14 @@
     const p=currentItalicLearningProfile(),ex=p.examples||[],rev=`${ex.length}:${p.updatedAt||""}`;
     if(italicGeometryCache&&italicGeometryRevision===rev)return italicGeometryCache;
     const I=[],R=[];
-    for(const x of ex){const v=Number(x.slantSignal);if(!Number.isFinite(v))continue;if(x.label==="ITALIC")I.push(v);else if(x.label==="ROMAN")R.push(v);}
+    for(const x of ex){let v=Number(x.slantSignal);
+      if(!Number.isFinite(v) && Array.isArray(x.vector) && x.vector.length>=13){
+        const n=q=>Number.isFinite(Number(q))?Number(q):0;
+        const edgeA=n(x.vector[3])-n(x.vector[9]),edgeB=n(x.vector[4])-n(x.vector[10]),edgeC=n(x.vector[5])-n(x.vector[12]);
+        const scale=Math.max(.05,Math.abs(n(x.vector[0]))+Math.abs(n(x.vector[1]))+.25);
+        v=Math.max(-3,Math.min(3,(edgeA*.50+edgeB*.20+edgeC*.30)/scale));
+      }
+      if(!Number.isFinite(v))continue;if(x.label==="ITALIC")I.push(v);else if(x.label==="ROMAN")R.push(v);}
     const stat=a=>{if(!a.length)return null;const mean=a.reduce((x,y)=>x+y,0)/a.length;const sd=Math.max(.05,Math.sqrt(a.reduce((x,y)=>x+(y-mean)**2,0)/Math.max(1,a.length-1)));return{mean,sd,n:a.length};};
     italicGeometryCache={italic:stat(I),roman:stat(R)};italicGeometryRevision=rev;return italicGeometryCache;
   }
@@ -5289,7 +5303,8 @@
         const queue=state.italicCalibrationReviewSet||[];
         const idx=queue.indexOf(run);
         if(idx>=0) queue.splice(idx,1,...children);
-        else state.italicCalibrationReviewSet=[...children,...queue];
+        else __popMark("sortMs");__popTiming.totalMs=Math.round((__popNow()-__popT0)*10)/10;state.italicPopulationTiming=__popTiming;
+    state.italicCalibrationReviewSet=[...children,...queue];
         setStatus(`Split mixed typography specimen into ${children.length} spoiler-safe word specimens.`);
         renderItalicCalibrationReview();
       });
@@ -7832,7 +7847,17 @@ ${coverSpine}${spine.join("\n")}
     const hasMeasurements=state.pages.some(page=>(page.layoutLines||[]).some(line=>line.italicMeta||(Array.isArray(line.italicWordMeta)&&line.italicWordMeta.length)));
     if(!hasMeasurements){setStatus("Preparing spoiler-safe typography measurements…");await autoScanItalics({rebuildText:false});}
     timing.measurementPrepMs=Math.round(now()-t);
-    t=now(); downloadItalicDiagnostics(false); timing.populationBuildRankMs=Math.round(now()-t);
+    t=now();
+    const beforeDiagPages=state.pages?.length||0;
+    const beforeDiagQueue=state.italicCalibrationReviewSet?.length||0;
+    downloadItalicDiagnostics(false);
+    timing.populationBuildRankMs=Math.round(now()-t);
+    timing.actualPopulationPath={
+      pages:beforeDiagPages,
+      queueBefore:beforeDiagQueue,
+      queueAfter:state.italicCalibrationReviewSet?.length||0,
+      diagnosticsInternal:state.italicDiagnosticsTiming||null
+    };
     t=now(); renderItalicCalibrationReview(); timing.renderMs=Math.round(now()-t);
     timing.totalMs=Math.round(now()-t0); timing.queueSize=(state.italicCalibrationReviewSet||[]).length; state.italicReviewTiming=timing;
     setStatus(`Built ${mode} review from ${timing.queueSize} unique specimens in ${(timing.totalMs/1000).toFixed(1)}s.`);
@@ -7858,7 +7883,7 @@ ${coverSpine}${spine.join("\n")}
   els.exportItalicValidation?.addEventListener("click",()=>{
     const queue=state.italicCalibrationReviewSet||[];
     const controls=queue.filter(r=>r.validationLabel==="ITALIC").map(r=>({queueRank:queue.indexOf(r)+1,specimenKey:italicCalibrationKey(r),learnedProbability:r.learnedItalicProbability,geometryProbability:italicGeometryProbability(r),glyphClass:italicGlyphClassFromRun(r),vector:italicLearningVector(r),slantSignal:italicSlantSignal(r),reviewBox:r.reviewBox}));
-    const payload={build:BUILD_VERSION,sourceProfile:state.sourceProfile,timing:state.italicReviewTiming,deepTiming:state.italicDiagnosticsTiming||null,geometryModel:italicGeometryModel(),queueSize:queue.length,knownItalicControls:controls,note:"Ground-truth validation only; controls were not added to training."};
+    const payload={build:BUILD_VERSION,sourceProfile:state.sourceProfile,timing:state.italicReviewTiming,deepTiming:state.italicDiagnosticsTiming||null,populationTiming:state.italicPopulationTiming||null,geometryModel:italicGeometryModel(),queueSize:queue.length,knownItalicControls:controls,note:"Ground-truth validation only; controls were not added to training."};
     downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),`italic-validation-v${BUILD_VERSION}.json`);
   });
   updatePreview();
