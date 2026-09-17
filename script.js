@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "99";
+  const BUILD_VERSION = "100";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -8375,6 +8375,42 @@ ${coverSpine}${spine.join("\n")}
     return {diagnosticOnly:true,italicCount:ital.length,romanCount:rom.length,robustFeatures:robust,topFeaturePairs:pairs.slice(0,20),note:"Build 99 feature discovery is diagnostic only. Robust median/IQR shifts and pairwise standardized centroid distances are exploratory training-set statistics, not held-out performance, and do not change Hunt, Learned Review, or automatic italics."};
   }
 
+  // v100 diagnostic-only slant interaction study. Keep production behavior
+  // untouched while testing whether the strongest v99 robust signal becomes
+  // more useful when combined with independent structural/gain/width evidence.
+  function italicSlantInteractionReport(rows){
+    const names=["structuralAverage","structuralMinimum","structuralConsistency","slantSupport","gainSupport","shearSupport","wordCount","meanInkDensityZ","meanAbsEdgeDelta","meanAbsWidthRatioDelta","meanLocalSlantLift","meanLocalGainLift","meanLocalShearLift"];
+    const independent=[0,1,2,3,4,5,7,8,9]; // remove duplicate local-lift dimensions and wordCount
+    const usable=(rows||[]).filter(r=>(r.label==="ITALIC"||r.label==="ROMAN")&&Array.isArray(r.vector));
+    const ital=usable.filter(r=>r.label==="ITALIC"),rom=usable.filter(r=>r.label==="ROMAN");
+    const stats=(group,j)=>{const a=group.map(r=>Number(r.vector[j])).filter(Number.isFinite);if(!a.length)return {mean:0,sd:0};const mean=a.reduce((x,y)=>x+y,0)/a.length;const variance=a.reduce((x,y)=>x+(y-mean)*(y-mean),0)/Math.max(1,a.length-1);return {mean,sd:Math.sqrt(variance)};};
+    const zdef={};
+    for(const j of independent){const a=stats(ital,j),b=stats(rom,j),scale=Math.max(1e-9,Math.sqrt((a.sd*a.sd+b.sd*b.sd)/2));zdef[j]={italic:a,roman:b,scale,direction:Math.sign(a.mean-b.mean)||1};}
+    const score=(r,js)=>js.reduce((sum,j)=>sum+zdef[j].direction*((Number(r.vector[j])||0)-zdef[j].roman.mean)/zdef[j].scale,0)/Math.sqrt(js.length);
+    const summarize=(label,js)=>{
+      const ranked=[...usable].map(r=>({label:r.label,score:score(r,js)})).sort((a,b)=>b.score-a.score);
+      const cutoffs={}; for(const n of [20,50,100,250]){const top=ranked.slice(0,n),tp=top.filter(x=>x.label==="ITALIC").length;cutoffs[n]={trueItalics:tp,romans:top.length-tp,precision:top.length?tp/top.length:null,recall:ital.length?tp/ital.length:null};}
+      const italicRanks=[]; ranked.forEach((r,i)=>{if(r.label==="ITALIC")italicRanks.push(i+1);});
+      return {label,features:js.map(j=>names[j]),indices:js,cutoffs,italicRanks};
+    };
+    const tests=[
+      summarize("slant",[3]),
+      summarize("slant + structuralAverage",[3,0]),
+      summarize("slant + structuralMinimum",[3,1]),
+      summarize("slant + structuralConsistency",[3,2]),
+      summarize("slant + gainSupport",[3,4]),
+      summarize("slant + shearSupport",[3,5]),
+      summarize("slant + inkDensity",[3,7]),
+      summarize("slant + edgeDelta",[3,8]),
+      summarize("slant + widthRatioDelta",[3,9]),
+      summarize("slant + structuralAverage + gainSupport",[3,0,4]),
+      summarize("slant + structuralConsistency + widthRatioDelta",[3,2,9]),
+      summarize("slant + structuralConsistency + shearSupport",[3,2,5])
+    ];
+    tests.sort((a,b)=>b.cutoffs[50].trueItalics-a.cutoffs[50].trueItalics||b.cutoffs[100].trueItalics-a.cutoffs[100].trueItalics||b.cutoffs[250].trueItalics-a.cutoffs[250].trueItalics);
+    return {diagnosticOnly:true,italicCount:ital.length,romanCount:rom.length,duplicateDimensionsExcluded:["meanLocalSlantLift","meanLocalGainLift","meanLocalShearLift","wordCount"],tests,note:"Build 100 slant-interaction study is retrospective and diagnostic only. Scores use class-direction standardized independent features and do not change production Hunt, Learned Review, or automatic italic detection."};
+  }
+
   els.exportItalicValidation?.addEventListener("click",()=>{
     // v93: Export always snapshots the learning profile as it exists NOW.
     // This prevents a prior validation run from exporting stale label counts.
@@ -8383,7 +8419,7 @@ ${coverSpine}${spine.join("\n")}
     const rows=replay.rows, controls=rows.filter(r=>r.label==="ITALIC"), romans=rows.filter(r=>r.label==="ROMAN"), cutoffs=[20,50,100,250];
     const modeSummary=(rankField)=>{const ranked=rows.filter(r=>Number.isFinite(Number(r[rankField]))),out={labeled:ranked.length,knownItalics:controls.length,knownRomans:romans.length,cutoffs:{}};for(const n of cutoffs){const selected=ranked.filter(r=>Number(r[rankField])<=n),tp=selected.filter(r=>r.label==="ITALIC").length,fp=selected.filter(r=>r.label==="ROMAN").length;out.cutoffs[n]={selectedLabeled:selected.length,trueItalics:tp,romans:fp,precision:selected.length?tp/selected.length:null,recall:controls.length?tp/controls.length:null};}out.italicRanks=controls.map(r=>Number(r[rankField])).filter(Number.isFinite).sort((a,b)=>a-b);return out;};
     const controlRows=controls.map(r=>({standardRank:r.standardRank,learnedRank:r.learnedRank,huntRank:r.huntRank,standardScore:r.standardScore,learnedProbability:r.learnedScore,huntScore:r.huntScore,glyphClass:r.glyphClass,vector:r.vector}));
-    const payload={build:BUILD_VERSION,sourceProfile:state.sourceProfile,timing:state.italicReviewTiming||null,deepTiming:state.italicValidationDeepTiming||state.italicDiagnosticsTiming||null,populationTiming:state.italicValidationPopulationTiming||state.italicPopulationTiming||null,huntTiming:{replay:replay.huntTiming,live:state.italicValidationLiveHuntTiming||null,lastRealHunt:state.lastRealItalicHuntTiming||((state.italicReviewTiming?.mode==="hunt")?state.italicReviewTiming:null)},validation:{labelsReviewed:rows.length,knownItalics:controls.length,knownRomans:romans.length,persistedLabels:rows.length,replayablePersisted:rows.length,unreplayablePersisted:0,standard:modeSummary("standardRank"),learned:modeSummary("learnedRank"),hunt:modeSummary("huntRank")},geometryModel:italicGeometryModel(),featureSeparation:italicFeatureSeparationReport(),featureDiscovery:italicFeatureDiscoveryReport(rows),queueSize:0,knownItalicControls:controlRows,note:"v99 combined validation: the live specimen-population path is timed stage-by-stage, then Standard, Learned, and Hunt are replayed directly over the same stored human-labeled feature vectors for retrospective quality counts; no page/crop reattachment is required. Standard score is reconstructed from the persisted structural features. Learned uses the production feature learner on reconstructed typography-only specimens. Hunt v97 uses the production Learned-ranking backbone over persisted vectors; production-only unseen-text, glyph/decorative, fragment, and duplicate suppression cannot be reproduced by a replay in which every row is already labeled. Labels are used only after ranking to count outcomes. This is a retrospective diagnostic on training examples, not a held-out generalization estimate."};
+    const payload={build:BUILD_VERSION,sourceProfile:state.sourceProfile,timing:state.italicReviewTiming||null,deepTiming:state.italicValidationDeepTiming||state.italicDiagnosticsTiming||null,populationTiming:state.italicValidationPopulationTiming||state.italicPopulationTiming||null,huntTiming:{replay:replay.huntTiming,live:state.italicValidationLiveHuntTiming||null,lastRealHunt:state.lastRealItalicHuntTiming||((state.italicReviewTiming?.mode==="hunt")?state.italicReviewTiming:null)},validation:{labelsReviewed:rows.length,knownItalics:controls.length,knownRomans:romans.length,persistedLabels:rows.length,replayablePersisted:rows.length,unreplayablePersisted:0,standard:modeSummary("standardRank"),learned:modeSummary("learnedRank"),hunt:modeSummary("huntRank")},geometryModel:italicGeometryModel(),featureSeparation:italicFeatureSeparationReport(),featureDiscovery:italicFeatureDiscoveryReport(rows),slantInteractionStudy:italicSlantInteractionReport(rows),queueSize:0,knownItalicControls:controlRows,note:"v100 combined validation: the live specimen-population path is timed stage-by-stage, then Standard, Learned, and Hunt are replayed directly over the same stored human-labeled feature vectors for retrospective quality counts; no page/crop reattachment is required. Standard score is reconstructed from the persisted structural features. Learned uses the production feature learner on reconstructed typography-only specimens. Hunt v97 uses the production Learned-ranking backbone over persisted vectors; production-only unseen-text, glyph/decorative, fragment, and duplicate suppression cannot be reproduced by a replay in which every row is already labeled. Labels are used only after ranking to count outcomes. This is a retrospective diagnostic on training examples, not a held-out generalization estimate."};
     downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),`italic-validation-v${BUILD_VERSION}.json`);
   });
   updatePreview();
