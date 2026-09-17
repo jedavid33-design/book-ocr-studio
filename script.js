@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "97";
+  const BUILD_VERSION = "98";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -4976,7 +4976,6 @@
       supervisedReviewSet.forEach((r,i)=>{ r.activeLearningReason="italic-hunt-learned-unseen-v97"; r.validationHuntRank=i+1; });
       state.italicHuntTiming={totalMs:Math.round((globalThis.performance?.now?.()??Date.now())-__huntT0),population:supervisedReviewSet.length,shortlist:supervisedReviewSet.length,picked:supervisedReviewSet.length,learnedBackbone:true};
       __popMark("huntReorderMs");
-      state.italicHuntTiming={totalMs:Math.round((globalThis.performance?.now?.()??Date.now())-__huntT0),population:supervisedReviewSet.length,shortlist:shortlist.length,picked:picked.length};
     }
 
     __popMark("huntBlockMs");
@@ -8293,8 +8292,17 @@ ${coverSpine}${spine.join("\n")}
   els.italicReviewHuntBtn?.addEventListener("click", async () => {
     const buttonTiming={performanceNow:(globalThis.performance?.now?.()??Date.now()),wallStartedAt:Date.now(),queueAtButton:state.italicCalibrationReviewSet?.length||0};
     els.italicReviewHuntBtn.disabled=true;
-    try { await launchItalicLearningReview("hunt", buttonTiming); }
-    finally { els.italicReviewHuntBtn.disabled=false; }
+    try {
+      await launchItalicLearningReview("hunt", buttonTiming);
+      if(!(state.italicCalibrationReviewSet?.length)){
+        setStatus("Italic Hunt finished without producing a review queue. No labels were changed.");
+      }
+    } catch (err) {
+      console.error("Italic Hunt failed", err);
+      setStatus(`Italic Hunt failed: ${err?.message || err}`);
+    } finally {
+      els.italicReviewHuntBtn.disabled=false;
+    }
   });
   els.italicValidationBtn?.addEventListener("click",async()=>{
     els.italicValidationBtn.disabled=true;
