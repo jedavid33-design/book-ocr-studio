@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "124";
+  const BUILD_VERSION = "125";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -4929,13 +4929,15 @@
       const positives=labeled.filter(x=>x.label==="ITALIC");
       const negatives=labeled.filter(x=>x.label==="ROMAN");
       const persistedGlyphs=(profile.examples||[]).filter(x=>x.label==="GLYPH");
+      const persistedFragments=(profile.examples||[]).filter(x=>x.label==="FRAGMENT");
       // v123: normalize legacy specimen text too. Older labels may not have
       // normalizedText, which allowed already-reviewed words to reappear.
       const normalizedStoredText=x=>String(x?.normalizedText||x?.text||x?.specimenText||"")
         .normalize("NFKC").toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu," ").trim().replace(/\s+/g," ");
       const knownTexts=new Set([
         ...labeled.map(normalizedStoredText),
-        ...persistedGlyphs.map(normalizedStoredText)
+        ...persistedGlyphs.map(normalizedStoredText),
+        ...persistedFragments.map(normalizedStoredText)
       ].filter(Boolean));
       const huntDiag={seen:0,idRejected:0,splitRejected:0,lexicalRejected:0,textRejected:0,shapeRejected:0,accepted:0,top:[]};
       const currentSessionSignature=checkpointSignature().map(signatureFileName).join("|");
@@ -5067,7 +5069,7 @@
       }
       const orderedRuns=[...diverse,...overflow].map(x=>x.r);
       supervisedReviewSet.splice(0,supervisedReviewSet.length,...orderedRuns);
-      supervisedReviewSet.forEach((r,i)=>{ r.activeLearningReason="italic-hunt-positive-envelope-v124"; r.validationHuntRank=i+1; });
+      supervisedReviewSet.forEach((r,i)=>{ r.activeLearningReason="italic-hunt-positive-envelope-v125"; r.validationHuntRank=i+1; });
       state.italicHuntTiming={totalMs:Math.round((globalThis.performance?.now?.()??Date.now())-__huntT0),population:supervisedReviewSet.length,shortlist:supervisedReviewSet.length,picked:supervisedReviewSet.length,learnedBackbone:true,positiveEnvelope:true,diagnostics:huntDiag};
       __popMark("huntReorderMs");
     }
@@ -5298,9 +5300,9 @@
     return p;
   }
   function saveItalicTrainingExample(run,label) {
-    if(label!=="ITALIC"&&label!=="ROMAN"&&label!=="GLYPH") return; // UNSURE never persists.
-    // GLYPH is a persisted exclusion class. It is intentionally ignored by the
-    // Italic-vs-Roman learner but lets review/Hunt remember decorative material.
+    if(label!=="ITALIC"&&label!=="ROMAN"&&label!=="GLYPH"&&label!=="FRAGMENT") return; // UNSURE never persists.
+    // GLYPH and FRAGMENT are persisted exclusion classes. They are intentionally ignored by the
+    // Italic-vs-Roman learner but let review/Hunt remember decorative material and OCR shards.
     const store=loadItalicLearningStore(), key=state.sourceProfile||"default";
     const p=store[key]||{version:1,sourceProfile:key,featureNames:ITALIC_FEATURE_NAMES,examples:[]};
     if(!Array.isArray(p.examples)) p.examples=[];
@@ -5321,7 +5323,7 @@
   }
   function italicLearningStats() {
     const p=currentItalicLearningProfile(), ex=p.examples||[];
-    return {total:ex.length,italic:ex.filter(x=>x.label==="ITALIC").length,roman:ex.filter(x=>x.label==="ROMAN").length,glyph:ex.filter(x=>x.label==="GLYPH").length};
+    return {total:ex.length,italic:ex.filter(x=>x.label==="ITALIC").length,roman:ex.filter(x=>x.label==="ROMAN").length,glyph:ex.filter(x=>x.label==="GLYPH").length,fragment:ex.filter(x=>x.label==="FRAGMENT").length};
   }
   function italicGlyphClassFromRun(run) {
     const raw=String(run?.text||run?.words?.map(w=>w?.text||"").join("")||"").normalize("NFKC");
@@ -5767,12 +5769,13 @@
           <button class="button secondary" data-label="ITALIC">Italic</button>
           <button class="button secondary" data-label="ROMAN">Roman</button>
           <button class="button secondary" data-label="GLYPH">Glyph / Decorative</button>
+          <button class="button secondary" data-label="FRAGMENT">Fragment</button>
           <button class="button secondary" data-label="UNSURE">Unsure</button>
           ${Array.isArray(run.splitChildren)&&run.splitChildren.length>1?'<button class="button secondary" data-split="words">Split</button>':''}
         </div>`;
       if(state.italicReviewSelectionMode==="validation"){
-        const ib=card.querySelector('[data-label="ITALIC"]'), rb=card.querySelector('[data-label="ROMAN"]'), gb=card.querySelector('[data-label="GLYPH"]'), ub=card.querySelector('[data-label="UNSURE"]');
-        if(ib) ib.textContent="Known italic"; if(rb) rb.textContent="Not a control"; if(gb) gb.textContent="Glyph / decorative"; if(ub) ub.textContent="Skip";
+        const ib=card.querySelector('[data-label="ITALIC"]'), rb=card.querySelector('[data-label="ROMAN"]'), gb=card.querySelector('[data-label="GLYPH"]'), fb=card.querySelector('[data-label="FRAGMENT"]'), ub=card.querySelector('[data-label="UNSURE"]');
+        if(ib) ib.textContent="Known italic"; if(rb) rb.textContent="Not a control"; if(gb) gb.textContent="Glyph / decorative"; if(fb) fb.textContent="Fragment"; if(ub) ub.textContent="Skip";
       }
       card.querySelectorAll("[data-label]").forEach(btn => btn.addEventListener("click", () => {
         if (state.italicCalibrationLabels[key]) return;
@@ -8766,7 +8769,7 @@ ${coverSpine}${spine.join("\n")}
     const rows=replay.rows, controls=rows.filter(r=>r.label==="ITALIC"), romans=rows.filter(r=>r.label==="ROMAN"), cutoffs=[20,50,100,250];
     const modeSummary=(rankField)=>{const ranked=rows.filter(r=>Number.isFinite(Number(r[rankField]))),out={labeled:ranked.length,knownItalics:controls.length,knownRomans:romans.length,cutoffs:{}};for(const n of cutoffs){const selected=ranked.filter(r=>Number(r[rankField])<=n),tp=selected.filter(r=>r.label==="ITALIC").length,fp=selected.filter(r=>r.label==="ROMAN").length;out.cutoffs[n]={selectedLabeled:selected.length,trueItalics:tp,romans:fp,precision:selected.length?tp/selected.length:null,recall:controls.length?tp/controls.length:null};}out.italicRanks=controls.map(r=>Number(r[rankField])).filter(Number.isFinite).sort((a,b)=>a-b);return out;};
     const controlRows=controls.map(r=>({standardRank:r.standardRank,learnedRank:r.learnedRank,huntRank:r.huntRank,standardScore:r.standardScore,learnedProbability:r.learnedScore,huntScore:r.huntScore,glyphClass:r.glyphClass,vector:r.vector}));
-    const payload={build:BUILD_VERSION,sourceProfile:state.sourceProfile,timing:state.italicReviewTiming||null,deepTiming:state.italicValidationDeepTiming||state.italicDiagnosticsTiming||null,populationTiming:state.italicValidationPopulationTiming||state.italicPopulationTiming||null,huntTiming:{replay:replay.huntTiming,live:state.italicValidationLiveHuntTiming||null,lastRealHunt:state.lastRealItalicHuntTiming||((state.italicReviewTiming?.mode==="hunt")?state.italicReviewTiming:null)},validation:{labelsReviewed:rows.length,knownItalics:controls.length,knownRomans:romans.length,persistedLabels:rows.length,replayablePersisted:rows.length,unreplayablePersisted:0,standard:modeSummary("standardRank"),learned:modeSummary("learnedRank"),hunt:modeSummary("huntRank")},geometryModel:italicGeometryModel(),featureSeparation:italicFeatureSeparationReport(),featureDiscovery:italicFeatureDiscoveryReport(rows),slantInteractionStudy:italicSlantInteractionReport(rows),visualFeatureStudy:state.italicVisualFeatureStudy||null,queueSize:0,knownItalicControls:controlRows,note:"v124 combined validation: the live specimen-population path is timed stage-by-stage, then Standard, Learned, and Hunt are replayed directly over the same stored human-labeled feature vectors for retrospective quality counts; no page/crop reattachment is required. Standard score is reconstructed from the persisted structural features. Learned uses the production feature learner on reconstructed typography-only specimens. Hunt v97 uses the production Learned-ranking backbone over persisted vectors; production-only unseen-text, glyph/decorative, fragment, and duplicate suppression cannot be reproduced by a replay in which every row is already labeled. Labels are used only after ranking to count outcomes. This is a retrospective diagnostic on training examples, not a held-out generalization estimate."};
+    const payload={build:BUILD_VERSION,sourceProfile:state.sourceProfile,timing:state.italicReviewTiming||null,deepTiming:state.italicValidationDeepTiming||state.italicDiagnosticsTiming||null,populationTiming:state.italicValidationPopulationTiming||state.italicPopulationTiming||null,huntTiming:{replay:replay.huntTiming,live:state.italicValidationLiveHuntTiming||null,lastRealHunt:state.lastRealItalicHuntTiming||((state.italicReviewTiming?.mode==="hunt")?state.italicReviewTiming:null)},validation:{labelsReviewed:rows.length,knownItalics:controls.length,knownRomans:romans.length,persistedLabels:rows.length,replayablePersisted:rows.length,unreplayablePersisted:0,standard:modeSummary("standardRank"),learned:modeSummary("learnedRank"),hunt:modeSummary("huntRank")},geometryModel:italicGeometryModel(),featureSeparation:italicFeatureSeparationReport(),featureDiscovery:italicFeatureDiscoveryReport(rows),slantInteractionStudy:italicSlantInteractionReport(rows),visualFeatureStudy:state.italicVisualFeatureStudy||null,queueSize:0,knownItalicControls:controlRows,note:"v125 combined validation: the live specimen-population path is timed stage-by-stage, then Standard, Learned, and Hunt are replayed directly over the same stored human-labeled feature vectors for retrospective quality counts; no page/crop reattachment is required. Standard score is reconstructed from the persisted structural features. Learned uses the production feature learner on reconstructed typography-only specimens. Hunt v97 uses the production Learned-ranking backbone over persisted vectors; production-only unseen-text, glyph/decorative, fragment, and duplicate suppression cannot be reproduced by a replay in which every row is already labeled. Labels are used only after ranking to count outcomes. This is a retrospective diagnostic on training examples, not a held-out generalization estimate."};
     downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),`italic-validation-v${BUILD_VERSION}.json`);
   });
   updatePreview();
