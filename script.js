@@ -5,6 +5,8 @@
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
+  const buildIdentifier = $("buildIdentifier");
+  if (buildIdentifier) buildIdentifier.textContent = `BUILD ${BUILD_VERSION}`;
 
   const state = {
     files: [],
