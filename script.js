@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "109";
+  const BUILD_VERSION = "110";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -8416,45 +8416,42 @@ ${coverSpine}${spine.join("\n")}
   }
 
   async function buildItalicPixelGeometryStudyFromLoadedScreenshots(){
-    // v108: rebuild the existing spoiler-safe candidate population in Validation
-    // mode so persisted/trained specimens are retained with their true reviewBox.
-    // No OCR is run here.
+    // v110: derive review boxes directly from persisted OCR line geometry plus
+    // the loaded screenshot pixels. This uses estimateInkAlignedWordBoxes, the
+    // same non-OCR geometry helper used by the italic scan, but does NOT invoke OCR.
     const examples=(currentItalicLearningProfile().examples||[]).filter(x=>x.label==="ITALIC"||x.label==="ROMAN");
-    const previousMode=state.italicReviewSelectionMode;
-    let populationBuildError=null, populationPayload=null;
-    try{
-      state.italicReviewSelectionMode="validation";
-      populationPayload=downloadItalicDiagnostics(false);
-    }catch(err){ populationBuildError=String(err?.message||err); }
-    finally{ state.italicReviewSelectionMode=previousMode; }
-
-    const returnedRuns=populationPayload?.supervisedCalibrationReviewSet;
-    const runs=Array.isArray(returnedRuns)?returnedRuns:(Array.isArray(state.italicCalibrationReviewSet)?state.italicCalibrationReviewSet:[]);
-    const exact=new Map(), physical=new Map();
-    for(const run of runs){
-      if(!run?.reviewBox) continue;
-      exact.set(italicCalibrationKey(run),run);
-      const pkey=`${run.pageIndex}:${run.lineIndex}:${run.startWordIndex}`;
-      if(!physical.has(pkey) || Number(run.wordCount||1)===1) physical.set(pkey,run);
-    }
-
-    const targets=[]; let parsedIds=0, exactMatches=0, physicalMatches=0, missingBoxes=0;
+    const parsed=[]; let parsedIds=0,invalidIds=0,outOfRange=0,missingLines=0,missingFiles=0,wordRangeMisses=0;
     for(const ex of examples){
       const tail=String(ex.id||"").split("::").pop()||"";
       const m=tail.match(/^(\d+):(\d+):(\d+):(\d+)$/);
-      if(!m) continue;
+      if(!m){invalidIds++;continue;}
       parsedIds++;
-      const exactKey=`${m[1]}:${m[2]}:${m[3]}:${m[4]}`;
-      const physicalKey=`${m[1]}:${m[2]}:${m[3]}`;
-      let run=exact.get(exactKey);
-      if(run) exactMatches++;
-      else { run=physical.get(physicalKey); if(run) physicalMatches++; }
-      if(!run?.reviewBox){ missingBoxes++; continue; }
-      targets.push({pageIndex:Number(run.pageIndex),label:ex.label,box:{...run.reviewBox}});
+      parsed.push({ex,pageIndex:Number(m[1]),lineIndex:Number(m[2]),lo:Math.min(Number(m[3]),Number(m[4])),hi:Math.max(Number(m[3]),Number(m[4]))});
     }
-
-    const attachment={totalExamples:examples.length,parsedIds,candidatePopulation:runs.length,populationSource:Array.isArray(returnedRuns)?"diagnostics-return":"state-fallback",diagnosticsReturned:!!populationPayload,scoredWords:Number(populationPayload?.summary?.scoredWords||0),exactMatches,physicalMatches,reattached:targets.length,missingBoxes,populationBuildError};
-    if(!targets.length)return {diagnosticOnly:true,available:false,...attachment,reason:"Persisted IDs parsed, but no matching validation-population review boxes were found."};
+    const byPage=new Map(); for(const p of parsed){if(!byPage.has(p.pageIndex))byPage.set(p.pageIndex,[]);byPage.get(p.pageIndex).push(p);}
+    const targets=[];
+    for(const [pageIndex,items] of byPage){
+      const page=state.pages?.[pageIndex]; if(!page){outOfRange+=items.length;continue;}
+      const file=page.file||state.files?.[pageIndex]; if(!file){missingFiles+=items.length;continue;}
+      let canvas=null;
+      try{const img=await loadImageFromFile(file);canvas=makeCroppedCanvas(img);}catch(_){missingFiles+=items.length;continue;}
+      const lineCache=new Map();
+      for(const item of items){
+        const line=page.layoutLines?.[item.lineIndex]; if(!line){missingLines++;continue;}
+        let words=lineCache.get(item.lineIndex);
+        if(!words){words=estimateInkAlignedWordBoxes(canvas,line).map((w,i)=>({...w,wordIndex:i}));lineCache.set(item.lineIndex,words);}
+        const chosen=words.filter(w=>w.wordIndex>=item.lo&&w.wordIndex<=item.hi);
+        if(!chosen.length){wordRangeMisses++;continue;}
+        const boxes=chosen.map(w=>w.box).filter(Boolean);
+        if(!boxes.length){wordRangeMisses++;continue;}
+        const x=Math.min(...boxes.map(b=>b.x)),y=Math.min(...boxes.map(b=>b.y)),x2=Math.max(...boxes.map(b=>b.x+b.w)),y2=Math.max(...boxes.map(b=>b.y+b.h));
+        targets.push({pageIndex,label:item.ex.label,box:{x,y,w:x2-x,h:y2-y}});
+      }
+      canvas.width=1;canvas.height=1;
+      await new Promise(resolve=>setTimeout(resolve,0));
+    }
+    const attachment={totalExamples:examples.length,parsedIds,invalidIds,outOfRange,missingLines,missingFiles,wordRangeMisses,reattached:targets.length,attachmentSource:"saved-layoutLines + estimateInkAlignedWordBoxes"};
+    if(!targets.length)return {diagnosticOnly:true,available:false,...attachment,reason:"Persisted IDs parsed, but saved OCR line geometry could not reconstruct matching word boxes."};
 
     const measure=(canvas,b)=>{
       const pad=Math.max(1,Math.round(b.h*.08)),x=Math.max(0,Math.floor(b.x-pad)),y=Math.max(0,Math.floor(b.y-pad)),w=Math.min(canvas.width-x,Math.max(4,Math.ceil(b.w+2*pad))),h=Math.min(canvas.height-y,Math.max(4,Math.ceil(b.h+2*pad)));
@@ -8478,7 +8475,7 @@ ${coverSpine}${spine.join("\n")}
     const keys=["centroidLean","leftContourLean","rightContourLean","contourAsymmetry","leanConsistency","inkOccupancy","upperLowerInkRatio"];
     const stat=(arr,k)=>{const v=arr.map(r=>Number(r.features[k])).filter(Number.isFinite);if(!v.length)return {n:0,mean:null,sd:null};const mean=v.reduce((x,z)=>x+z,0)/v.length,sd=Math.sqrt(v.reduce((x,z)=>x+(z-mean)**2,0)/Math.max(1,v.length-1));return {n:v.length,mean,sd};};
     const I=rows.filter(r=>r.label==="ITALIC"),R=rows.filter(r=>r.label==="ROMAN");
-    return {diagnosticOnly:true,available:rows.length>0,...attachment,measured:rows.length,italicCount:I.length,romanCount:R.length,features:keys.map(k=>{const i=stat(I,k),r=stat(R,k),pool=Math.max(1e-9,Math.sqrt(((i.sd||0)**2+(r.sd||0)**2)/2));return {name:k,italic:i,roman:r,signedSeparation:(i.mean==null||r.mean==null)?null:(i.mean-r.mean)/pool,separation:(i.mean==null||r.mean==null)?null:Math.abs(i.mean-r.mean)/pool};}).sort((x,z)=>(z.separation??-1)-(x.separation??-1)),note:"BUILD 109 isolated pixel geometry. Rebuilds the existing Validation candidate population, reattaches persisted examples to real reviewBox coordinates, and reads loaded screenshot pixels only. No re-OCR and no production ranking changes."};
+    return {diagnosticOnly:true,available:rows.length>0,...attachment,measured:rows.length,italicCount:I.length,romanCount:R.length,features:keys.map(k=>{const i=stat(I,k),r=stat(R,k),pool=Math.max(1e-9,Math.sqrt(((i.sd||0)**2+(r.sd||0)**2)/2));return {name:k,italic:i,roman:r,signedSeparation:(i.mean==null||r.mean==null)?null:(i.mean-r.mean)/pool,separation:(i.mean==null||r.mean==null)?null:Math.abs(i.mean-r.mean)/pool};}).sort((x,z)=>(z.separation??-1)-(x.separation??-1)),note:"BUILD 110 isolated pixel geometry. Reconstructs word boxes directly from saved OCR layoutLines plus loaded screenshot pixels; no Auto Italic Scan, no re-OCR, and no production ranking changes."};
   }
 
   els.italicPixelStudyBtn?.addEventListener("click",async ()=>{
@@ -8488,7 +8485,7 @@ ${coverSpine}${spine.join("\n")}
     try{
       const study=await buildItalicPixelGeometryStudyFromLoadedScreenshots();
       state.italicVisualFeatureStudy=study;
-      const payload={build:BUILD_VERSION,sourceProfile:state.sourceProfile,visualFeatureStudy:study,note:"BUILD 109 isolated pixel diagnostic. Uses already-loaded screenshots and persisted Italic/Roman labels only. No re-OCR, no new labeling, and no production learner/ranking changes."};
+      const payload={build:BUILD_VERSION,sourceProfile:state.sourceProfile,visualFeatureStudy:study,note:"BUILD 110 isolated pixel diagnostic. Uses already-loaded screenshots and persisted Italic/Roman labels only. No re-OCR, no new labeling, and no production learner/ranking changes."};
       downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),`italic-pixel-study-v${BUILD_VERSION}.json`);
       setStatus(study?.available?`Pixel study complete: ${study.measured||0} specimens measured.`:`Pixel study complete: no measurements. ${study?.reason||""}`);
     }catch(err){
@@ -8507,7 +8504,7 @@ ${coverSpine}${spine.join("\n")}
     const rows=replay.rows, controls=rows.filter(r=>r.label==="ITALIC"), romans=rows.filter(r=>r.label==="ROMAN"), cutoffs=[20,50,100,250];
     const modeSummary=(rankField)=>{const ranked=rows.filter(r=>Number.isFinite(Number(r[rankField]))),out={labeled:ranked.length,knownItalics:controls.length,knownRomans:romans.length,cutoffs:{}};for(const n of cutoffs){const selected=ranked.filter(r=>Number(r[rankField])<=n),tp=selected.filter(r=>r.label==="ITALIC").length,fp=selected.filter(r=>r.label==="ROMAN").length;out.cutoffs[n]={selectedLabeled:selected.length,trueItalics:tp,romans:fp,precision:selected.length?tp/selected.length:null,recall:controls.length?tp/controls.length:null};}out.italicRanks=controls.map(r=>Number(r[rankField])).filter(Number.isFinite).sort((a,b)=>a-b);return out;};
     const controlRows=controls.map(r=>({standardRank:r.standardRank,learnedRank:r.learnedRank,huntRank:r.huntRank,standardScore:r.standardScore,learnedProbability:r.learnedScore,huntScore:r.huntScore,glyphClass:r.glyphClass,vector:r.vector}));
-    const payload={build:BUILD_VERSION,sourceProfile:state.sourceProfile,timing:state.italicReviewTiming||null,deepTiming:state.italicValidationDeepTiming||state.italicDiagnosticsTiming||null,populationTiming:state.italicValidationPopulationTiming||state.italicPopulationTiming||null,huntTiming:{replay:replay.huntTiming,live:state.italicValidationLiveHuntTiming||null,lastRealHunt:state.lastRealItalicHuntTiming||((state.italicReviewTiming?.mode==="hunt")?state.italicReviewTiming:null)},validation:{labelsReviewed:rows.length,knownItalics:controls.length,knownRomans:romans.length,persistedLabels:rows.length,replayablePersisted:rows.length,unreplayablePersisted:0,standard:modeSummary("standardRank"),learned:modeSummary("learnedRank"),hunt:modeSummary("huntRank")},geometryModel:italicGeometryModel(),featureSeparation:italicFeatureSeparationReport(),featureDiscovery:italicFeatureDiscoveryReport(rows),slantInteractionStudy:italicSlantInteractionReport(rows),visualFeatureStudy:state.italicVisualFeatureStudy||null,queueSize:0,knownItalicControls:controlRows,note:"v109 combined validation: the live specimen-population path is timed stage-by-stage, then Standard, Learned, and Hunt are replayed directly over the same stored human-labeled feature vectors for retrospective quality counts; no page/crop reattachment is required. Standard score is reconstructed from the persisted structural features. Learned uses the production feature learner on reconstructed typography-only specimens. Hunt v97 uses the production Learned-ranking backbone over persisted vectors; production-only unseen-text, glyph/decorative, fragment, and duplicate suppression cannot be reproduced by a replay in which every row is already labeled. Labels are used only after ranking to count outcomes. This is a retrospective diagnostic on training examples, not a held-out generalization estimate."};
+    const payload={build:BUILD_VERSION,sourceProfile:state.sourceProfile,timing:state.italicReviewTiming||null,deepTiming:state.italicValidationDeepTiming||state.italicDiagnosticsTiming||null,populationTiming:state.italicValidationPopulationTiming||state.italicPopulationTiming||null,huntTiming:{replay:replay.huntTiming,live:state.italicValidationLiveHuntTiming||null,lastRealHunt:state.lastRealItalicHuntTiming||((state.italicReviewTiming?.mode==="hunt")?state.italicReviewTiming:null)},validation:{labelsReviewed:rows.length,knownItalics:controls.length,knownRomans:romans.length,persistedLabels:rows.length,replayablePersisted:rows.length,unreplayablePersisted:0,standard:modeSummary("standardRank"),learned:modeSummary("learnedRank"),hunt:modeSummary("huntRank")},geometryModel:italicGeometryModel(),featureSeparation:italicFeatureSeparationReport(),featureDiscovery:italicFeatureDiscoveryReport(rows),slantInteractionStudy:italicSlantInteractionReport(rows),visualFeatureStudy:state.italicVisualFeatureStudy||null,queueSize:0,knownItalicControls:controlRows,note:"v110 combined validation: the live specimen-population path is timed stage-by-stage, then Standard, Learned, and Hunt are replayed directly over the same stored human-labeled feature vectors for retrospective quality counts; no page/crop reattachment is required. Standard score is reconstructed from the persisted structural features. Learned uses the production feature learner on reconstructed typography-only specimens. Hunt v97 uses the production Learned-ranking backbone over persisted vectors; production-only unseen-text, glyph/decorative, fragment, and duplicate suppression cannot be reproduced by a replay in which every row is already labeled. Labels are used only after ranking to count outcomes. This is a retrospective diagnostic on training examples, not a held-out generalization estimate."};
     downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),`italic-validation-v${BUILD_VERSION}.json`);
   });
   updatePreview();
