@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "126";
+  const BUILD_VERSION = "127";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -5781,6 +5781,12 @@
         if (state.italicCalibrationLabels[key]) return;
         const label=btn.dataset.label;
         state.italicCalibrationLabels[key] = label;
+        const round=state.italicReviewRoundStats;
+        if(round){
+          round.presses=(round.presses||0)+1;
+          const lk=String(label||"").toLowerCase();
+          if(Object.prototype.hasOwnProperty.call(round,lk)) round[lk]=(round[lk]||0)+1;
+        }
         if(!Array.isArray(state.italicReviewHistory)) state.italicReviewHistory=[];
         run.reviewGeneralization={
           normalizedText:italicNormalizedSpecimenText(run),
@@ -5800,6 +5806,10 @@
           const saveResult=saveItalicTrainingExample(run,label);
           if(saveResult?.ok) state.italicLearningProfile=null;
           const after=italicLearningStats();
+          if(state.italicReviewRoundStats && label!=="UNSURE" && saveResult?.ok){
+            if(after.total>before.total) state.italicReviewRoundStats.newPersisted=(state.italicReviewRoundStats.newPersisted||0)+1;
+            else state.italicReviewRoundStats.updated=(state.italicReviewRoundStats.updated||0)+1;
+          }
           updateItalicLearningUi();
           if(label==="UNSURE") setStatus("Unsure: skipped, not saved to training.");
           else if(!saveResult?.ok) setStatus(`SAVE FAILED · ${saveResult?.error||"unknown storage error"} · ${Math.round(Number(saveResult?.bytes||0)/1024)} KB attempted. Label was NOT confirmed durable.`);
@@ -8410,6 +8420,7 @@ ${coverSpine}${spine.join("\n")}
     const wallStartedAt=buttonTiming?.wallStartedAt ?? Date.now();
     const timing={mode,startedAt:new Date(wallStartedAt).toISOString(),buttonToHandlerMs:Math.round(now()-t0)};
     state.italicReviewSelectionMode=mode; state.italicReviewHistory=[];
+    state.italicReviewRoundStats={mode,startedAt:new Date(wallStartedAt).toISOString(),italic:0,roman:0,glyph:0,fragment:0,unsure:0,newPersisted:0,updated:0,presses:0};
     setItalicReviewBuilding(mode,"Preparing typography measurements…");
     // v86: Validation does two jobs in one button press. First execute the live
     // specimen-population path so its real latency is measured stage-by-stage;
@@ -8769,7 +8780,7 @@ ${coverSpine}${spine.join("\n")}
     const rows=replay.rows, controls=rows.filter(r=>r.label==="ITALIC"), romans=rows.filter(r=>r.label==="ROMAN"), cutoffs=[20,50,100,250];
     const modeSummary=(rankField)=>{const ranked=rows.filter(r=>Number.isFinite(Number(r[rankField]))),out={labeled:ranked.length,knownItalics:controls.length,knownRomans:romans.length,cutoffs:{}};for(const n of cutoffs){const selected=ranked.filter(r=>Number(r[rankField])<=n),tp=selected.filter(r=>r.label==="ITALIC").length,fp=selected.filter(r=>r.label==="ROMAN").length;out.cutoffs[n]={selectedLabeled:selected.length,trueItalics:tp,romans:fp,precision:selected.length?tp/selected.length:null,recall:controls.length?tp/controls.length:null};}out.italicRanks=controls.map(r=>Number(r[rankField])).filter(Number.isFinite).sort((a,b)=>a-b);return out;};
     const controlRows=controls.map(r=>({standardRank:r.standardRank,learnedRank:r.learnedRank,huntRank:r.huntRank,standardScore:r.standardScore,learnedProbability:r.learnedScore,huntScore:r.huntScore,glyphClass:r.glyphClass,vector:r.vector}));
-    const payload={build:BUILD_VERSION,sourceProfile:state.sourceProfile,timing:state.italicReviewTiming||null,deepTiming:state.italicValidationDeepTiming||state.italicDiagnosticsTiming||null,populationTiming:state.italicValidationPopulationTiming||state.italicPopulationTiming||null,huntTiming:{replay:replay.huntTiming,live:state.italicValidationLiveHuntTiming||null,lastRealHunt:state.lastRealItalicHuntTiming||((state.italicReviewTiming?.mode==="hunt")?state.italicReviewTiming:null)},validation:{labelsReviewed:rows.length,knownItalics:controls.length,knownRomans:romans.length,persistedLabels:rows.length,replayablePersisted:rows.length,unreplayablePersisted:0,standard:modeSummary("standardRank"),learned:modeSummary("learnedRank"),hunt:modeSummary("huntRank")},geometryModel:italicGeometryModel(),featureSeparation:italicFeatureSeparationReport(),featureDiscovery:italicFeatureDiscoveryReport(rows),slantInteractionStudy:italicSlantInteractionReport(rows),visualFeatureStudy:state.italicVisualFeatureStudy||null,queueSize:0,knownItalicControls:controlRows,note:"v126 combined validation: the live specimen-population path is timed stage-by-stage, then Standard, Learned, and Hunt are replayed directly over the same stored human-labeled feature vectors for retrospective quality counts; no page/crop reattachment is required. Standard score is reconstructed from the persisted structural features. Learned uses the production feature learner on reconstructed typography-only specimens. Hunt v97 uses the production Learned-ranking backbone over persisted vectors; production-only unseen-text, glyph/decorative, fragment, and duplicate suppression cannot be reproduced by a replay in which every row is already labeled. Labels are used only after ranking to count outcomes. This is a retrospective diagnostic on training examples, not a held-out generalization estimate."};
+    const payload={build:BUILD_VERSION,sourceProfile:state.sourceProfile,reviewRound:state.italicReviewRoundStats||null,timing:state.italicReviewTiming||null,deepTiming:state.italicValidationDeepTiming||state.italicDiagnosticsTiming||null,populationTiming:state.italicValidationPopulationTiming||state.italicPopulationTiming||null,huntTiming:{replay:replay.huntTiming,live:state.italicValidationLiveHuntTiming||null,lastRealHunt:state.lastRealItalicHuntTiming||((state.italicReviewTiming?.mode==="hunt")?state.italicReviewTiming:null)},validation:{labelsReviewed:rows.length,knownItalics:controls.length,knownRomans:romans.length,persistedLabels:rows.length,replayablePersisted:rows.length,unreplayablePersisted:0,standard:modeSummary("standardRank"),learned:modeSummary("learnedRank"),hunt:modeSummary("huntRank")},geometryModel:italicGeometryModel(),featureSeparation:italicFeatureSeparationReport(),featureDiscovery:italicFeatureDiscoveryReport(rows),slantInteractionStudy:italicSlantInteractionReport(rows),visualFeatureStudy:state.italicVisualFeatureStudy||null,queueSize:0,knownItalicControls:controlRows,note:"v127 combined validation: the live specimen-population path is timed stage-by-stage, then Standard, Learned, and Hunt are replayed directly over the same stored human-labeled feature vectors for retrospective quality counts; no page/crop reattachment is required. Standard score is reconstructed from the persisted structural features. Learned uses the production feature learner on reconstructed typography-only specimens. Hunt v97 uses the production Learned-ranking backbone over persisted vectors; production-only unseen-text, glyph/decorative, fragment, and duplicate suppression cannot be reproduced by a replay in which every row is already labeled. Labels are used only after ranking to count outcomes. This is a retrospective diagnostic on training examples, not a held-out generalization estimate."};
     downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),`italic-validation-v${BUILD_VERSION}.json`);
   });
   updatePreview();
