@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "117";
+  const BUILD_VERSION = "118";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -5152,25 +5152,53 @@
     ].map(v=>Number.isFinite(v)?v:0);
   }
 
-  function loadItalicLearningStore() {
-    try { const x=JSON.parse(localStorage.getItem(ITALIC_LEARNING_KEY)||"{}"); return x&&typeof x==="object"?x:{}; } catch(_){ return {}; }
+  const ITALIC_LEARNING_DB="bookOcrStudioLearning";
+  const ITALIC_LEARNING_DB_STORE="kv";
+  let italicLearningStoreCache=null,italicLearningDbReady=null;
+  function openItalicLearningDb(){
+    return new Promise((resolve,reject)=>{
+      const req=indexedDB.open(ITALIC_LEARNING_DB,1);
+      req.onupgradeneeded=()=>{const db=req.result;if(!db.objectStoreNames.contains(ITALIC_LEARNING_DB_STORE))db.createObjectStore(ITALIC_LEARNING_DB_STORE);};
+      req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error);
+    });
   }
-  function saveItalicLearningStore(store) {
-    const raw=JSON.stringify(store);
-    try {
-      localStorage.setItem(ITALIC_LEARNING_KEY,raw);
-      const verifyRaw=localStorage.getItem(ITALIC_LEARNING_KEY);
-      const verified=verifyRaw===raw;
-      const result={ok:verified,bytes:new Blob([raw]).size,characters:raw.length,error:verified?null:"localStorage readback did not match the attempted write"};
-      state.italicLearningLastSave=result;
-      if(!verified) console.warn("Italic learning save verification failed",result);
-      return result;
-    } catch(err){
-      const result={ok:false,bytes:new Blob([raw]).size,characters:raw.length,error:String(err?.name||"Error")+": "+String(err?.message||err)};
-      state.italicLearningLastSave=result;
-      console.warn("Could not save italic learning profile",err);
-      return result;
-    }
+  async function readItalicLearningDb(){
+    const db=await openItalicLearningDb();
+    return await new Promise((resolve,reject)=>{const tx=db.transaction(ITALIC_LEARNING_DB_STORE,"readonly"),req=tx.objectStore(ITALIC_LEARNING_DB_STORE).get("profiles");req.onsuccess=()=>resolve(req.result&&typeof req.result==="object"?req.result:{});req.onerror=()=>reject(req.error);});
+  }
+  async function writeItalicLearningDb(store){
+    const db=await openItalicLearningDb();
+    return await new Promise((resolve,reject)=>{const tx=db.transaction(ITALIC_LEARNING_DB_STORE,"readwrite");tx.objectStore(ITALIC_LEARNING_DB_STORE).put(store,"profiles");tx.oncomplete=()=>resolve(true);tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error||new Error("IndexedDB transaction aborted"));});
+  }
+  function legacyItalicLearningStore(){
+    try{const x=JSON.parse(localStorage.getItem(ITALIC_LEARNING_KEY)||"{}");return x&&typeof x==="object"?x:{};}catch(_){return {};}
+  }
+  function loadItalicLearningStore(){return italicLearningStoreCache||legacyItalicLearningStore();}
+  async function initializeItalicLearningDb(){
+    if(italicLearningDbReady)return italicLearningDbReady;
+    italicLearningDbReady=(async()=>{
+      const legacy=legacyItalicLearningStore();
+      let dbStore={};try{dbStore=await readItalicLearningDb();}catch(err){console.warn("Could not read typography IndexedDB",err);}
+      const dbCount=Object.values(dbStore).reduce((n,p)=>n+(Array.isArray(p?.examples)?p.examples.length:0),0);
+      const legacyCount=Object.values(legacy).reduce((n,p)=>n+(Array.isArray(p?.examples)?p.examples.length:0),0);
+      if(!dbCount&&legacyCount){await writeItalicLearningDb(legacy);dbStore=await readItalicLearningDb();}
+      italicLearningStoreCache=dbCount||legacyCount?(dbCount?dbStore:legacy):{};
+      state.italicLearningProfile=null;updateItalicLearningUi();
+      if(legacyCount&&!dbCount)setStatus(`Typography learning migrated to IndexedDB · ${legacyCount} examples preserved.`);
+      return italicLearningStoreCache;
+    })().catch(err=>{console.error("Typography IndexedDB initialization failed",err);italicLearningStoreCache=legacyItalicLearningStore();return italicLearningStoreCache;});
+    return italicLearningDbReady;
+  }
+  function saveItalicLearningStore(store){
+    italicLearningStoreCache=store;
+    const raw=JSON.stringify(store),result={ok:true,pending:true,backend:"IndexedDB",bytes:new Blob([raw]).size,characters:raw.length,error:null};
+    state.italicLearningLastSave=result;
+    writeItalicLearningDb(store).then(async()=>{
+      const verify=await readItalicLearningDb(),verified=JSON.stringify(verify)===raw;
+      state.italicLearningLastSave={...result,ok:verified,pending:false,error:verified?null:"IndexedDB readback mismatch"};
+      if(!verified)console.warn("Typography IndexedDB verification failed");
+    }).catch(err=>{state.italicLearningLastSave={...result,ok:false,pending:false,error:String(err?.name||"Error")+": "+String(err?.message||err)};console.warn("Could not save typography learning to IndexedDB",err);});
+    return result;
   }
   function currentItalicLearningProfile() {
     const key=state.sourceProfile||"default";
@@ -5692,8 +5720,8 @@
           updateItalicLearningUi();
           if(label==="UNSURE") setStatus("Unsure: skipped, not saved to training.");
           else if(!saveResult?.ok) setStatus(`SAVE FAILED · ${saveResult?.error||"unknown storage error"} · ${Math.round(Number(saveResult?.bytes||0)/1024)} KB attempted. Label was NOT confirmed durable.`);
-          else if(after.total>before.total) setStatus(`SAVED + VERIFIED · ${label.toLowerCase()} · ${after.italic} italic / ${after.roman} Roman / ${after.glyph} glyph · ${Math.round(Number(saveResult.bytes||0)/1024)} KB store`);
-          else setStatus(`SAVED + VERIFIED existing ${label.toLowerCase()} specimen · totals unchanged · ${Math.round(Number(saveResult.bytes||0)/1024)} KB store`);
+          else if(after.total>before.total) setStatus(`SAVED TO INDEXEDDB QUEUE · ${label.toLowerCase()} · ${after.italic} italic / ${after.roman} Roman / ${after.glyph} glyph · ${Math.round(Number(saveResult.bytes||0)/1024)} KB store`);
+          else setStatus(`UPDATED INDEXEDDB QUEUE · existing ${label.toLowerCase()} specimen · totals unchanged`);
         }
         renderItalicCalibrationReview();
       }));
@@ -8221,6 +8249,7 @@ ${coverSpine}${spine.join("\n")}
   els.importItalicLearning?.addEventListener("click", ()=>els.importItalicLearningFile?.click());
   els.importItalicLearningFile?.addEventListener("change", ()=>{ importItalicLearningProfileFile(els.importItalicLearningFile.files?.[0]); els.importItalicLearningFile.value=""; });
   els.resetItalicLearning?.addEventListener("click", resetItalicLearningProfile);
+  initializeItalicLearningDb();
   updateItalicLearningUi();
   els.repairLigatures.addEventListener("click", runSplitLigaturePolish);
 
@@ -8628,7 +8657,7 @@ ${coverSpine}${spine.join("\n")}
         const model={version:1,sourceProfile:state.sourceProfile,features:study.features.filter(f=>keep.has(f.name)).map(f=>({name:f.name,italic:f.italic,roman:f.roman})),savedAt:new Date().toISOString()};
         try{localStorage.setItem("bookOcrStudio.italicPixelAssist.v1",JSON.stringify(model));}catch(_){}
       }
-      const payload={build:BUILD_VERSION,sourceProfile:state.sourceProfile,visualFeatureStudy:study,note:"BUILD 117 isolated pixel diagnostic. Uses already-loaded screenshots and persisted Italic/Roman labels only. No re-OCR, no new labeling, and no production learner/ranking changes."};
+      const payload={build:BUILD_VERSION,sourceProfile:state.sourceProfile,visualFeatureStudy:study,note:"BUILD 118 isolated pixel diagnostic. Uses already-loaded screenshots and persisted Italic/Roman labels only. No re-OCR, no new labeling, and no production learner/ranking changes."};
       downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),`italic-pixel-study-v${BUILD_VERSION}.json`);
       setStatus(study?.available?`Pixel study complete: ${study.measured||0} specimens measured.`:`Pixel study complete: no measurements. ${study?.reason||""}`);
     }catch(err){
@@ -8647,7 +8676,7 @@ ${coverSpine}${spine.join("\n")}
     const rows=replay.rows, controls=rows.filter(r=>r.label==="ITALIC"), romans=rows.filter(r=>r.label==="ROMAN"), cutoffs=[20,50,100,250];
     const modeSummary=(rankField)=>{const ranked=rows.filter(r=>Number.isFinite(Number(r[rankField]))),out={labeled:ranked.length,knownItalics:controls.length,knownRomans:romans.length,cutoffs:{}};for(const n of cutoffs){const selected=ranked.filter(r=>Number(r[rankField])<=n),tp=selected.filter(r=>r.label==="ITALIC").length,fp=selected.filter(r=>r.label==="ROMAN").length;out.cutoffs[n]={selectedLabeled:selected.length,trueItalics:tp,romans:fp,precision:selected.length?tp/selected.length:null,recall:controls.length?tp/controls.length:null};}out.italicRanks=controls.map(r=>Number(r[rankField])).filter(Number.isFinite).sort((a,b)=>a-b);return out;};
     const controlRows=controls.map(r=>({standardRank:r.standardRank,learnedRank:r.learnedRank,huntRank:r.huntRank,standardScore:r.standardScore,learnedProbability:r.learnedScore,huntScore:r.huntScore,glyphClass:r.glyphClass,vector:r.vector}));
-    const payload={build:BUILD_VERSION,sourceProfile:state.sourceProfile,timing:state.italicReviewTiming||null,deepTiming:state.italicValidationDeepTiming||state.italicDiagnosticsTiming||null,populationTiming:state.italicValidationPopulationTiming||state.italicPopulationTiming||null,huntTiming:{replay:replay.huntTiming,live:state.italicValidationLiveHuntTiming||null,lastRealHunt:state.lastRealItalicHuntTiming||((state.italicReviewTiming?.mode==="hunt")?state.italicReviewTiming:null)},validation:{labelsReviewed:rows.length,knownItalics:controls.length,knownRomans:romans.length,persistedLabels:rows.length,replayablePersisted:rows.length,unreplayablePersisted:0,standard:modeSummary("standardRank"),learned:modeSummary("learnedRank"),hunt:modeSummary("huntRank")},geometryModel:italicGeometryModel(),featureSeparation:italicFeatureSeparationReport(),featureDiscovery:italicFeatureDiscoveryReport(rows),slantInteractionStudy:italicSlantInteractionReport(rows),visualFeatureStudy:state.italicVisualFeatureStudy||null,queueSize:0,knownItalicControls:controlRows,note:"v117 combined validation: the live specimen-population path is timed stage-by-stage, then Standard, Learned, and Hunt are replayed directly over the same stored human-labeled feature vectors for retrospective quality counts; no page/crop reattachment is required. Standard score is reconstructed from the persisted structural features. Learned uses the production feature learner on reconstructed typography-only specimens. Hunt v97 uses the production Learned-ranking backbone over persisted vectors; production-only unseen-text, glyph/decorative, fragment, and duplicate suppression cannot be reproduced by a replay in which every row is already labeled. Labels are used only after ranking to count outcomes. This is a retrospective diagnostic on training examples, not a held-out generalization estimate."};
+    const payload={build:BUILD_VERSION,sourceProfile:state.sourceProfile,timing:state.italicReviewTiming||null,deepTiming:state.italicValidationDeepTiming||state.italicDiagnosticsTiming||null,populationTiming:state.italicValidationPopulationTiming||state.italicPopulationTiming||null,huntTiming:{replay:replay.huntTiming,live:state.italicValidationLiveHuntTiming||null,lastRealHunt:state.lastRealItalicHuntTiming||((state.italicReviewTiming?.mode==="hunt")?state.italicReviewTiming:null)},validation:{labelsReviewed:rows.length,knownItalics:controls.length,knownRomans:romans.length,persistedLabels:rows.length,replayablePersisted:rows.length,unreplayablePersisted:0,standard:modeSummary("standardRank"),learned:modeSummary("learnedRank"),hunt:modeSummary("huntRank")},geometryModel:italicGeometryModel(),featureSeparation:italicFeatureSeparationReport(),featureDiscovery:italicFeatureDiscoveryReport(rows),slantInteractionStudy:italicSlantInteractionReport(rows),visualFeatureStudy:state.italicVisualFeatureStudy||null,queueSize:0,knownItalicControls:controlRows,note:"v118 combined validation: the live specimen-population path is timed stage-by-stage, then Standard, Learned, and Hunt are replayed directly over the same stored human-labeled feature vectors for retrospective quality counts; no page/crop reattachment is required. Standard score is reconstructed from the persisted structural features. Learned uses the production feature learner on reconstructed typography-only specimens. Hunt v97 uses the production Learned-ranking backbone over persisted vectors; production-only unseen-text, glyph/decorative, fragment, and duplicate suppression cannot be reproduced by a replay in which every row is already labeled. Labels are used only after ranking to count outcomes. This is a retrospective diagnostic on training examples, not a held-out generalization estimate."};
     downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),`italic-validation-v${BUILD_VERSION}.json`);
   });
   updatePreview();
