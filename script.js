@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "118";
+  const BUILD_VERSION = "119";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -4971,11 +4971,38 @@
       // clean the unseen population, then preserve Learned order.
       const candidateRows=candidates.map(r=>({r,v:italicLearningVector(r)}));
       __popMark("huntVectorizeMs");
+      // v119: positive-prototype Hunt. With a heavily imbalanced corpus, the
+      // classifier can become excellent at Roman rejection while burying the
+      // scarce positive class. Rank unseen candidates by standardized distance
+      // to the known ITALIC examples first, then use Learned as supporting evidence.
+      // No lexical identity or story text participates in this score.
+      const positiveVectors=positives.map(x=>x.vector.map(Number));
+      const negativeVectors=negatives.map(x=>x.vector.map(Number));
+      const dims=ITALIC_FEATURE_NAMES.length;
+      const meanVec=rows=>Array.from({length:dims},(_,j)=>rows.length?rows.reduce((a,v)=>a+(Number(v[j])||0),0)/rows.length:0);
+      const posMean=meanVec(positiveVectors),negMean=meanVec(negativeVectors);
+      const scales=Array.from({length:dims},(_,j)=>{
+        const vals=[...positiveVectors,...negativeVectors].map(v=>Number(v[j])||0);
+        if(vals.length<2)return 1;
+        const m=vals.reduce((a,z)=>a+z,0)/vals.length;
+        const sd=Math.sqrt(vals.reduce((a,z)=>a+(z-m)*(z-m),0)/Math.max(1,vals.length-1));
+        return Math.max(sd,1e-4);
+      });
+      const distance=(v,m)=>Math.sqrt(v.reduce((a,z,j)=>a+Math.pow(((Number(z)||0)-m[j])/scales[j],2),0)/dims);
+      candidateRows.forEach(x=>{
+        const dp=distance(x.v,posMean),dn=distance(x.v,negMean);
+        x.positivePrototypeScore=1/(1+Math.exp(Math.max(-20,Math.min(20,dp-dn))));
+        x.r.positivePrototypeScore=x.positivePrototypeScore;
+        const learned=Number.isFinite(x.r.learnedItalicProbability)?x.r.learnedItalicProbability:0;
+        // Scarce-positive discovery is primary; learned probability breaks near ties.
+        x.huntPositiveScore=x.positivePrototypeScore*.82+learned*.18;
+        x.r.huntPositiveScore=x.huntPositiveScore;
+      });
       const learnedRanked=candidateRows.sort((a,b)=>{
+        if(b.huntPositiveScore!==a.huntPositiveScore)return b.huntPositiveScore-a.huntPositiveScore;
         const ap=Number.isFinite(a.r.learnedItalicProbability)?a.r.learnedItalicProbability:-1;
         const bp=Number.isFinite(b.r.learnedItalicProbability)?b.r.learnedItalicProbability:-1;
-        if(bp!==ap) return bp-ap;
-        return Number(b.r.supervisedScore||0)-Number(a.r.supervisedScore||0);
+        return bp!==ap?bp-ap:Number(b.r.supervisedScore||0)-Number(a.r.supervisedScore||0);
       });
       __popMark("huntScoreMs");
       __popMark("huntSortMs");
@@ -4987,8 +5014,8 @@
       __popMark("huntDiversityMs");
       const orderedRuns=learnedRanked.map(x=>x.r);
       supervisedReviewSet.splice(0,supervisedReviewSet.length,...orderedRuns);
-      supervisedReviewSet.forEach((r,i)=>{ r.activeLearningReason="italic-hunt-learned-unseen-v97"; r.validationHuntRank=i+1; });
-      state.italicHuntTiming={totalMs:Math.round((globalThis.performance?.now?.()??Date.now())-__huntT0),population:supervisedReviewSet.length,shortlist:supervisedReviewSet.length,picked:supervisedReviewSet.length,learnedBackbone:true};
+      supervisedReviewSet.forEach((r,i)=>{ r.activeLearningReason="italic-hunt-positive-prototype-v119"; r.validationHuntRank=i+1; });
+      state.italicHuntTiming={totalMs:Math.round((globalThis.performance?.now?.()??Date.now())-__huntT0),population:supervisedReviewSet.length,shortlist:supervisedReviewSet.length,picked:supervisedReviewSet.length,learnedBackbone:true,positivePrototype:true};
       __popMark("huntReorderMs");
     }
 
@@ -8657,7 +8684,7 @@ ${coverSpine}${spine.join("\n")}
         const model={version:1,sourceProfile:state.sourceProfile,features:study.features.filter(f=>keep.has(f.name)).map(f=>({name:f.name,italic:f.italic,roman:f.roman})),savedAt:new Date().toISOString()};
         try{localStorage.setItem("bookOcrStudio.italicPixelAssist.v1",JSON.stringify(model));}catch(_){}
       }
-      const payload={build:BUILD_VERSION,sourceProfile:state.sourceProfile,visualFeatureStudy:study,note:"BUILD 118 isolated pixel diagnostic. Uses already-loaded screenshots and persisted Italic/Roman labels only. No re-OCR, no new labeling, and no production learner/ranking changes."};
+      const payload={build:BUILD_VERSION,sourceProfile:state.sourceProfile,visualFeatureStudy:study,note:"BUILD 119 isolated pixel diagnostic. Uses already-loaded screenshots and persisted Italic/Roman labels only. No re-OCR, no new labeling, and no production learner/ranking changes."};
       downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),`italic-pixel-study-v${BUILD_VERSION}.json`);
       setStatus(study?.available?`Pixel study complete: ${study.measured||0} specimens measured.`:`Pixel study complete: no measurements. ${study?.reason||""}`);
     }catch(err){
@@ -8676,7 +8703,7 @@ ${coverSpine}${spine.join("\n")}
     const rows=replay.rows, controls=rows.filter(r=>r.label==="ITALIC"), romans=rows.filter(r=>r.label==="ROMAN"), cutoffs=[20,50,100,250];
     const modeSummary=(rankField)=>{const ranked=rows.filter(r=>Number.isFinite(Number(r[rankField]))),out={labeled:ranked.length,knownItalics:controls.length,knownRomans:romans.length,cutoffs:{}};for(const n of cutoffs){const selected=ranked.filter(r=>Number(r[rankField])<=n),tp=selected.filter(r=>r.label==="ITALIC").length,fp=selected.filter(r=>r.label==="ROMAN").length;out.cutoffs[n]={selectedLabeled:selected.length,trueItalics:tp,romans:fp,precision:selected.length?tp/selected.length:null,recall:controls.length?tp/controls.length:null};}out.italicRanks=controls.map(r=>Number(r[rankField])).filter(Number.isFinite).sort((a,b)=>a-b);return out;};
     const controlRows=controls.map(r=>({standardRank:r.standardRank,learnedRank:r.learnedRank,huntRank:r.huntRank,standardScore:r.standardScore,learnedProbability:r.learnedScore,huntScore:r.huntScore,glyphClass:r.glyphClass,vector:r.vector}));
-    const payload={build:BUILD_VERSION,sourceProfile:state.sourceProfile,timing:state.italicReviewTiming||null,deepTiming:state.italicValidationDeepTiming||state.italicDiagnosticsTiming||null,populationTiming:state.italicValidationPopulationTiming||state.italicPopulationTiming||null,huntTiming:{replay:replay.huntTiming,live:state.italicValidationLiveHuntTiming||null,lastRealHunt:state.lastRealItalicHuntTiming||((state.italicReviewTiming?.mode==="hunt")?state.italicReviewTiming:null)},validation:{labelsReviewed:rows.length,knownItalics:controls.length,knownRomans:romans.length,persistedLabels:rows.length,replayablePersisted:rows.length,unreplayablePersisted:0,standard:modeSummary("standardRank"),learned:modeSummary("learnedRank"),hunt:modeSummary("huntRank")},geometryModel:italicGeometryModel(),featureSeparation:italicFeatureSeparationReport(),featureDiscovery:italicFeatureDiscoveryReport(rows),slantInteractionStudy:italicSlantInteractionReport(rows),visualFeatureStudy:state.italicVisualFeatureStudy||null,queueSize:0,knownItalicControls:controlRows,note:"v118 combined validation: the live specimen-population path is timed stage-by-stage, then Standard, Learned, and Hunt are replayed directly over the same stored human-labeled feature vectors for retrospective quality counts; no page/crop reattachment is required. Standard score is reconstructed from the persisted structural features. Learned uses the production feature learner on reconstructed typography-only specimens. Hunt v97 uses the production Learned-ranking backbone over persisted vectors; production-only unseen-text, glyph/decorative, fragment, and duplicate suppression cannot be reproduced by a replay in which every row is already labeled. Labels are used only after ranking to count outcomes. This is a retrospective diagnostic on training examples, not a held-out generalization estimate."};
+    const payload={build:BUILD_VERSION,sourceProfile:state.sourceProfile,timing:state.italicReviewTiming||null,deepTiming:state.italicValidationDeepTiming||state.italicDiagnosticsTiming||null,populationTiming:state.italicValidationPopulationTiming||state.italicPopulationTiming||null,huntTiming:{replay:replay.huntTiming,live:state.italicValidationLiveHuntTiming||null,lastRealHunt:state.lastRealItalicHuntTiming||((state.italicReviewTiming?.mode==="hunt")?state.italicReviewTiming:null)},validation:{labelsReviewed:rows.length,knownItalics:controls.length,knownRomans:romans.length,persistedLabels:rows.length,replayablePersisted:rows.length,unreplayablePersisted:0,standard:modeSummary("standardRank"),learned:modeSummary("learnedRank"),hunt:modeSummary("huntRank")},geometryModel:italicGeometryModel(),featureSeparation:italicFeatureSeparationReport(),featureDiscovery:italicFeatureDiscoveryReport(rows),slantInteractionStudy:italicSlantInteractionReport(rows),visualFeatureStudy:state.italicVisualFeatureStudy||null,queueSize:0,knownItalicControls:controlRows,note:"v119 combined validation: the live specimen-population path is timed stage-by-stage, then Standard, Learned, and Hunt are replayed directly over the same stored human-labeled feature vectors for retrospective quality counts; no page/crop reattachment is required. Standard score is reconstructed from the persisted structural features. Learned uses the production feature learner on reconstructed typography-only specimens. Hunt v97 uses the production Learned-ranking backbone over persisted vectors; production-only unseen-text, glyph/decorative, fragment, and duplicate suppression cannot be reproduced by a replay in which every row is already labeled. Labels are used only after ranking to count outcomes. This is a retrospective diagnostic on training examples, not a held-out generalization estimate."};
     downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),`italic-validation-v${BUILD_VERSION}.json`);
   });
   updatePreview();
