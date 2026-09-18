@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "133";
+  const BUILD_VERSION = "134";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -5107,7 +5107,7 @@
       }
       const orderedRuns=[...diverse,...overflow].map(x=>x.r);
       supervisedReviewSet.splice(0,supervisedReviewSet.length,...orderedRuns);
-      supervisedReviewSet.forEach((r,i)=>{ r.activeLearningReason="italic-hunt-positive-envelope-v133"; r.validationHuntRank=i+1; });
+      supervisedReviewSet.forEach((r,i)=>{ r.activeLearningReason="italic-hunt-positive-envelope-v134"; r.validationHuntRank=i+1; });
       state.italicHuntTiming={totalMs:Math.round((globalThis.performance?.now?.()??Date.now())-__huntT0),population:supervisedReviewSet.length,shortlist:supervisedReviewSet.length,picked:supervisedReviewSet.length,learnedBackbone:true,positiveEnvelope:true,diagnostics:huntDiag};
       __popMark("huntReorderMs");
     }
@@ -5136,7 +5136,7 @@
 
     supervisedReviewSet.forEach(r=>{
       r.reviewLabel=null;
-      r.reviewInstruction='Spoiler-safe human typography label: ITALIC, ROMAN, GLYPH/DECORATIVE, FRAGMENT (neutral/cropped), or UNSURE.';
+      r.reviewInstruction='Spoiler-safe human typography label: choose ITALIC, ROMAN, GLYPH/DECORATIVE, or UNSURE; Fragment is an independent crop-quality flag.';
     });
     __popMark("reviewMetadataMs");
     // Build 55: mixed-style review specimens can be split into their existing
@@ -5351,7 +5351,7 @@
     const id=`${sessionSignature}::${specimenId}`;
     const existing=p.examples.find(x=>x.id===id);
     const glyphClass=italicGlyphClassFromRun(run);
-    const example={id,label,vector,glyphClass,slantSignal:italicSlantSignal(run),normalizedText:italicNormalizedSpecimenText(run),createdAt:existing?.createdAt||new Date().toISOString(),updatedAt:new Date().toISOString()};
+    const example={id,label,fragment:Boolean(run.reviewIsFragment),vector,glyphClass,slantSignal:italicSlantSignal(run),normalizedText:italicNormalizedSpecimenText(run),createdAt:existing?.createdAt||new Date().toISOString(),updatedAt:new Date().toISOString()};
     if(existing) Object.assign(existing,example); else p.examples.push(example);
     p.updatedAt=new Date().toISOString(); p.featureNames=ITALIC_FEATURE_NAMES;
     store[key]=p;
@@ -5361,7 +5361,7 @@
   }
   function italicLearningStats() {
     const p=currentItalicLearningProfile(), ex=p.examples||[];
-    return {total:ex.length,italic:ex.filter(x=>x.label==="ITALIC").length,roman:ex.filter(x=>x.label==="ROMAN").length,glyph:ex.filter(x=>x.label==="GLYPH").length,fragment:ex.filter(x=>x.label==="FRAGMENT").length};
+    return {total:ex.length,italic:ex.filter(x=>x.label==="ITALIC").length,roman:ex.filter(x=>x.label==="ROMAN").length,glyph:ex.filter(x=>x.label==="GLYPH").length,fragment:ex.filter(x=>x.label==="FRAGMENT"||x.fragment===true).length};
   }
   function italicGlyphClassFromRun(run) {
     const raw=String(run?.text||run?.words?.map(w=>w?.text||"").join("")||"").normalize("NFKC");
@@ -5807,14 +5807,20 @@
           <button class="button secondary" data-label="ITALIC">Italic</button>
           <button class="button secondary" data-label="ROMAN">Roman</button>
           <button class="button secondary" data-label="GLYPH">Glyph / Decorative</button>
-          <button class="button secondary" data-label="FRAGMENT">Fragment</button>
+          <button class="button secondary" data-fragment-toggle>Fragment: no</button>
           <button class="button secondary" data-label="UNSURE">Unsure</button>
           ${Array.isArray(run.splitChildren)&&run.splitChildren.length>1?'<button class="button secondary" data-split="words">Split</button>':''}
         </div>`;
       if(state.italicReviewSelectionMode==="validation"){
-        const ib=card.querySelector('[data-label="ITALIC"]'), rb=card.querySelector('[data-label="ROMAN"]'), gb=card.querySelector('[data-label="GLYPH"]'), fb=card.querySelector('[data-label="FRAGMENT"]'), ub=card.querySelector('[data-label="UNSURE"]');
-        if(ib) ib.textContent="Known italic"; if(rb) rb.textContent="Not a control"; if(gb) gb.textContent="Glyph / decorative"; if(fb) fb.textContent="Fragment"; if(ub) ub.textContent="Skip";
+        const ib=card.querySelector('[data-label="ITALIC"]'), rb=card.querySelector('[data-label="ROMAN"]'), gb=card.querySelector('[data-label="GLYPH"]'), ub=card.querySelector('[data-label="UNSURE"]');
+        if(ib) ib.textContent="Known italic"; if(rb) rb.textContent="Not a control"; if(gb) gb.textContent="Glyph / decorative"; if(ub) ub.textContent="Skip";
       }
+      run.reviewIsFragment=false;
+      card.querySelector("[data-fragment-toggle]")?.addEventListener("click",e=>{
+        run.reviewIsFragment=!run.reviewIsFragment;
+        e.currentTarget.textContent=run.reviewIsFragment?"Fragment: YES":"Fragment: no";
+        e.currentTarget.classList.toggle("selected",run.reviewIsFragment);
+      });
       card.querySelectorAll("[data-label]").forEach(btn => btn.addEventListener("click", () => {
         if (state.italicCalibrationLabels[key]) return;
         const round=state.italicReviewRoundStats;
@@ -5828,6 +5834,7 @@
           round.presses=(round.presses||0)+1;
           const lk=String(label||"").toLowerCase();
           if(Object.prototype.hasOwnProperty.call(round,lk)) round[lk]=(round[lk]||0)+1;
+          if(run.reviewIsFragment) round.fragment=(round.fragment||0)+1;
         }
         if(!Array.isArray(state.italicReviewHistory)) state.italicReviewHistory=[];
         run.reviewGeneralization={
@@ -5841,25 +5848,10 @@
           })()
         };
         run.reviewChosenLabel=label;
-        if(label==="FRAGMENT"){
-          const rb=run.reviewBox||run.box||{};
-          const words=Number(run.wordCount||0);
-          const txt=italicNormalizedSpecimenText(run);
-          run.fragmentDiagnostic={
-            neutralForItalicLearning:true,
-            normalizedText:txt,
-            letters:(txt.match(/\p{L}/gu)||[]).length,
-            wordCount:words,
-            reviewBox:{x:Number(rb.x||0),y:Number(rb.y||0),w:Number(rb.w||rb.width||0),h:Number(rb.h||rb.height||0)},
-            startWordIndex:Number(run.startWordIndex),
-            endWordIndex:Number(run.endWordIndex),
-            hasSplitChildren:Array.isArray(run.splitChildren)&&run.splitChildren.length>0,
-            splitChildCount:Array.isArray(run.splitChildren)?run.splitChildren.length:0
-          };
-          if(round){
-            if(!Array.isArray(round.fragmentDiagnostics)) round.fragmentDiagnostics=[];
-            round.fragmentDiagnostics.push(run.fragmentDiagnostic);
-          }
+        if(run.reviewIsFragment){
+          const rb=run.reviewBox||run.box||{}, txt=italicNormalizedSpecimenText(run);
+          run.fragmentDiagnostic={neutralForItalicLearning:false,typographyLabel:label,normalizedText:txt,letters:(txt.match(/\p{L}/gu)||[]).length,wordCount:Number(run.wordCount||0),reviewBox:{x:Number(rb.x||0),y:Number(rb.y||0),w:Number(rb.w||rb.width||0),h:Number(rb.h||rb.height||0)},startWordIndex:Number(run.startWordIndex),endWordIndex:Number(run.endWordIndex),hasSplitChildren:Array.isArray(run.splitChildren)&&run.splitChildren.length>0,splitChildCount:Array.isArray(run.splitChildren)?run.splitChildren.length:0};
+          if(round){ if(!Array.isArray(round.fragmentDiagnostics)) round.fragmentDiagnostics=[]; round.fragmentDiagnostics.push(run.fragmentDiagnostic); }
         }
         state.italicReviewHistory.push(run);
         if(state.italicReviewSelectionMode==="validation"){ run.validationLabel=label; }
@@ -8842,7 +8834,7 @@ ${coverSpine}${spine.join("\n")}
     const rows=replay.rows, controls=rows.filter(r=>r.label==="ITALIC"), romans=rows.filter(r=>r.label==="ROMAN"), cutoffs=[20,50,100,250];
     const modeSummary=(rankField)=>{const ranked=rows.filter(r=>Number.isFinite(Number(r[rankField]))),out={labeled:ranked.length,knownItalics:controls.length,knownRomans:romans.length,cutoffs:{}};for(const n of cutoffs){const selected=ranked.filter(r=>Number(r[rankField])<=n),tp=selected.filter(r=>r.label==="ITALIC").length,fp=selected.filter(r=>r.label==="ROMAN").length;out.cutoffs[n]={selectedLabeled:selected.length,trueItalics:tp,romans:fp,precision:selected.length?tp/selected.length:null,recall:controls.length?tp/controls.length:null};}out.italicRanks=controls.map(r=>Number(r[rankField])).filter(Number.isFinite).sort((a,b)=>a-b);return out;};
     const controlRows=controls.map(r=>({standardRank:r.standardRank,learnedRank:r.learnedRank,huntRank:r.huntRank,standardScore:r.standardScore,learnedProbability:r.learnedScore,huntScore:r.huntScore,glyphClass:r.glyphClass,vector:r.vector}));
-    const payload={build:BUILD_VERSION,sourceProfile:state.sourceProfile,reviewRound:state.italicReviewRoundStats||null,timing:state.italicReviewTiming||null,deepTiming:state.italicValidationDeepTiming||state.italicDiagnosticsTiming||null,populationTiming:state.italicValidationPopulationTiming||state.italicPopulationTiming||null,huntTiming:{replay:replay.huntTiming,live:state.italicValidationLiveHuntTiming||null,lastRealHunt:state.lastRealItalicHuntTiming||((state.italicReviewTiming?.mode==="hunt")?state.italicReviewTiming:null)},validation:{labelsReviewed:rows.length,knownItalics:controls.length,knownRomans:romans.length,persistedLabels:rows.length,replayablePersisted:rows.length,unreplayablePersisted:0,standard:modeSummary("standardRank"),learned:modeSummary("learnedRank"),hunt:modeSummary("huntRank")},geometryModel:italicGeometryModel(),featureSeparation:italicFeatureSeparationReport(),featureDiscovery:italicFeatureDiscoveryReport(rows),slantInteractionStudy:italicSlantInteractionReport(rows),visualFeatureStudy:state.italicVisualFeatureStudy||null,queueSize:0,huntFunnel:state.italicHuntDiagnostics||null,knownItalicControls:controlRows,note:"v133 combined validation: the live specimen-population path is timed stage-by-stage, then Standard, Learned, and Hunt are replayed directly over the same stored human-labeled feature vectors for retrospective quality counts; no page/crop reattachment is required. Standard score is reconstructed from the persisted structural features. Learned uses the production feature learner on reconstructed typography-only specimens. Hunt v97 uses the production Learned-ranking backbone over persisted vectors; production-only unseen-text, glyph/decorative, fragment, and duplicate suppression cannot be reproduced by a replay in which every row is already labeled. Labels are used only after ranking to count outcomes. This is a retrospective diagnostic on training examples, not a held-out generalization estimate."};
+    const payload={build:BUILD_VERSION,sourceProfile:state.sourceProfile,reviewRound:state.italicReviewRoundStats||null,timing:state.italicReviewTiming||null,deepTiming:state.italicValidationDeepTiming||state.italicDiagnosticsTiming||null,populationTiming:state.italicValidationPopulationTiming||state.italicPopulationTiming||null,huntTiming:{replay:replay.huntTiming,live:state.italicValidationLiveHuntTiming||null,lastRealHunt:state.lastRealItalicHuntTiming||((state.italicReviewTiming?.mode==="hunt")?state.italicReviewTiming:null)},validation:{labelsReviewed:rows.length,knownItalics:controls.length,knownRomans:romans.length,persistedLabels:rows.length,replayablePersisted:rows.length,unreplayablePersisted:0,standard:modeSummary("standardRank"),learned:modeSummary("learnedRank"),hunt:modeSummary("huntRank")},geometryModel:italicGeometryModel(),featureSeparation:italicFeatureSeparationReport(),featureDiscovery:italicFeatureDiscoveryReport(rows),slantInteractionStudy:italicSlantInteractionReport(rows),visualFeatureStudy:state.italicVisualFeatureStudy||null,queueSize:0,huntFunnel:state.italicHuntDiagnostics||null,knownItalicControls:controlRows,note:"v134 combined validation: the live specimen-population path is timed stage-by-stage, then Standard, Learned, and Hunt are replayed directly over the same stored human-labeled feature vectors for retrospective quality counts; no page/crop reattachment is required. Standard score is reconstructed from the persisted structural features. Learned uses the production feature learner on reconstructed typography-only specimens. Hunt v97 uses the production Learned-ranking backbone over persisted vectors; production-only unseen-text, glyph/decorative, fragment, and duplicate suppression cannot be reproduced by a replay in which every row is already labeled. Labels are used only after ranking to count outcomes. This is a retrospective diagnostic on training examples, not a held-out generalization estimate."};
     downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),`italic-validation-v${BUILD_VERSION}.json`);
   });
   updatePreview();
