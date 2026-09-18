@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "113";
+  const BUILD_VERSION = "114";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -8212,6 +8212,30 @@ ${coverSpine}${spine.join("\n")}
     console.error("Book OCR Studio promise error", event.reason);
   });
 
+  async function applyItalicPixelAssistToQueue(mode){
+    if(mode!=="learned"&&mode!=="hunt")return false;
+    let model=null;try{model=JSON.parse(localStorage.getItem("bookOcrStudio.italicPixelAssist.v1")||"null");}catch(_){}
+    if(!model||model.sourceProfile!==state.sourceProfile||!Array.isArray(model.features)||model.features.length<3)return false;
+    const runs=state.italicCalibrationReviewSet||[]; if(!runs.length)return false;
+    const measure=(canvas,b)=>{
+      const pad=Math.max(1,Math.round(b.h*.08)),x=Math.max(0,Math.floor(b.x-pad)),y=Math.max(0,Math.floor(b.y-pad)),w=Math.min(canvas.width-x,Math.max(4,Math.ceil(b.w+2*pad))),h=Math.min(canvas.height-y,Math.max(4,Math.ceil(b.h+2*pad)));if(w<4||h<4)return null;
+      const d=canvas.getContext("2d",{willReadFrequently:true}).getImageData(x,y,w,h).data,gray=new Float32Array(w*h);let sum=0;
+      for(let i=0,j=0;i<d.length;i+=4,j++){const g=.299*d[i]+.587*d[i+1]+.114*d[i+2];gray[j]=g;sum+=g;}
+      const mean=sum/gray.length,thr=Math.max(70,Math.min(210,mean-30)),rows=[],left=[],right=[];let ink=0;
+      for(let yy=0;yy<h;yy++){let sx=0,n=0,lo=w,hi=-1;for(let xx=0;xx<w;xx++)if(gray[yy*w+xx]<thr){sx+=xx;n++;ink++;lo=Math.min(lo,xx);hi=Math.max(hi,xx);}if(n){rows.push({y:yy,c:sx/n});left.push({y:yy,x:lo});right.push({y:yy,x:hi});}}
+      const slope=pts=>{if(pts.length<3)return 0;const my=pts.reduce((a,p)=>a+p.y,0)/pts.length,mx=pts.reduce((a,p)=>a+p.x,0)/pts.length;let num=0,den=0;for(const p of pts){num+=(p.y-my)*(p.x-mx);den+=(p.y-my)**2;}return den?num/den:0;};
+      const cs=rows.map((p,i)=>i?Math.abs((p.c-rows[i-1].c)/Math.max(1,p.y-rows[i-1].y)):0).slice(1);
+      const leanConsistency=cs.length?1/(1+Math.sqrt(cs.reduce((a,v)=>a+(v-cs.reduce((q,z)=>q+z,0)/cs.length)**2,0)/cs.length)):0;
+      return {leanConsistency,inkOccupancy:ink/(w*h),contourAsymmetry:Math.abs(slope(left)-slope(right))};
+    };
+    const prob=f=>{let si=0,sr=0;for(const m of model.features){const v=Number(f[m.name]);for(const [lab,stat] of [["i",m.italic],["r",m.roman]]){const sd=Math.max(1e-6,Number(stat?.sd||0)),z=(v-Number(stat?.mean||0))/sd,val=-.5*z*z-Math.log(sd);if(lab==="i")si+=val;else sr+=val;}}const d=Math.max(-30,Math.min(30,si-sr));return 1/(1+Math.exp(-d));};
+    const byPage=new Map();for(const r of runs)if(r.reviewBox){if(!byPage.has(r.pageIndex))byPage.set(r.pageIndex,[]);byPage.get(r.pageIndex).push(r);}
+    for(const [pi,list] of byPage){const file=state.pages?.[pi]?.file||state.files?.[pi];if(!file)continue;try{const img=await loadImageFromFile(file),canvas=makeCroppedCanvas(img);for(const r of list){const f=measure(canvas,r.reviewBox);if(f){r.pixelItalicProbability=prob(f);const w=mode==="hunt"?.10:.05;const base=Number.isFinite(r.learnedItalicProbability)?r.learnedItalicProbability:0;r.learnedItalicProbability=base*(1-w)+r.pixelItalicProbability*w;}}canvas.width=1;canvas.height=1;}catch(_){}}
+    runs.sort((a,b)=>(Number.isFinite(b.learnedItalicProbability)?b.learnedItalicProbability:-1)-(Number.isFinite(a.learnedItalicProbability)?a.learnedItalicProbability:-1)||Number(b.supervisedScore||0)-Number(a.supervisedScore||0));
+    runs.forEach(r=>r.activeLearningReason=mode==="hunt"?"hunt-pixel-assisted":"learned-pixel-assisted");
+    return true;
+  }
+
   async function launchItalicLearningReview(mode, buttonTiming = null) {
     if(state.sourceProfile!=="cloud-iowan"){setStatus("Italic learning review currently uses the CloudLibrary / Iowan Old Style profile.");return;}
     if(!state.pages?.length||!state.files?.length){setStatus("Load the saved screenshot/OCR project before starting italic review.");return;}
@@ -8266,6 +8290,8 @@ ${coverSpine}${spine.join("\n")}
     downloadItalicDiagnostics(false);
     timing.populationBuildRankMs=Math.round(now()-t);
     timing.afterPopulationRankMs=Math.round(now()-t0);
+    const pixelAssistApplied=await applyItalicPixelAssistToQueue(mode);
+    timing.pixelAssistApplied=pixelAssistApplied;
     timing.actualPopulationPath={
       pages:beforeDiagPages,
       queueBefore:beforeDiagQueue,
@@ -8529,7 +8555,7 @@ ${coverSpine}${spine.join("\n")}
     const learnerPixelBakeoff={diagnosticOnly:true,population:simRows.length,italicCount:simRows.filter(x=>x.label==="ITALIC").length,romanCount:simRows.filter(x=>x.label==="ROMAN").length,weightsTested:weights,currentLearnerNote:"Current learner is replayed from each persisted 13-feature vector on the same pixel-measured subset.",results:weightedBakeoff};
 
     const I=rows.filter(r=>r.label==="ITALIC"),R=rows.filter(r=>r.label==="ROMAN");
-    return {diagnosticOnly:true,available:rows.length>0,...attachment,measured:rows.length,italicCount:I.length,romanCount:R.length,pixelRankingSimulation,learnerPixelBakeoff,features:keys.map(k=>{const i=stat(I,k),r=stat(R,k),pool=Math.max(1e-9,Math.sqrt(((i.sd||0)**2+(r.sd||0)**2)/2));return {name:k,italic:i,roman:r,signedSeparation:(i.mean==null||r.mean==null)?null:(i.mean-r.mean)/pool,separation:(i.mean==null||r.mean==null)?null:Math.abs(i.mean-r.mean)/pool};}).sort((x,z)=>(z.separation??-1)-(x.separation??-1)),note:"BUILD 113 isolated pixel geometry + narrow-band diagnostic learner/pixel bake-off (0–12.5%) with top-100 recall. Reconstructs word boxes directly from saved OCR layoutLines plus loaded screenshot pixels; no Auto Italic Scan, no re-OCR, and no production ranking changes."};
+    return {diagnosticOnly:true,available:rows.length>0,...attachment,measured:rows.length,italicCount:I.length,romanCount:R.length,pixelRankingSimulation,learnerPixelBakeoff,features:keys.map(k=>{const i=stat(I,k),r=stat(R,k),pool=Math.max(1e-9,Math.sqrt(((i.sd||0)**2+(r.sd||0)**2)/2));return {name:k,italic:i,roman:r,signedSeparation:(i.mean==null||r.mean==null)?null:(i.mean-r.mean)/pool,separation:(i.mean==null||r.mean==null)?null:Math.abs(i.mean-r.mean)/pool};}).sort((x,z)=>(z.separation??-1)-(x.separation??-1)),note:"BUILD 114 pixel geometry diagnostic; validated three-feature model is persisted for conditional production assist (0–12.5%) with top-100 recall. Reconstructs word boxes directly from saved OCR layoutLines plus loaded screenshot pixels; no Auto Italic Scan, no re-OCR, and no production ranking changes."};
   }
 
   els.italicPixelStudyBtn?.addEventListener("click",async ()=>{
@@ -8539,7 +8565,12 @@ ${coverSpine}${spine.join("\n")}
     try{
       const study=await buildItalicPixelGeometryStudyFromLoadedScreenshots();
       state.italicVisualFeatureStudy=study;
-      const payload={build:BUILD_VERSION,sourceProfile:state.sourceProfile,visualFeatureStudy:study,note:"BUILD 113 isolated pixel diagnostic. Uses already-loaded screenshots and persisted Italic/Roman labels only. No re-OCR, no new labeling, and no production learner/ranking changes."};
+      if(study?.available&&Array.isArray(study.features)){
+        const keep=new Set(["leanConsistency","inkOccupancy","contourAsymmetry"]);
+        const model={version:1,sourceProfile:state.sourceProfile,features:study.features.filter(f=>keep.has(f.name)).map(f=>({name:f.name,italic:f.italic,roman:f.roman})),savedAt:new Date().toISOString()};
+        try{localStorage.setItem("bookOcrStudio.italicPixelAssist.v1",JSON.stringify(model));}catch(_){}
+      }
+      const payload={build:BUILD_VERSION,sourceProfile:state.sourceProfile,visualFeatureStudy:study,note:"BUILD 114 isolated pixel diagnostic. Uses already-loaded screenshots and persisted Italic/Roman labels only. No re-OCR, no new labeling, and no production learner/ranking changes."};
       downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),`italic-pixel-study-v${BUILD_VERSION}.json`);
       setStatus(study?.available?`Pixel study complete: ${study.measured||0} specimens measured.`:`Pixel study complete: no measurements. ${study?.reason||""}`);
     }catch(err){
@@ -8558,7 +8589,7 @@ ${coverSpine}${spine.join("\n")}
     const rows=replay.rows, controls=rows.filter(r=>r.label==="ITALIC"), romans=rows.filter(r=>r.label==="ROMAN"), cutoffs=[20,50,100,250];
     const modeSummary=(rankField)=>{const ranked=rows.filter(r=>Number.isFinite(Number(r[rankField]))),out={labeled:ranked.length,knownItalics:controls.length,knownRomans:romans.length,cutoffs:{}};for(const n of cutoffs){const selected=ranked.filter(r=>Number(r[rankField])<=n),tp=selected.filter(r=>r.label==="ITALIC").length,fp=selected.filter(r=>r.label==="ROMAN").length;out.cutoffs[n]={selectedLabeled:selected.length,trueItalics:tp,romans:fp,precision:selected.length?tp/selected.length:null,recall:controls.length?tp/controls.length:null};}out.italicRanks=controls.map(r=>Number(r[rankField])).filter(Number.isFinite).sort((a,b)=>a-b);return out;};
     const controlRows=controls.map(r=>({standardRank:r.standardRank,learnedRank:r.learnedRank,huntRank:r.huntRank,standardScore:r.standardScore,learnedProbability:r.learnedScore,huntScore:r.huntScore,glyphClass:r.glyphClass,vector:r.vector}));
-    const payload={build:BUILD_VERSION,sourceProfile:state.sourceProfile,timing:state.italicReviewTiming||null,deepTiming:state.italicValidationDeepTiming||state.italicDiagnosticsTiming||null,populationTiming:state.italicValidationPopulationTiming||state.italicPopulationTiming||null,huntTiming:{replay:replay.huntTiming,live:state.italicValidationLiveHuntTiming||null,lastRealHunt:state.lastRealItalicHuntTiming||((state.italicReviewTiming?.mode==="hunt")?state.italicReviewTiming:null)},validation:{labelsReviewed:rows.length,knownItalics:controls.length,knownRomans:romans.length,persistedLabels:rows.length,replayablePersisted:rows.length,unreplayablePersisted:0,standard:modeSummary("standardRank"),learned:modeSummary("learnedRank"),hunt:modeSummary("huntRank")},geometryModel:italicGeometryModel(),featureSeparation:italicFeatureSeparationReport(),featureDiscovery:italicFeatureDiscoveryReport(rows),slantInteractionStudy:italicSlantInteractionReport(rows),visualFeatureStudy:state.italicVisualFeatureStudy||null,queueSize:0,knownItalicControls:controlRows,note:"v113 combined validation: the live specimen-population path is timed stage-by-stage, then Standard, Learned, and Hunt are replayed directly over the same stored human-labeled feature vectors for retrospective quality counts; no page/crop reattachment is required. Standard score is reconstructed from the persisted structural features. Learned uses the production feature learner on reconstructed typography-only specimens. Hunt v97 uses the production Learned-ranking backbone over persisted vectors; production-only unseen-text, glyph/decorative, fragment, and duplicate suppression cannot be reproduced by a replay in which every row is already labeled. Labels are used only after ranking to count outcomes. This is a retrospective diagnostic on training examples, not a held-out generalization estimate."};
+    const payload={build:BUILD_VERSION,sourceProfile:state.sourceProfile,timing:state.italicReviewTiming||null,deepTiming:state.italicValidationDeepTiming||state.italicDiagnosticsTiming||null,populationTiming:state.italicValidationPopulationTiming||state.italicPopulationTiming||null,huntTiming:{replay:replay.huntTiming,live:state.italicValidationLiveHuntTiming||null,lastRealHunt:state.lastRealItalicHuntTiming||((state.italicReviewTiming?.mode==="hunt")?state.italicReviewTiming:null)},validation:{labelsReviewed:rows.length,knownItalics:controls.length,knownRomans:romans.length,persistedLabels:rows.length,replayablePersisted:rows.length,unreplayablePersisted:0,standard:modeSummary("standardRank"),learned:modeSummary("learnedRank"),hunt:modeSummary("huntRank")},geometryModel:italicGeometryModel(),featureSeparation:italicFeatureSeparationReport(),featureDiscovery:italicFeatureDiscoveryReport(rows),slantInteractionStudy:italicSlantInteractionReport(rows),visualFeatureStudy:state.italicVisualFeatureStudy||null,queueSize:0,knownItalicControls:controlRows,note:"v114 combined validation: the live specimen-population path is timed stage-by-stage, then Standard, Learned, and Hunt are replayed directly over the same stored human-labeled feature vectors for retrospective quality counts; no page/crop reattachment is required. Standard score is reconstructed from the persisted structural features. Learned uses the production feature learner on reconstructed typography-only specimens. Hunt v97 uses the production Learned-ranking backbone over persisted vectors; production-only unseen-text, glyph/decorative, fragment, and duplicate suppression cannot be reproduced by a replay in which every row is already labeled. Labels are used only after ranking to count outcomes. This is a retrospective diagnostic on training examples, not a held-out generalization estimate."};
     downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),`italic-validation-v${BUILD_VERSION}.json`);
   });
   updatePreview();
