@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "122";
+  const BUILD_VERSION = "123";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -4155,22 +4155,31 @@
     return runs;
   }
 
+  function italicMeasurementCacheSignature(){
+    // v123: cache the measurement schema, not the app build. Hunt-only deploys
+    // should not force a full-book pixel remeasurement.
+    return `schema1:${state.sourceProfile||"default"}:${state.pages.length}:`+state.pages.map((p,i)=>{const f=p.file||state.files[i];return [String(f?.name||"").replace(/\\s*\\(\\d+\\)(?=\\.[^.]+$)/,""),Number(f?.size||0),Number(p?.layoutLines?.length||0)].join(":");}).join("|");
+  }
   async function restoreCachedItalicMeasurements(){
     try{
       const db=await openItalicLearningDb();
-      const sig=`v122:${state.sourceProfile||"default"}:${state.pages.length}:`+state.pages.map((p,i)=>{const f=p.file||state.files[i];return [String(f?.name||"").replace(/\s*\(\d+\)(?=\.[^.]+$)/,""),Number(f?.size||0),Number(p?.layoutLines?.length||0)].join(":");}).join("|");
-      const cached=await new Promise((resolve,reject)=>{const tx=db.transaction(ITALIC_LEARNING_DB_STORE,"readonly"),req=tx.objectStore(ITALIC_LEARNING_DB_STORE).get("typeface:"+sig);req.onsuccess=()=>resolve(req.result||null);req.onerror=()=>reject(req.error);});
+      const stableKey="typeface:"+italicMeasurementCacheSignature();
+      const legacySig=`v122:${state.sourceProfile||"default"}:${state.pages.length}:`+state.pages.map((p,i)=>{const f=p.file||state.files[i];return [String(f?.name||"").replace(/\\s*\\(\\d+\\)(?=\\.[^.]+$)/,""),Number(f?.size||0),Number(p?.layoutLines?.length||0)].join(":");}).join("|");
+      const read=key=>new Promise((resolve,reject)=>{const tx=db.transaction(ITALIC_LEARNING_DB_STORE,"readonly"),req=tx.objectStore(ITALIC_LEARNING_DB_STORE).get(key);req.onsuccess=()=>resolve(req.result||null);req.onerror=()=>reject(req.error);});
+      let cached=await read(stableKey),migrated=false;
+      if(!cached){cached=await read("typeface:"+legacySig);migrated=!!cached;}
       if(!cached||!Array.isArray(cached.pages)||cached.pages.length!==state.pages.length)return false;
       cached.pages.forEach((p,i)=>(p||[]).forEach((m,j)=>{const line=state.pages[i]?.layoutLines?.[j];if(line&&m){line.italicMeta=m.italicMeta||null;line.italicWordMeta=m.italicWordMeta||[];line.italicRunMeta=m.italicRunMeta||[];line.italicText=m.italicText||null;line.italicAuto=!!m.italicAuto;}}));
-      return state.pages.some(p=>(p.layoutLines||[]).some(l=>l.italicWordMeta?.length));
+      const restored=state.pages.some(p=>(p.layoutLines||[]).some(l=>l.italicWordMeta?.length));
+      if(restored&&migrated){try{await new Promise((resolve,reject)=>{const tx=db.transaction(ITALIC_LEARNING_DB_STORE,"readwrite");tx.objectStore(ITALIC_LEARNING_DB_STORE).put({...cached,version:123,cacheSchema:1},stableKey);tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);});}catch(_){}}
+      return restored;
     }catch(err){console.warn("Could not restore cached typeface measurements",err);return false;}
   }
   async function cacheItalicMeasurements(){
     try{
-      const db=await openItalicLearningDb();
-      const sig=`v122:${state.sourceProfile||"default"}:${state.pages.length}:`+state.pages.map((p,i)=>{const f=p.file||state.files[i];return [String(f?.name||"").replace(/\s*\(\d+\)(?=\.[^.]+$)/,""),Number(f?.size||0),Number(p?.layoutLines?.length||0)].join(":");}).join("|");
-      const payload={version:122,pages:state.pages.map(p=>(p.layoutLines||[]).map(l=>({italicMeta:l.italicMeta||null,italicWordMeta:l.italicWordMeta||[],italicRunMeta:l.italicRunMeta||[],italicText:l.italicText||null,italicAuto:!!l.italicAuto})))};
-      await new Promise((resolve,reject)=>{const tx=db.transaction(ITALIC_LEARNING_DB_STORE,"readwrite");tx.objectStore(ITALIC_LEARNING_DB_STORE).put(payload,"typeface:"+sig);tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);});
+      const db=await openItalicLearningDb(),key="typeface:"+italicMeasurementCacheSignature();
+      const payload={version:123,cacheSchema:1,pages:state.pages.map(p=>(p.layoutLines||[]).map(l=>({italicMeta:l.italicMeta||null,italicWordMeta:l.italicWordMeta||[],italicRunMeta:l.italicRunMeta||[],italicText:l.italicText||null,italicAuto:!!l.italicAuto})))};
+      await new Promise((resolve,reject)=>{const tx=db.transaction(ITALIC_LEARNING_DB_STORE,"readwrite");tx.objectStore(ITALIC_LEARNING_DB_STORE).put(payload,key);tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);});
     }catch(err){console.warn("Could not cache typeface measurements",err);}
   }
 
@@ -4918,9 +4927,13 @@
       const positives=labeled.filter(x=>x.label==="ITALIC");
       const negatives=labeled.filter(x=>x.label==="ROMAN");
       const persistedGlyphs=(profile.examples||[]).filter(x=>x.label==="GLYPH");
+      // v123: normalize legacy specimen text too. Older labels may not have
+      // normalizedText, which allowed already-reviewed words to reappear.
+      const normalizedStoredText=x=>String(x?.normalizedText||x?.text||x?.specimenText||"")
+        .normalize("NFKC").toLocaleLowerCase().replace(/[^\\p{L}\\p{N}]+/gu," ").trim().replace(/\\s+/g," ");
       const knownTexts=new Set([
-        ...labeled.map(x=>String(x.normalizedText||"")),
-        ...persistedGlyphs.map(x=>String(x.normalizedText||""))
+        ...labeled.map(normalizedStoredText),
+        ...persistedGlyphs.map(normalizedStoredText)
       ].filter(Boolean));
       const huntDiag={seen:0,idRejected:0,splitRejected:0,lexicalRejected:0,textRejected:0,shapeRejected:0,accepted:0,top:[]};
       const currentSessionSignature=checkpointSignature().map(signatureFileName).join("|");
@@ -4949,7 +4962,10 @@
         const alpha=x=>/\p{L}/u.test(String(x?.text||""));
         const gapLeft=left?.box ? Number(b.x||0)-(Number(left.box.x||0)+Number(left.box.w||left.box.width||0)) : Infinity;
         const gapRight=right?.box ? Number(right.box.x||0)-(Number(b.x||0)+Number(b.w||b.width||0)) : Infinity;
-        const touching=Math.max(2,h*.08);
+        const letters=(raw.match(/\\p{L}/gu)||[]).length;
+        // v123: short OCR shards can have a slightly wider artificial gap than
+        // the old 8% threshold. Keep normal words conservative.
+        const touching=Math.max(2,h*(letters<=4?.18:.08));
         return (alpha(left)&&gapLeft<=touching)||(alpha(right)&&gapRight<=touching);
       };
       for(const r of supervisedReviewSet){
@@ -5049,7 +5065,7 @@
       }
       const orderedRuns=[...diverse,...overflow].map(x=>x.r);
       supervisedReviewSet.splice(0,supervisedReviewSet.length,...orderedRuns);
-      supervisedReviewSet.forEach((r,i)=>{ r.activeLearningReason="italic-hunt-positive-envelope-v122"; r.validationHuntRank=i+1; });
+      supervisedReviewSet.forEach((r,i)=>{ r.activeLearningReason="italic-hunt-positive-envelope-v123"; r.validationHuntRank=i+1; });
       state.italicHuntTiming={totalMs:Math.round((globalThis.performance?.now?.()??Date.now())-__huntT0),population:supervisedReviewSet.length,shortlist:supervisedReviewSet.length,picked:supervisedReviewSet.length,learnedBackbone:true,positiveEnvelope:true,diagnostics:huntDiag};
       __popMark("huntReorderMs");
     }
@@ -8729,7 +8745,7 @@ ${coverSpine}${spine.join("\n")}
         const model={version:1,sourceProfile:state.sourceProfile,features:study.features.filter(f=>keep.has(f.name)).map(f=>({name:f.name,italic:f.italic,roman:f.roman})),savedAt:new Date().toISOString()};
         try{localStorage.setItem("bookOcrStudio.italicPixelAssist.v1",JSON.stringify(model));}catch(_){}
       }
-      const payload={build:BUILD_VERSION,sourceProfile:state.sourceProfile,visualFeatureStudy:study,note:"BUILD 122 isolated pixel diagnostic. Uses already-loaded screenshots and persisted Italic/Roman labels only. No re-OCR, no new labeling, and no production learner/ranking changes."};
+      const payload={build:BUILD_VERSION,sourceProfile:state.sourceProfile,visualFeatureStudy:study,note:"BUILD 123 isolated pixel diagnostic. Uses already-loaded screenshots and persisted Italic/Roman labels only. No re-OCR, no new labeling, and no production learner/ranking changes."};
       downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),`italic-pixel-study-v${BUILD_VERSION}.json`);
       setStatus(study?.available?`Pixel study complete: ${study.measured||0} specimens measured.`:`Pixel study complete: no measurements. ${study?.reason||""}`);
     }catch(err){
@@ -8748,7 +8764,7 @@ ${coverSpine}${spine.join("\n")}
     const rows=replay.rows, controls=rows.filter(r=>r.label==="ITALIC"), romans=rows.filter(r=>r.label==="ROMAN"), cutoffs=[20,50,100,250];
     const modeSummary=(rankField)=>{const ranked=rows.filter(r=>Number.isFinite(Number(r[rankField]))),out={labeled:ranked.length,knownItalics:controls.length,knownRomans:romans.length,cutoffs:{}};for(const n of cutoffs){const selected=ranked.filter(r=>Number(r[rankField])<=n),tp=selected.filter(r=>r.label==="ITALIC").length,fp=selected.filter(r=>r.label==="ROMAN").length;out.cutoffs[n]={selectedLabeled:selected.length,trueItalics:tp,romans:fp,precision:selected.length?tp/selected.length:null,recall:controls.length?tp/controls.length:null};}out.italicRanks=controls.map(r=>Number(r[rankField])).filter(Number.isFinite).sort((a,b)=>a-b);return out;};
     const controlRows=controls.map(r=>({standardRank:r.standardRank,learnedRank:r.learnedRank,huntRank:r.huntRank,standardScore:r.standardScore,learnedProbability:r.learnedScore,huntScore:r.huntScore,glyphClass:r.glyphClass,vector:r.vector}));
-    const payload={build:BUILD_VERSION,sourceProfile:state.sourceProfile,timing:state.italicReviewTiming||null,deepTiming:state.italicValidationDeepTiming||state.italicDiagnosticsTiming||null,populationTiming:state.italicValidationPopulationTiming||state.italicPopulationTiming||null,huntTiming:{replay:replay.huntTiming,live:state.italicValidationLiveHuntTiming||null,lastRealHunt:state.lastRealItalicHuntTiming||((state.italicReviewTiming?.mode==="hunt")?state.italicReviewTiming:null)},validation:{labelsReviewed:rows.length,knownItalics:controls.length,knownRomans:romans.length,persistedLabels:rows.length,replayablePersisted:rows.length,unreplayablePersisted:0,standard:modeSummary("standardRank"),learned:modeSummary("learnedRank"),hunt:modeSummary("huntRank")},geometryModel:italicGeometryModel(),featureSeparation:italicFeatureSeparationReport(),featureDiscovery:italicFeatureDiscoveryReport(rows),slantInteractionStudy:italicSlantInteractionReport(rows),visualFeatureStudy:state.italicVisualFeatureStudy||null,queueSize:0,knownItalicControls:controlRows,note:"v122 combined validation: the live specimen-population path is timed stage-by-stage, then Standard, Learned, and Hunt are replayed directly over the same stored human-labeled feature vectors for retrospective quality counts; no page/crop reattachment is required. Standard score is reconstructed from the persisted structural features. Learned uses the production feature learner on reconstructed typography-only specimens. Hunt v97 uses the production Learned-ranking backbone over persisted vectors; production-only unseen-text, glyph/decorative, fragment, and duplicate suppression cannot be reproduced by a replay in which every row is already labeled. Labels are used only after ranking to count outcomes. This is a retrospective diagnostic on training examples, not a held-out generalization estimate."};
+    const payload={build:BUILD_VERSION,sourceProfile:state.sourceProfile,timing:state.italicReviewTiming||null,deepTiming:state.italicValidationDeepTiming||state.italicDiagnosticsTiming||null,populationTiming:state.italicValidationPopulationTiming||state.italicPopulationTiming||null,huntTiming:{replay:replay.huntTiming,live:state.italicValidationLiveHuntTiming||null,lastRealHunt:state.lastRealItalicHuntTiming||((state.italicReviewTiming?.mode==="hunt")?state.italicReviewTiming:null)},validation:{labelsReviewed:rows.length,knownItalics:controls.length,knownRomans:romans.length,persistedLabels:rows.length,replayablePersisted:rows.length,unreplayablePersisted:0,standard:modeSummary("standardRank"),learned:modeSummary("learnedRank"),hunt:modeSummary("huntRank")},geometryModel:italicGeometryModel(),featureSeparation:italicFeatureSeparationReport(),featureDiscovery:italicFeatureDiscoveryReport(rows),slantInteractionStudy:italicSlantInteractionReport(rows),visualFeatureStudy:state.italicVisualFeatureStudy||null,queueSize:0,knownItalicControls:controlRows,note:"v123 combined validation: the live specimen-population path is timed stage-by-stage, then Standard, Learned, and Hunt are replayed directly over the same stored human-labeled feature vectors for retrospective quality counts; no page/crop reattachment is required. Standard score is reconstructed from the persisted structural features. Learned uses the production feature learner on reconstructed typography-only specimens. Hunt v97 uses the production Learned-ranking backbone over persisted vectors; production-only unseen-text, glyph/decorative, fragment, and duplicate suppression cannot be reproduced by a replay in which every row is already labeled. Labels are used only after ranking to count outcomes. This is a retrospective diagnostic on training examples, not a held-out generalization estimate."};
     downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),`italic-validation-v${BUILD_VERSION}.json`);
   });
   updatePreview();
