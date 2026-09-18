@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "143";
+  const BUILD_VERSION = "144";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -5150,7 +5150,7 @@
       supervisedReviewSet.splice(0,supervisedReviewSet.length,...orderedRuns);
       supervisedReviewSet.forEach((r,i)=>{
         r.huntSelectionSource="learned-primary-diverse-phrase";
-        r.activeLearningReason="italic-hunt-learned-primary-diverse-phrase-v143";
+        r.activeLearningReason="italic-hunt-learned-primary-diverse-phrase-v144";
         r.validationHuntRank=i+1;
       });
       state.italicHuntSelectionSourceByKey=Object.fromEntries(supervisedReviewSet.map(r=>[italicCalibrationKey(r),"learned-primary-diverse-phrase"]));
@@ -5943,6 +5943,12 @@
           else if(!saveResult?.ok) setStatus(`SAVE FAILED · ${saveResult?.error||"unknown storage error"} · ${Math.round(Number(saveResult?.bytes||0)/1024)} KB attempted. Label was NOT confirmed durable.`);
           else if(after.total>before.total) setStatus(`SAVED TO INDEXEDDB QUEUE · ${label.toLowerCase()} · ${after.italic} italic / ${after.roman} Roman / ${after.glyph} glyph · ${Math.round(Number(saveResult.bytes||0)/1024)} KB store`);
           else setStatus(`UPDATED INDEXEDDB QUEUE · existing ${label.toLowerCase()} specimen · totals unchanged`);
+        }
+        if(state.italicReviewSelectionMode==="hunt" && Number(state.italicReviewRoundStats?.presses||0)>=100){
+          state.italicCalibrationReviewSet=[];
+          setStatus("HUNT SESSION COMPLETE · 100 decisions · start a new Hunt for the next batch.");
+          renderItalicCalibrationReview();
+          return;
         }
         renderItalicCalibrationReview();
       }));
@@ -8913,7 +8919,7 @@ ${coverSpine}${spine.join("\n")}
     const modeSummary=(rankField)=>{const ranked=rows.filter(r=>Number.isFinite(Number(r[rankField]))),out={labeled:ranked.length,knownItalics:controls.length,knownRomans:romans.length,cutoffs:{}};for(const n of cutoffs){const selected=ranked.filter(r=>Number(r[rankField])<=n),tp=selected.filter(r=>r.label==="ITALIC").length,fp=selected.filter(r=>r.label==="ROMAN").length;out.cutoffs[n]={selectedLabeled:selected.length,trueItalics:tp,romans:fp,precision:selected.length?tp/selected.length:null,recall:controls.length?tp/controls.length:null};}out.italicRanks=controls.map(r=>Number(r[rankField])).filter(Number.isFinite).sort((a,b)=>a-b);return out;};
     const controlRows=controls.map(r=>({standardRank:r.standardRank,learnedRank:r.learnedRank,huntRank:r.huntRank,standardScore:r.standardScore,learnedProbability:r.learnedScore,huntScore:r.huntScore,glyphClass:r.glyphClass,vector:r.vector}));
     const reviewedSpecimens=(state.italicReviewHistory||[]).map((r,i)=>({reviewOrder:i+1,text:italicNormalizedSpecimenText(r),label:r.reviewChosenLabel||state.italicCalibrationLabels?.[italicCalibrationKey(r)]||null,fragment:!!r.reviewIsFragment,specimenKey:italicCalibrationKey(r),pageIndex:r.pageIndex,lineIndex:r.lineIndex,startWordIndex:r.startWordIndex,endWordIndex:r.endWordIndex,servedRank:r.validationHuntRank||r.originalReviewRank||null,learnedProbability:r.learnedItalicProbability,positivePrototypeScore:r.positiveEnvelopeScore,huntPositiveScore:r.huntPositiveScore,selectionSource:r.huntSelectionSource||null}));
-    const payload={build:BUILD_VERSION,sourceProfile:state.sourceProfile,reviewRound:state.italicReviewRoundStats||null,timing:state.italicReviewTiming||null,deepTiming:state.italicValidationDeepTiming||state.italicDiagnosticsTiming||null,populationTiming:state.italicValidationPopulationTiming||state.italicPopulationTiming||null,huntTiming:{replay:replay.huntTiming,live:state.italicValidationLiveHuntTiming||null,lastRealHunt:state.lastRealItalicHuntTiming||((state.italicReviewTiming?.mode==="hunt")?state.italicReviewTiming:null)},validation:{labelsReviewed:rows.length,knownItalics:controls.length,knownRomans:romans.length,persistedLabels:rows.length,replayablePersisted:rows.length,unreplayablePersisted:0,standard:modeSummary("standardRank"),learned:modeSummary("learnedRank"),hunt:modeSummary("huntRank")},geometryModel:italicGeometryModel(),featureSeparation:italicFeatureSeparationReport(),featureDiscovery:italicFeatureDiscoveryReport(rows),slantInteractionStudy:italicSlantInteractionReport(rows),visualFeatureStudy:state.italicVisualFeatureStudy||null,queueSize:0,huntFunnel:state.italicHuntDiagnostics||null,knownItalicControls:controlRows,reviewedSpecimens,note:"v143 combined validation: the live specimen-population path is timed stage-by-stage, then Standard, Learned, and Hunt are replayed directly over the same stored human-labeled feature vectors for retrospective quality counts; no page/crop reattachment is required. Standard score is reconstructed from the persisted structural features. Learned uses the production feature learner on reconstructed typography-only specimens. Hunt v97 uses the production Learned-ranking backbone over persisted vectors; production-only unseen-text, glyph/decorative, fragment, and duplicate suppression cannot be reproduced by a replay in which every row is already labeled. Labels are used only after ranking to count outcomes. This is a retrospective diagnostic on training examples, not a held-out generalization estimate."};
+    const payload={build:BUILD_VERSION,sourceProfile:state.sourceProfile,reviewRound:state.italicReviewRoundStats||null,timing:state.italicReviewTiming||null,deepTiming:state.italicValidationDeepTiming||state.italicDiagnosticsTiming||null,populationTiming:state.italicValidationPopulationTiming||state.italicPopulationTiming||null,huntTiming:{replay:replay.huntTiming,live:state.italicValidationLiveHuntTiming||null,lastRealHunt:state.lastRealItalicHuntTiming||((state.italicReviewTiming?.mode==="hunt")?state.italicReviewTiming:null)},validation:{labelsReviewed:rows.length,knownItalics:controls.length,knownRomans:romans.length,persistedLabels:rows.length,replayablePersisted:rows.length,unreplayablePersisted:0,standard:modeSummary("standardRank"),learned:modeSummary("learnedRank"),hunt:modeSummary("huntRank")},geometryModel:italicGeometryModel(),featureSeparation:italicFeatureSeparationReport(),featureDiscovery:italicFeatureDiscoveryReport(rows),slantInteractionStudy:italicSlantInteractionReport(rows),visualFeatureStudy:state.italicVisualFeatureStudy||null,queueSize:0,huntFunnel:state.italicHuntDiagnostics||null,knownItalicControls:controlRows,reviewedSpecimens,note:"v144 combined validation: the live specimen-population path is timed stage-by-stage, then Standard, Learned, and Hunt are replayed directly over the same stored human-labeled feature vectors for retrospective quality counts; no page/crop reattachment is required. Standard score is reconstructed from the persisted structural features. Learned uses the production feature learner on reconstructed typography-only specimens. Hunt v97 uses the production Learned-ranking backbone over persisted vectors; production-only unseen-text, glyph/decorative, fragment, and duplicate suppression cannot be reproduced by a replay in which every row is already labeled. Labels are used only after ranking to count outcomes. This is a retrospective diagnostic on training examples, not a held-out generalization estimate."};
     downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),`italic-validation-v${BUILD_VERSION}.json`);
   });
   updatePreview();
