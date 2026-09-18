@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "123";
+  const BUILD_VERSION = "124";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -4158,7 +4158,7 @@
   function italicMeasurementCacheSignature(){
     // v123: cache the measurement schema, not the app build. Hunt-only deploys
     // should not force a full-book pixel remeasurement.
-    return `schema1:${state.sourceProfile||"default"}:${state.pages.length}:`+state.pages.map((p,i)=>{const f=p.file||state.files[i];return [String(f?.name||"").replace(/\\s*\\(\\d+\\)(?=\\.[^.]+$)/,""),Number(f?.size||0),Number(p?.layoutLines?.length||0)].join(":");}).join("|");
+    return `schema1:${state.sourceProfile||"default"}:${state.pages.length}:`+state.pages.map((p,i)=>{const f=p.file||state.files[i];return [String(f?.name||"").replace(/\s*\(\d+\)(?=\.[^.]+$)/,""),Number(f?.size||0),Number(p?.layoutLines?.length||0)].join(":");}).join("|");
   }
   async function restoreCachedItalicMeasurements(){
     try{
@@ -4171,14 +4171,14 @@
       if(!cached||!Array.isArray(cached.pages)||cached.pages.length!==state.pages.length)return false;
       cached.pages.forEach((p,i)=>(p||[]).forEach((m,j)=>{const line=state.pages[i]?.layoutLines?.[j];if(line&&m){line.italicMeta=m.italicMeta||null;line.italicWordMeta=m.italicWordMeta||[];line.italicRunMeta=m.italicRunMeta||[];line.italicText=m.italicText||null;line.italicAuto=!!m.italicAuto;}}));
       const restored=state.pages.some(p=>(p.layoutLines||[]).some(l=>l.italicWordMeta?.length));
-      if(restored&&migrated){try{await new Promise((resolve,reject)=>{const tx=db.transaction(ITALIC_LEARNING_DB_STORE,"readwrite");tx.objectStore(ITALIC_LEARNING_DB_STORE).put({...cached,version:123,cacheSchema:1},stableKey);tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);});}catch(_){}}
+      if(restored&&migrated){try{await new Promise((resolve,reject)=>{const tx=db.transaction(ITALIC_LEARNING_DB_STORE,"readwrite");tx.objectStore(ITALIC_LEARNING_DB_STORE).put({...cached,version:124,cacheSchema:1},stableKey);tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);});}catch(_){}}
       return restored;
     }catch(err){console.warn("Could not restore cached typeface measurements",err);return false;}
   }
   async function cacheItalicMeasurements(){
     try{
       const db=await openItalicLearningDb(),key="typeface:"+italicMeasurementCacheSignature();
-      const payload={version:123,cacheSchema:1,pages:state.pages.map(p=>(p.layoutLines||[]).map(l=>({italicMeta:l.italicMeta||null,italicWordMeta:l.italicWordMeta||[],italicRunMeta:l.italicRunMeta||[],italicText:l.italicText||null,italicAuto:!!l.italicAuto})))};
+      const payload={version:124,cacheSchema:1,pages:state.pages.map(p=>(p.layoutLines||[]).map(l=>({italicMeta:l.italicMeta||null,italicWordMeta:l.italicWordMeta||[],italicRunMeta:l.italicRunMeta||[],italicText:l.italicText||null,italicAuto:!!l.italicAuto})))};
       await new Promise((resolve,reject)=>{const tx=db.transaction(ITALIC_LEARNING_DB_STORE,"readwrite");tx.objectStore(ITALIC_LEARNING_DB_STORE).put(payload,key);tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);});
     }catch(err){console.warn("Could not cache typeface measurements",err);}
   }
@@ -4930,7 +4930,7 @@
       // v123: normalize legacy specimen text too. Older labels may not have
       // normalizedText, which allowed already-reviewed words to reappear.
       const normalizedStoredText=x=>String(x?.normalizedText||x?.text||x?.specimenText||"")
-        .normalize("NFKC").toLocaleLowerCase().replace(/[^\\p{L}\\p{N}]+/gu," ").trim().replace(/\\s+/g," ");
+        .normalize("NFKC").toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu," ").trim().replace(/\s+/g," ");
       const knownTexts=new Set([
         ...labeled.map(normalizedStoredText),
         ...persistedGlyphs.map(normalizedStoredText)
@@ -4962,7 +4962,7 @@
         const alpha=x=>/\p{L}/u.test(String(x?.text||""));
         const gapLeft=left?.box ? Number(b.x||0)-(Number(left.box.x||0)+Number(left.box.w||left.box.width||0)) : Infinity;
         const gapRight=right?.box ? Number(right.box.x||0)-(Number(b.x||0)+Number(b.w||b.width||0)) : Infinity;
-        const letters=(raw.match(/\\p{L}/gu)||[]).length;
+        const letters=(raw.match(/\p{L}/gu)||[]).length;
         // v123: short OCR shards can have a slightly wider artificial gap than
         // the old 8% threshold. Keep normal words conservative.
         const touching=Math.max(2,h*(letters<=4?.18:.08));
@@ -5065,7 +5065,7 @@
       }
       const orderedRuns=[...diverse,...overflow].map(x=>x.r);
       supervisedReviewSet.splice(0,supervisedReviewSet.length,...orderedRuns);
-      supervisedReviewSet.forEach((r,i)=>{ r.activeLearningReason="italic-hunt-positive-envelope-v123"; r.validationHuntRank=i+1; });
+      supervisedReviewSet.forEach((r,i)=>{ r.activeLearningReason="italic-hunt-positive-envelope-v124"; r.validationHuntRank=i+1; });
       state.italicHuntTiming={totalMs:Math.round((globalThis.performance?.now?.()??Date.now())-__huntT0),population:supervisedReviewSet.length,shortlist:supervisedReviewSet.length,picked:supervisedReviewSet.length,learnedBackbone:true,positiveEnvelope:true,diagnostics:huntDiag};
       __popMark("huntReorderMs");
     }
