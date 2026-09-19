@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "145";
+  const BUILD_VERSION = "146";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -41,6 +41,7 @@
     italicReviewHistory: [],
     italicVisualFeatureStudy: null,
     italicHuntSessionServedTexts: new Set(),
+    italicLineHuntSeenLines: new Set(),
   };
 
   let PaddleOCRClass = null;
@@ -147,6 +148,7 @@
     italicReviewLearnedBtn: $("italicReviewLearnedBtn"),
     italicReviewRandomBtn: $("italicReviewRandomBtn"),
     italicReviewHuntBtn: $("italicReviewHuntBtn"),
+    italicLineHuntBtn: $("italicLineHuntBtn"),
     italicValidationBtn: $("italicValidationBtn"),
     italicPixelStudyBtn: $("italicPixelStudyBtn"),
     exportItalicValidation: $("exportItalicValidation"),
@@ -5904,7 +5906,7 @@
         e.currentTarget.classList.toggle("selected",run.reviewIsFragment);
       });
       card.querySelectorAll("[data-label]").forEach(btn => btn.addEventListener("click", () => {
-        if (state.italicCalibrationLabels[key]) return;
+        if (state.italicCalibrationLabels[key] && state.italicReviewSelectionMode!=="line-hunt") return;
         const round=state.italicReviewRoundStats;
         const label=btn.dataset.label;
         if(state.italicReviewSelectionMode==="hunt"){
@@ -5985,7 +5987,7 @@
         renderItalicCalibrationReview();
       });
       card.querySelector("[data-split]")?.addEventListener("click",()=>{
-        const children=(run.splitChildren||[]).filter(child=>!state.italicCalibrationLabels[italicCalibrationKey(child)]);
+        const children=(run.splitChildren||[]).filter(child=>run.lineHunt || !state.italicCalibrationLabels[italicCalibrationKey(child)]);
         if(children.length<2) return;
         const queue=state.italicCalibrationReviewSet||[];
         const idx=queue.indexOf(run);
@@ -8650,6 +8652,44 @@ ${coverSpine}${spine.join("\n")}
     els.italicCalibrationReview?.scrollIntoView({behavior:"smooth",block:"start"});
   }
 
+  async function launchItalicLineHunt(){
+    if(state.sourceProfile!=="cloud-iowan"){setStatus("Line Hunt currently uses the CloudLibrary / Iowan Old Style profile.");return;}
+    if(!state.pages?.length||!state.files?.length){setStatus("Load the saved screenshot/OCR project before starting Line Hunt.");return;}
+    state.italicReviewSelectionMode="line-hunt"; state.italicReviewHistory=[];
+    state.italicReviewRoundStats={mode:"line-hunt",startedAt:new Date().toISOString(),italic:0,roman:0,glyph:0,fragment:0,unsure:0,newPersisted:0,updated:0,presses:0};
+    if(!(state.italicLineHuntSeenLines instanceof Set)) state.italicLineHuntSeenLines=new Set();
+    const singletonPool=(state.italicCalibrationReviewSet||[]).filter(r=>Number(r.wordCount||1)===1&&r.reviewBox);
+    if(!singletonPool.length){ setStatus("Line Hunt is preparing the OCR word population…"); downloadItalicDiagnostics(false); }
+    const all=(state.italicCalibrationReviewSet||[]).filter(r=>Number(r.wordCount||1)===1&&r.reviewBox);
+    const groups=new Map();
+    for(const r of all){
+      const lk=`${r.pageIndex}:${r.lineIndex}`;
+      if(!groups.has(lk)) groups.set(lk,[]);
+      groups.get(lk).push(r);
+    }
+    const learned=(r)=>{const p=italicLearnedProbabilityUncached(r);return Number.isFinite(p)?p:0;};
+    const lines=[...groups.entries()].filter(([k,rs])=>!state.italicLineHuntSeenLines.has(k)&&rs.length>1).map(([k,rs])=>{
+      rs.sort((a,b)=>Number(a.startWordIndex)-Number(b.startWordIndex));
+      const probs=rs.map(learned).sort((a,b)=>b-a);
+      return {k,rs,score:(probs[0]||0)+(probs[1]||0)*.45};
+    }).sort((a,b)=>b.score-a.score);
+    const chosen=lines[0];
+    if(!chosen){setStatus("Line Hunt complete · no unseen OCR lines remain.");state.italicCalibrationReviewSet=[];renderItalicCalibrationReview();return;}
+    state.italicLineHuntSeenLines.add(chosen.k);
+    // Deliberately include every word on the line, even if its text or physical
+    // specimen was labeled before. Line Hunt is cleanup/context mode, and a
+    // duplicate Roman/Italic must never hide the rest of a useful line.
+    const rs=chosen.rs;
+    const boxes=rs.map(r=>r.reviewBox).filter(Boolean), x=Math.min(...boxes.map(b=>b.x)), y=Math.min(...boxes.map(b=>b.y));
+    const right=Math.max(...boxes.map(b=>b.x+b.w)), bottom=Math.max(...boxes.map(b=>b.y+b.h));
+    const line={...rs[0],startWordIndex:rs[0].startWordIndex,endWordIndex:rs[rs.length-1].endWordIndex,
+      wordCount:rs.length,text:rs.map(r=>r.text||"").join(" "),reviewBox:{x,y,w:right-x,h:bottom-y},
+      splitChildren:rs.map(r=>({...r,reviewLabel:null})),sampleKind:"line-hunt",lineHunt:true};
+    state.italicCalibrationReviewSet=[line];
+    setStatus("LINE HUNT · full line shown · duplicates allowed · Split to label individual words.");
+    renderItalicCalibrationReview();
+  }
+
   els.italicReviewLearnedBtn?.addEventListener("click", async () => {
     els.italicReviewLearnedBtn.disabled=true;
     try { await launchItalicLearningReview("learned"); }
@@ -8675,6 +8715,7 @@ ${coverSpine}${spine.join("\n")}
       els.italicReviewHuntBtn.disabled=false;
     }
   });
+  els.italicLineHuntBtn?.addEventListener("click",async()=>{els.italicLineHuntBtn.disabled=true;try{await launchItalicLineHunt();}finally{els.italicLineHuntBtn.disabled=false;}});
   els.italicValidationBtn?.addEventListener("click",async()=>{
     els.italicValidationBtn.disabled=true;
     try {
