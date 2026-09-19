@@ -183,19 +183,21 @@
 </div>
 <div class="subcard italic-learning-card" id="italicLearningSection">
 <h3>𝘐 Italic Review &amp; Learning</h3>
-<p class="hint">Spoiler-safe typography training after polish. Learned review ranks unseen OCR specimens using your saved visual labels; Random review draws unseen specimens without using the learner. Italic Hunt uses the learned ranking over unseen specimens while suppressing already-reviewed text, glyph/decorative exclusions, obvious OCR fragments, single-letter junk, and duplicate normalized specimens. No re-OCR, Repair Book, or Final Polish rerun is required when OCR data is already loaded.</p>
+<p class="hint">Italic Hunt is the spoiler-safe single-word trainer. Line Hunt is the post-read cleanup trainer: it queues suspicious full lines, allows duplicates, learns an all-Roman line word-by-word, and lets mixed lines split into OCR words. No re-OCR, Repair Book, or Final Polish rerun is required when OCR data is already loaded.</p>
 <div class="actions">
-<button class="button primary" id="italicReviewLearnedBtn" type="button">Learned review</button>
-<button class="button secondary" id="italicReviewRandomBtn" type="button">Random review</button>
-<button class="button secondary" id="italicReviewHuntBtn" type="button">Italic Hunt</button>
+<button class="button primary" id="italicReviewHuntBtn" type="button">Italic Hunt</button>
 <button class="button secondary" id="italicLineHuntBtn" type="button">Line Hunt</button>
-<button class="button secondary" id="italicValidationBtn" type="button">Validation sample</button>
-<button class="button secondary" id="italicPixelStudyBtn" type="button">Pixel study</button>
 <button class="button secondary" id="exportItalicValidation" type="button">Export validation</button>
 <button class="button secondary" id="exportItalicLearning" type="button">Export learning</button>
 <button class="button secondary" id="importItalicLearning" type="button">Import learning</button>
 <input class="hidden" id="importItalicLearningFile" type="file" accept="application/json,.json"/>
 <button class="button secondary" id="resetItalicLearning" type="button">Reset learning</button>
+<details><summary>Advanced review tools</summary><div class="actions">
+<button class="button secondary" id="italicReviewLearnedBtn" type="button">Learned review</button>
+<button class="button secondary" id="italicReviewRandomBtn" type="button">Random review</button>
+<button class="button secondary" id="italicValidationBtn" type="button">Validation sample</button>
+<button class="button secondary" id="italicPixelStudyBtn" type="button">Pixel study</button>
+</div></details>
 <span class="progress-pill" id="italicLearningStatus">Learned: 0 italic · 0 Roman</span>
 </div>
 <div class="italic-calibration-review" id="italicCalibrationReview">
