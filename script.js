@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "150";
+  const BUILD_VERSION = "151";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -8953,60 +8953,54 @@ ${coverSpine}${spine.join("\n")}
   }
 
 
-  // v150 canonical Iowan reference-atlas experiment. Diagnostic only.
-  const IOWAN_REFERENCE_PDF="https://www.washco.utah.gov/wp-content/uploads/2022/02/washco-logo-style-guide.pdf";
-  let _iowanPdfJsPromise=null;
-  async function loadIowanPdfJs(){
-    if(!_iowanPdfJsPromise)_iowanPdfJsPromise=import("https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs").then(mod=>{
-      if(mod?.GlobalWorkerOptions)mod.GlobalWorkerOptions.workerSrc="https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs";
-      return mod;
+  // v151 local Iowan reference-atlas experiment. Diagnostic only.
+  // Source: the user's clean Roman/Italic Iowan Old Style Basic Latin screenshots.
+  const IOWAN_REFERENCE_ASSETS={
+    roman:"iowan-old-style-roman-atlas.webp",
+    italic:"iowan-old-style-italic-atlas.webp"
+  };
+  const IOWAN_ATLAS_GRID={
+    columns:20,
+    // The screenshot grid has a title row followed by five equal glyph rows.
+    // Each cell is sampled independently so punctuation and narrow glyphs do not
+    // need heuristic vertical segmentation.
+    chars:[
+      ["","!","\"","#","$","%","&","'","(",")","*","+",",","-",".","/","0","1","2","3"],
+      ["4","5","6","7","8","9",":",";","<","=",">","?","@","A","B","C","D","E","F","G"],
+      ["H","I","J","K","L","M","N","O","P","Q","R","S","T","U","V","W","X","Y","Z","["],
+      ["\\","]","^","_","`","a","b","c","d","e","f","g","h","i","j","k","l","m","n","o"],
+      ["p","q","r","s","t","u","v","w","x","y","z","{","|","}","~","","","","",""]
+    ]
+  };
+  async function loadReferenceImage(url){
+    return await new Promise((resolve,reject)=>{
+      const img=new Image();
+      img.onload=()=>resolve(img);
+      img.onerror=()=>reject(new Error("Could not load bundled reference image: "+url));
+      img.src=url+"?v="+BUILD_VERSION;
     });
-    return _iowanPdfJsPromise;
   }
-  function trimInkCanvas(source){
-    const ctx=source.getContext("2d",{willReadFrequently:true}),im=ctx.getImageData(0,0,source.width,source.height),d=im.data;
-    let x0=source.width,y0=source.height,x1=-1,y1=-1;
-    for(let y=0;y<source.height;y++)for(let x=0;x<source.width;x++){
-      const i=(y*source.width+x)*4,gray=(d[i]+d[i+1]+d[i+2])/3;
-      if(gray<205){if(x<x0)x0=x;if(x>x1)x1=x;if(y<y0)y0=y;if(y>y1)y1=y;}
-    }
-    if(x1<x0||y1<y0)return null;
-    return cropCanvasRegion(source,{x:Math.max(0,x0-1),y:Math.max(0,y0-1),w:Math.min(source.width-x0+1,x1-x0+3),h:Math.min(source.height-y0+1,y1-y0+3)});
-  }
-  function normalizedInkMask(source,w=24,h=32){
-    const trimmed=trimInkCanvas(source);if(!trimmed)return null;
-    const c=document.createElement("canvas");c.width=w;c.height=h;
-    const x=c.getContext("2d",{alpha:false,willReadFrequently:true});x.fillStyle="#fff";x.fillRect(0,0,w,h);
-    const scale=Math.min((w-4)/trimmed.width,(h-4)/trimmed.height),dw=Math.max(1,trimmed.width*scale),dh=Math.max(1,trimmed.height*scale);
-    x.drawImage(trimmed,(w-dw)/2,(h-dh)/2,dw,dh);
-    const d=x.getImageData(0,0,w,h).data,m=new Float32Array(w*h);
-    for(let i=0;i<m.length;i++){const j=i*4,gray=(d[j]+d[j+1]+d[j+2])/3;m[i]=Math.max(0,Math.min(1,(245-gray)/190));}
-    return m;
-  }
-  function maskDistance(a,b){if(!a||!b||a.length!==b.length)return null;let sum=0,ws=0;for(let i=0;i<a.length;i++){const w=.2+.8*Math.max(a[i],b[i]),z=a[i]-b[i];sum+=w*z*z;ws+=w;}return ws?Math.sqrt(sum/ws):null;}
-  function verticalInkSegments(source,expected){
-    const ctx=source.getContext("2d",{willReadFrequently:true}),d=ctx.getImageData(0,0,source.width,source.height).data,active=[];
-    for(let x=0;x<source.width;x++){let n=0;for(let y=0;y<source.height;y++){const i=(y*source.width+x)*4;if((d[i]+d[i+1]+d[i+2])/3<210)n++;}active[x]=n>0;}
-    const seg=[];let start=-1;
-    for(let x=0;x<=active.length;x++){if(x<active.length&&active[x]&&start<0)start=x;if((x===active.length||!active[x])&&start>=0){if(x-start>=1)seg.push([start,x]);start=-1;}}
-    while(seg.length>expected&&seg.length>1){let best=0,gap=Infinity;for(let i=0;i<seg.length-1;i++){const g=seg[i+1][0]-seg[i][1];if(g<gap){gap=g;best=i;}}seg.splice(best,2,[seg[best][0],seg[best+1][1]]);}
-    if(seg.length!==expected)return null;
-    return seg.map(pair=>cropCanvasRegion(source,{x:Math.max(0,pair[0]-1),y:0,w:Math.min(source.width-pair[0]+1,pair[1]-pair[0]+2),h:source.height}));
-  }
-  function atlasRow(pageCanvas,box,chars){
-    const row=cropCanvasRegion(pageCanvas,{x:pageCanvas.width*box[0],y:pageCanvas.height*box[1],w:pageCanvas.width*(box[2]-box[0]),h:pageCanvas.height*(box[3]-box[1])});
-    const pieces=verticalInkSegments(row,chars.length);if(!pieces)return null;
-    return Object.fromEntries(Array.from(chars).map((ch,i)=>[ch,normalizedInkMask(pieces[i])]));
+  function atlasCellMask(canvas,row,col){
+    const cols=IOWAN_ATLAS_GRID.columns,rows=5;
+    const x0=col*canvas.width/cols,x1=(col+1)*canvas.width/cols;
+    const y0=row*canvas.height/rows,y1=(row+1)*canvas.height/rows;
+    const padX=Math.max(2,(x1-x0)*.12),padY=Math.max(2,(y1-y0)*.10);
+    const cell=cropCanvasRegion(canvas,{x:x0+padX,y:y0+padY,w:(x1-x0)-padX*2,h:(y1-y0)-padY*2});
+    return normalizedInkMask(cell);
   }
   async function buildIowanReferenceAtlas(){
-    const pdfjs=await loadIowanPdfJs(),pdf=await pdfjs.getDocument({url:IOWAN_REFERENCE_PDF,withCredentials:false}).promise;
-    const page=await pdf.getPage(9),vp=page.getViewport({scale:2.4}),canvas=document.createElement("canvas");canvas.width=Math.ceil(vp.width);canvas.height=Math.ceil(vp.height);
-    await page.render({canvasContext:canvas.getContext("2d",{alpha:false}),viewport:vp}).promise;
-    const rows={romanUpper:[.355,.258,.885,.285],romanLower:[.355,.286,.885,.311],italicUpper:[.355,.350,.885,.378],italicLower:[.355,.379,.885,.405]};
-    const upper="ABCDEFGHIJKLMNOPQRSTUVWXYZ",lower="abcdefghijklmnopqrstuvwxyz";
-    const ru=atlasRow(canvas,rows.romanUpper,upper),rl=atlasRow(canvas,rows.romanLower,lower),iu=atlasRow(canvas,rows.italicUpper,upper),il=atlasRow(canvas,rows.italicLower,lower);
-    if(!ru||!rl||!iu||!il)throw new Error("Reference alphabet segmentation did not recover all Roman/Italic letters.");
-    return {roman:{...ru,...rl},italic:{...iu,...il},pageSize:[canvas.width,canvas.height]};
+    const [romanImg,italicImg]=await Promise.all([
+      loadReferenceImage(IOWAN_REFERENCE_ASSETS.roman),
+      loadReferenceImage(IOWAN_REFERENCE_ASSETS.italic)
+    ]);
+    const toCanvas=img=>{const c=document.createElement("canvas");c.width=img.naturalWidth;c.height=img.naturalHeight;c.getContext("2d",{alpha:false}).drawImage(img,0,0);return c;};
+    const rc=toCanvas(romanImg),ic=toCanvas(italicImg),roman={},italic={};
+    IOWAN_ATLAS_GRID.chars.forEach((row,ri)=>row.forEach((ch,ci)=>{
+      if(!ch)return;
+      const rm=atlasCellMask(rc,ri,ci),im=atlasCellMask(ic,ri,ci);
+      if(rm)roman[ch]=rm;if(im)italic[ch]=im;
+    }));
+    return {roman,italic,pageSize:[rc.width,rc.height],glyphCount:Object.keys(roman).filter(ch=>italic[ch]).length};
   }
   async function candidateCanvasForRun(run){
     const file=state.files?.[Number(run.pageIndex)];if(!file||!run.reviewBox)return null;
@@ -9021,20 +9015,25 @@ ${coverSpine}${spine.join("\n")}
     const out=[];let segmentationSkipped=0,missingRun=0,unsupported=0;
     for(let ei=0;ei<examples.length;ei++){
       const ex=examples[ei],run=byPhysical.get(physicalFromId(ex.id));if(!run){missingRun++;continue;}
-      const word=String(run.text||"").replace(/[^\p{L}]/gu,"");if(!word||!Array.from(word).every(ch=>atlas.roman[ch]&&atlas.italic[ch])){unsupported++;continue;}
-      const c=await candidateCanvasForRun(run);if(!c)continue;const pieces=verticalInkSegments(c,Array.from(word).length);if(!pieces){segmentationSkipped++;continue;}
-      let rd=0,id=0,n=0;Array.from(word).forEach((ch,i)=>{const m=normalizedInkMask(pieces[i]),r=maskDistance(m,atlas.roman[ch]),it=maskDistance(m,atlas.italic[ch]);if(r!=null&&it!=null){rd+=r;id+=it;n++;}});
-      if(!n)continue;rd/=n;id/=n;out.push({label:ex.label,textLength:Array.from(word).length,romanDistance:rd,italicDistance:id,italicAdvantage:rd-id,predicted:id<rd?"ITALIC":"ROMAN"});
+      const word=String(run.text||"").replace(/[^\p{L}\p{N}'’]/gu,"");
+      if(!word){unsupported++;continue;}
+      const chars=Array.from(word).map(ch=>ch==="’"?"'":ch);
+      if(!chars.every(ch=>atlas.roman[ch]&&atlas.italic[ch])){unsupported++;continue;}
+      const c=await candidateCanvasForRun(run);if(!c)continue;
+      const pieces=verticalInkSegments(c,chars.length);if(!pieces){segmentationSkipped++;continue;}
+      let rd=0,id=0,n=0;chars.forEach((ch,i)=>{const m=normalizedInkMask(pieces[i]),r=maskDistance(m,atlas.roman[ch]),it=maskDistance(m,atlas.italic[ch]);if(r!=null&&it!=null){rd+=r;id+=it;n++;}});
+      if(!n)continue;rd/=n;id/=n;
+      out.push({label:ex.label,textLength:chars.length,romanDistance:rd,italicDistance:id,italicAdvantage:rd-id,predicted:id<rd?"ITALIC":"ROMAN"});
       if(ei%40===0)await new Promise(requestAnimationFrame);
     }
     const summarize=label=>{const a=out.filter(r=>r.label===label),correct=a.filter(r=>r.predicted===label).length,vals=a.map(r=>r.italicAdvantage).sort((x,y)=>x-y),mean=vals.length?vals.reduce((x,y)=>x+y,0)/vals.length:null;return {n:a.length,correct,accuracy:a.length?correct/a.length:null,meanItalicAdvantage:mean,medianItalicAdvantage:vals.length?vals[Math.floor(vals.length/2)]:null};};
     const all=out.length,correct=out.filter(r=>r.predicted===r.label).length;
-    return {diagnosticOnly:true,source:IOWAN_REFERENCE_PDF,referencePage:9,referencePageSize:atlas.pageSize,measured:all,correct,accuracy:all?correct/all:null,italic:summarize("ITALIC"),roman:summarize("ROMAN"),segmentationSkipped,missingRun,unsupported,rows:out,note:"v150 canonical Iowan Roman-vs-Italic bitmap reference experiment. Diagnostic only; no Hunt ranking, learning, OCR, Repair Book, or Final Polish changes."};
+    return {diagnosticOnly:true,source:"bundled-user-captured-Iowan-Old-Style-atlas",referenceAssets:IOWAN_REFERENCE_ASSETS,referencePageSize:atlas.pageSize,atlasGlyphCount:atlas.glyphCount,measured:all,correct,accuracy:all?correct/all:null,italic:summarize("ITALIC"),roman:summarize("ROMAN"),segmentationSkipped,missingRun,unsupported,rows:out,note:"v151 local canonical Iowan Roman-vs-Italic bitmap reference experiment. Uses bundled clean Basic Latin Roman/Italic screenshots, including punctuation and digits. Diagnostic only; no Hunt ranking, learning, OCR, Repair Book, or Final Polish changes."};
   }
   els.italicReferenceAtlasBtn?.addEventListener("click",async()=>{
-    const btn=els.italicReferenceAtlasBtn,old=btn.textContent;btn.disabled=true;btn.textContent="Reference atlas…";setStatus("Reference atlas: loading published Iowan Roman/Italic specimen…");
-    try{const study=await runIowanReferenceAtlasStudy();state.iowanReferenceAtlasStudy=study;downloadBlob(new Blob([JSON.stringify({build:BUILD_VERSION,sourceProfile:state.sourceProfile,referenceAtlasStudy:study},null,2)],{type:"application/json"}),"iowan-reference-atlas-v"+BUILD_VERSION+".json");setStatus("Reference atlas complete: "+study.measured+" labeled specimens measured · "+study.correct+"/"+study.measured+" nearest-face matches.");}
-    catch(err){const study={diagnosticOnly:true,available:false,error:String(err?.message||err),source:IOWAN_REFERENCE_PDF};state.iowanReferenceAtlasStudy=study;downloadBlob(new Blob([JSON.stringify({build:BUILD_VERSION,sourceProfile:state.sourceProfile,referenceAtlasStudy:study},null,2)],{type:"application/json"}),"iowan-reference-atlas-v"+BUILD_VERSION+".json");setStatus("Reference atlas experiment could not load/segment the published specimen; diagnostic JSON downloaded.");console.warn(err);}
+    const btn=els.italicReferenceAtlasBtn,old=btn.textContent;btn.disabled=true;btn.textContent="Reference atlas…";setStatus("Reference atlas: loading bundled Iowan Roman/Italic glyph atlas…");
+    try{const study=await runIowanReferenceAtlasStudy();state.iowanReferenceAtlasStudy=study;downloadBlob(new Blob([JSON.stringify({build:BUILD_VERSION,sourceProfile:state.sourceProfile,referenceAtlasStudy:study},null,2)],{type:"application/json"}),"iowan-reference-atlas-v"+BUILD_VERSION+".json");setStatus("Reference atlas complete: "+study.atlasGlyphCount+" glyph pairs · "+study.measured+" labeled specimens measured · "+study.correct+"/"+study.measured+" nearest-face matches.");}
+    catch(err){const study={diagnosticOnly:true,available:false,error:String(err?.message||err),source:"bundled-user-captured-Iowan-Old-Style-atlas"};state.iowanReferenceAtlasStudy=study;downloadBlob(new Blob([JSON.stringify({build:BUILD_VERSION,sourceProfile:state.sourceProfile,referenceAtlasStudy:study},null,2)],{type:"application/json"}),"iowan-reference-atlas-v"+BUILD_VERSION+".json");setStatus("Reference atlas experiment failed; diagnostic JSON downloaded.");console.warn(err);}
     finally{btn.disabled=false;btn.textContent=old;}
   });
 
