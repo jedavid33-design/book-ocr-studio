@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "146";
+  const BUILD_VERSION = "147";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -8658,35 +8658,45 @@ ${coverSpine}${spine.join("\n")}
     state.italicReviewSelectionMode="line-hunt"; state.italicReviewHistory=[];
     state.italicReviewRoundStats={mode:"line-hunt",startedAt:new Date().toISOString(),italic:0,roman:0,glyph:0,fragment:0,unsure:0,newPersisted:0,updated:0,presses:0};
     if(!(state.italicLineHuntSeenLines instanceof Set)) state.italicLineHuntSeenLines=new Set();
-    const singletonPool=(state.italicCalibrationReviewSet||[]).filter(r=>Number(r.wordCount||1)===1&&r.reviewBox);
-    if(!singletonPool.length){ setStatus("Line Hunt is preparing the OCR word population…"); downloadItalicDiagnostics(false); }
-    const all=(state.italicCalibrationReviewSet||[]).filter(r=>Number(r.wordCount||1)===1&&r.reviewBox);
-    const groups=new Map();
-    for(const r of all){
-      const lk=`${r.pageIndex}:${r.lineIndex}`;
-      if(!groups.has(lk)) groups.set(lk,[]);
-      groups.get(lk).push(r);
+    const hasMeasurements=state.pages.some(page=>(page.layoutLines||[]).some(line=>Array.isArray(line.italicWordMeta)&&line.italicWordMeta.length));
+    if(!hasMeasurements){
+      setStatus("Line Hunt: restoring typeface measurements…");
+      const restored=await restoreCachedItalicMeasurements();
+      if(!restored){setStatus("Line Hunt: preparing typeface measurements…");await autoScanItalics({rebuildText:false});}
     }
-    const learned=(r)=>{const p=italicLearnedProbabilityUncached(r);return Number.isFinite(p)?p:0;};
+    // Build directly from saved per-line OCR word metadata. Do NOT reuse the
+    // ordinary Hunt queue: that queue is deduped/filtered by design and can
+    // contain too few words per line to reconstruct full context.
+    const words=[];
+    state.pages.forEach((page,pageIndex)=>(page.layoutLines||[]).forEach((line,lineIndex)=>{
+      (line.italicWordMeta||[]).forEach((w,wordIndex)=>{
+        const box=w.box||w.reviewBox; if(!box) return;
+        words.push({...w,pageIndex,pageNumber:pageIndex+1,fileName:page.fileName||state.files[pageIndex]?.name||"",lineIndex,
+          wordIndex:Number.isFinite(Number(w.wordIndex))?Number(w.wordIndex):wordIndex,
+          startWordIndex:Number.isFinite(Number(w.wordIndex))?Number(w.wordIndex):wordIndex,
+          endWordIndex:Number.isFinite(Number(w.wordIndex))?Number(w.wordIndex):wordIndex,
+          wordCount:1,text:w.text||"",reviewBox:{x:Number(box.x||0),y:Number(box.y||0),w:Number(box.w||box.width||0),h:Number(box.h||box.height||0)},
+          sampleKind:"line-word"});
+      });
+    }));
+    const groups=new Map();
+    for(const r of words){const lk=`${r.pageIndex}:${r.lineIndex}`;if(!groups.has(lk))groups.set(lk,[]);groups.get(lk).push(r);}
     const lines=[...groups.entries()].filter(([k,rs])=>!state.italicLineHuntSeenLines.has(k)&&rs.length>1).map(([k,rs])=>{
-      rs.sort((a,b)=>Number(a.startWordIndex)-Number(b.startWordIndex));
-      const probs=rs.map(learned).sort((a,b)=>b-a);
-      return {k,rs,score:(probs[0]||0)+(probs[1]||0)*.45};
+      rs.sort((a,b)=>a.wordIndex-b.wordIndex);
+      // Cheap typography suspicion only for line ordering. Human review decides.
+      const vals=rs.map(r=>Math.max(0,Number(r.localSlantLift||0))*3.5+Math.max(0,Number(r.localGainLift||0))*50+Math.max(0,Number(r.gain||0))*8).sort((a,b)=>b-a);
+      return {k,rs,score:(vals[0]||0)+(vals[1]||0)*.45};
     }).sort((a,b)=>b.score-a.score);
     const chosen=lines[0];
-    if(!chosen){setStatus("Line Hunt complete · no unseen OCR lines remain.");state.italicCalibrationReviewSet=[];renderItalicCalibrationReview();return;}
+    if(!chosen){setStatus(`Line Hunt found no reviewable lines · ${words.length} OCR words across ${groups.size} lines.`);state.italicCalibrationReviewSet=[];renderItalicCalibrationReview();return;}
     state.italicLineHuntSeenLines.add(chosen.k);
-    // Deliberately include every word on the line, even if its text or physical
-    // specimen was labeled before. Line Hunt is cleanup/context mode, and a
-    // duplicate Roman/Italic must never hide the rest of a useful line.
-    const rs=chosen.rs;
-    const boxes=rs.map(r=>r.reviewBox).filter(Boolean), x=Math.min(...boxes.map(b=>b.x)), y=Math.min(...boxes.map(b=>b.y));
+    const rs=chosen.rs, boxes=rs.map(r=>r.reviewBox), x=Math.min(...boxes.map(b=>b.x)), y=Math.min(...boxes.map(b=>b.y));
     const right=Math.max(...boxes.map(b=>b.x+b.w)), bottom=Math.max(...boxes.map(b=>b.y+b.h));
-    const line={...rs[0],startWordIndex:rs[0].startWordIndex,endWordIndex:rs[rs.length-1].endWordIndex,
-      wordCount:rs.length,text:rs.map(r=>r.text||"").join(" "),reviewBox:{x,y,w:right-x,h:bottom-y},
-      splitChildren:rs.map(r=>({...r,reviewLabel:null})),sampleKind:"line-hunt",lineHunt:true};
+    const line={...rs[0],startWordIndex:rs[0].wordIndex,endWordIndex:rs[rs.length-1].wordIndex,wordCount:rs.length,
+      text:rs.map(r=>r.text||"").join(" "),reviewBox:{x,y,w:right-x,h:bottom-y},
+      splitChildren:rs.map(r=>({...r,lineHunt:true,reviewLabel:null})),sampleKind:"line-hunt",lineHunt:true};
     state.italicCalibrationReviewSet=[line];
-    setStatus("LINE HUNT · full line shown · duplicates allowed · Split to label individual words.");
+    setStatus(`LINE HUNT · ${groups.size} OCR lines available · duplicates allowed · Split to label individual words.`);
     renderItalicCalibrationReview();
   }
 
