@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "153";
+  const BUILD_VERSION = "154";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -9037,11 +9037,38 @@ ${coverSpine}${spine.join("\n")}
     const img=await loadImageFromFile(file),page=makeCroppedCanvas(img),b=run.reviewBox;
     return cropCanvasRegion(page,{x:Number(b.x||0),y:Number(b.y||0),w:Number(b.w||b.width||0),h:Number(b.h||b.height||0)});
   }
+  function iowanDeltaMask(romanMask,italicMask){
+    if(!romanMask||!italicMask||romanMask.length!==italicMask.length)return null;
+    const out=new Float32Array(romanMask.length);
+    for(let i=0;i<out.length;i++) out[i]=italicMask[i]-romanMask[i];
+    return out;
+  }
+  function deltaProjectionScore(sampleMask,romanMask,italicMask){
+    if(!sampleMask||!romanMask||!italicMask||sampleMask.length!==romanMask.length||romanMask.length!==italicMask.length)return null;
+    const delta=iowanDeltaMask(romanMask,italicMask);let num=0,den=0;
+    for(let i=0;i<sampleMask.length;i++){
+      const baseline=(romanMask[i]+italicMask[i])/2;
+      num+=(sampleMask[i]-baseline)*delta[i];
+      den+=delta[i]*delta[i];
+    }
+    return den>1e-8?num/Math.sqrt(den):null;
+  }
+  function pairedDifferenceCorrelation(sampleMask,romanMask,italicMask){
+    if(!sampleMask||!romanMask||!italicMask||sampleMask.length!==romanMask.length||romanMask.length!==italicMask.length)return null;
+    const delta=iowanDeltaMask(romanMask,italicMask);
+    const centered=new Float32Array(sampleMask.length);
+    let sm=0,bm=0;
+    for(let i=0;i<sampleMask.length;i++){sm+=sampleMask[i];bm+=(romanMask[i]+italicMask[i])/2;}
+    sm/=sampleMask.length;bm/=sampleMask.length;
+    let num=0,sd=0,dd=0;
+    for(let i=0;i<sampleMask.length;i++){
+      const sv=sampleMask[i]-sm, bv=((romanMask[i]+italicMask[i])/2)-bm, dv=delta[i];
+      const cv=sv-bv; centered[i]=cv; num+=cv*dv; sd+=cv*cv; dd+=dv*dv;
+    }
+    return (sd>1e-8&&dd>1e-8)?num/Math.sqrt(sd*dd):null;
+  }
   async function runIowanReferenceAtlasStudy(){
     const atlas=await buildIowanReferenceAtlas(),profile=currentItalicLearningProfile(),examples=(profile.examples||[]).filter(x=>x.label==="ITALIC"||x.label==="ROMAN");
-    // v153: persisted learning IDs point into saved OCR layout geometry, not the
-    // transient review population. Reattach exactly the same way the proven pixel
-    // study does: page -> saved layoutLine -> estimateInkAlignedWordBoxes.
     const parsed=[];let invalidIds=0,outOfRange=0,missingLines=0,missingFiles=0,wordRangeMisses=0,unsupported=0,segmentationSkipped=0;
     for(const ex of examples){
       const tail=String(ex.id||"").split("::").pop()||"",m=tail.match(/^(\d+):(\d+):(\d+):(\d+)$/);
@@ -9069,16 +9096,26 @@ ${coverSpine}${spine.join("\n")}
         const x=Math.min(...boxes.map(q=>q.x)),y=Math.min(...boxes.map(q=>q.y)),x2=Math.max(...boxes.map(q=>q.x+q.w)),y2=Math.max(...boxes.map(q=>q.y+q.h));
         const crop=cropCanvasRegion(canvas,{x,y,w:x2-x,h:y2-y});reattached++;
         const pieces=verticalInkSegments(crop,chars.length);if(!pieces){segmentationSkipped++;continue;}
-        let rd=0,id=0,n=0;
-        chars.forEach((ch,i)=>{const m=normalizedInkMask(pieces[i]),r=maskDistance(m,atlas.roman[ch]),it=maskDistance(m,atlas.italic[ch]);if(r!=null&&it!=null){rd+=r;id+=it;n++;}});
-        if(!n)continue;rd/=n;id/=n;
-        out.push({label:item.ex.label,textLength:chars.length,romanDistance:rd,italicDistance:id,italicAdvantage:rd-id,predicted:id<rd?"ITALIC":"ROMAN"});
+        let rd=0,id=0,proj=0,corr=0,n=0,pn=0,cn=0;
+        chars.forEach((ch,i)=>{
+          const m=normalizedInkMask(pieces[i]),r=maskDistance(m,atlas.roman[ch]),it=maskDistance(m,atlas.italic[ch]);
+          if(r!=null&&it!=null){rd+=r;id+=it;n++;}
+          const p=deltaProjectionScore(m,atlas.roman[ch],atlas.italic[ch]);if(Number.isFinite(p)){proj+=p;pn++;}
+          const c=pairedDifferenceCorrelation(m,atlas.roman[ch],atlas.italic[ch]);if(Number.isFinite(c)){corr+=c;cn++;}
+        });
+        if(!n)continue;rd/=n;id/=n;proj=pn?proj/pn:null;corr=cn?corr/cn:null;
+        out.push({label:item.ex.label,textLength:chars.length,romanDistance:rd,italicDistance:id,italicAdvantage:rd-id,deltaProjection:proj,deltaCorrelation:corr});
       }
       canvas.width=1;canvas.height=1;await new Promise(resolve=>setTimeout(resolve,0));
     }
-    const summarize=label=>{const a=out.filter(r=>r.label===label),correct=a.filter(r=>r.predicted===label).length,vals=a.map(r=>r.italicAdvantage).sort((x,y)=>x-y),mean=vals.length?vals.reduce((x,y)=>x+y,0)/vals.length:null;return {n:a.length,correct,accuracy:a.length?correct/a.length:null,meanItalicAdvantage:mean,medianItalicAdvantage:vals.length?vals[Math.floor(vals.length/2)]:null};};
-    const all=out.length,correct=out.filter(r=>r.predicted===r.label).length;
-    return {diagnosticOnly:true,source:"bundled-user-captured-Iowan-Old-Style-atlas",referenceAssets:IOWAN_REFERENCE_ASSETS,referencePageSize:atlas.pageSize,atlasGlyphCount:atlas.glyphCount,totalExamples:examples.length,parsedIds:parsed.length,reattached,measured:all,correct,accuracy:all?correct/all:null,italic:summarize("ITALIC"),roman:summarize("ROMAN"),invalidIds,outOfRange,missingLines,missingFiles,wordRangeMisses,unsupported,segmentationSkipped,rows:out,note:"v153 canonical Iowan Roman-vs-Italic bitmap reference experiment. Persisted labels are reattached through saved layoutLines and estimateInkAlignedWordBoxes. Diagnostic only; no Hunt ranking, learning, OCR, Repair Book, or Final Polish changes."};
+    const vals=(label,key)=>out.filter(r=>r.label===label&&Number.isFinite(r[key])).map(r=>r[key]);
+    const stat=(arr)=>{if(!arr.length)return {n:0,mean:null,median:null,sd:null};const a=[...arr].sort((x,y)=>x-y),mean=a.reduce((x,y)=>x+y,0)/a.length,sd=Math.sqrt(a.reduce((t,v)=>t+(v-mean)*(v-mean),0)/a.length);return {n:a.length,mean,median:a[Math.floor(a.length/2)],sd};};
+    const separation=(key)=>{
+      const ia=stat(vals("ITALIC",key)),ra=stat(vals("ROMAN",key)),pool=Math.sqrt(((ia.sd||0)**2+(ra.sd||0)**2)/2);
+      return {feature:key,italic:ia,roman:ra,separation:pool?Math.abs((ia.mean??0)-(ra.mean??0))/pool:null,direction:(ia.mean??0)>(ra.mean??0)?"higher-for-italic":"lower-for-italic"};
+    };
+    const features=["italicAdvantage","deltaProjection","deltaCorrelation"].map(separation).sort((a,b)=>(b.separation??-1)-(a.separation??-1));
+    return {diagnosticOnly:true,source:"bundled-user-captured-Iowan-Old-Style-atlas",referenceAssets:IOWAN_REFERENCE_ASSETS,referencePageSize:atlas.pageSize,atlasGlyphCount:atlas.glyphCount,totalExamples:examples.length,parsedIds:parsed.length,reattached,measured:out.length,featureSeparation:features,invalidIds,outOfRange,missingLines,missingFiles,wordRangeMisses,unsupported,segmentationSkipped,rows:out,note:"v154 Iowan paired Roman↔Italic delta diagnostic. Tests only the style-change direction encoded by paired glyphs, rather than raw nearest-face distance. Diagnostic only; no Hunt ranking, learning, OCR, Repair Book, or Final Polish changes."};
   }
   els.italicReferenceAtlasBtn?.addEventListener("click",async()=>{
     const btn=els.italicReferenceAtlasBtn,old=btn.textContent;btn.disabled=true;btn.textContent="Reference atlas…";setStatus("Reference atlas: loading bundled Iowan Roman/Italic glyph atlas…");
