@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "149";
+  const BUILD_VERSION = "150";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -42,6 +42,7 @@
     italicVisualFeatureStudy: null,
     italicHuntSessionServedTexts: new Set(),
     italicLineHuntSeenLines: new Set(),
+    iowanReferenceAtlasStudy: null,
   };
 
   let PaddleOCRClass = null;
@@ -151,6 +152,7 @@
     italicLineHuntBtn: $("italicLineHuntBtn"),
     italicValidationBtn: $("italicValidationBtn"),
     italicPixelStudyBtn: $("italicPixelStudyBtn"),
+    italicReferenceAtlasBtn: $("italicReferenceAtlasBtn"),
     exportItalicValidation: $("exportItalicValidation"),
     italicCalibrationProgress: $("italicCalibrationProgress"),
     italicReviewModeTitle: $("italicReviewModeTitle"),
@@ -8950,6 +8952,92 @@ ${coverSpine}${spine.join("\n")}
     return {diagnosticOnly:true,available:rows.length>0,...attachment,measured:rows.length,italicCount:I.length,romanCount:R.length,pixelRankingSimulation,learnerPixelBakeoff,features:keys.map(k=>{const i=stat(I,k),r=stat(R,k),pool=Math.max(1e-9,Math.sqrt(((i.sd||0)**2+(r.sd||0)**2)/2));return {name:k,italic:i,roman:r,signedSeparation:(i.mean==null||r.mean==null)?null:(i.mean-r.mean)/pool,separation:(i.mean==null||r.mean==null)?null:Math.abs(i.mean-r.mean)/pool};}).sort((x,z)=>(z.separation??-1)-(x.separation??-1)),note:"BUILD 114 pixel geometry diagnostic; validated three-feature model is persisted for conditional production assist (0–12.5%) with top-100 recall. Reconstructs word boxes directly from saved OCR layoutLines plus loaded screenshot pixels; no Auto Italic Scan, no re-OCR, and no production ranking changes."};
   }
 
+
+  // v150 canonical Iowan reference-atlas experiment. Diagnostic only.
+  const IOWAN_REFERENCE_PDF="https://www.washco.utah.gov/wp-content/uploads/2022/02/washco-logo-style-guide.pdf";
+  let _iowanPdfJsPromise=null;
+  async function loadIowanPdfJs(){
+    if(!_iowanPdfJsPromise)_iowanPdfJsPromise=import("https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs").then(mod=>{
+      if(mod?.GlobalWorkerOptions)mod.GlobalWorkerOptions.workerSrc="https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs";
+      return mod;
+    });
+    return _iowanPdfJsPromise;
+  }
+  function trimInkCanvas(source){
+    const ctx=source.getContext("2d",{willReadFrequently:true}),im=ctx.getImageData(0,0,source.width,source.height),d=im.data;
+    let x0=source.width,y0=source.height,x1=-1,y1=-1;
+    for(let y=0;y<source.height;y++)for(let x=0;x<source.width;x++){
+      const i=(y*source.width+x)*4,gray=(d[i]+d[i+1]+d[i+2])/3;
+      if(gray<205){if(x<x0)x0=x;if(x>x1)x1=x;if(y<y0)y0=y;if(y>y1)y1=y;}
+    }
+    if(x1<x0||y1<y0)return null;
+    return cropCanvasRegion(source,{x:Math.max(0,x0-1),y:Math.max(0,y0-1),w:Math.min(source.width-x0+1,x1-x0+3),h:Math.min(source.height-y0+1,y1-y0+3)});
+  }
+  function normalizedInkMask(source,w=24,h=32){
+    const trimmed=trimInkCanvas(source);if(!trimmed)return null;
+    const c=document.createElement("canvas");c.width=w;c.height=h;
+    const x=c.getContext("2d",{alpha:false,willReadFrequently:true});x.fillStyle="#fff";x.fillRect(0,0,w,h);
+    const scale=Math.min((w-4)/trimmed.width,(h-4)/trimmed.height),dw=Math.max(1,trimmed.width*scale),dh=Math.max(1,trimmed.height*scale);
+    x.drawImage(trimmed,(w-dw)/2,(h-dh)/2,dw,dh);
+    const d=x.getImageData(0,0,w,h).data,m=new Float32Array(w*h);
+    for(let i=0;i<m.length;i++){const j=i*4,gray=(d[j]+d[j+1]+d[j+2])/3;m[i]=Math.max(0,Math.min(1,(245-gray)/190));}
+    return m;
+  }
+  function maskDistance(a,b){if(!a||!b||a.length!==b.length)return null;let sum=0,ws=0;for(let i=0;i<a.length;i++){const w=.2+.8*Math.max(a[i],b[i]),z=a[i]-b[i];sum+=w*z*z;ws+=w;}return ws?Math.sqrt(sum/ws):null;}
+  function verticalInkSegments(source,expected){
+    const ctx=source.getContext("2d",{willReadFrequently:true}),d=ctx.getImageData(0,0,source.width,source.height).data,active=[];
+    for(let x=0;x<source.width;x++){let n=0;for(let y=0;y<source.height;y++){const i=(y*source.width+x)*4;if((d[i]+d[i+1]+d[i+2])/3<210)n++;}active[x]=n>0;}
+    const seg=[];let start=-1;
+    for(let x=0;x<=active.length;x++){if(x<active.length&&active[x]&&start<0)start=x;if((x===active.length||!active[x])&&start>=0){if(x-start>=1)seg.push([start,x]);start=-1;}}
+    while(seg.length>expected&&seg.length>1){let best=0,gap=Infinity;for(let i=0;i<seg.length-1;i++){const g=seg[i+1][0]-seg[i][1];if(g<gap){gap=g;best=i;}}seg.splice(best,2,[seg[best][0],seg[best+1][1]]);}
+    if(seg.length!==expected)return null;
+    return seg.map(pair=>cropCanvasRegion(source,{x:Math.max(0,pair[0]-1),y:0,w:Math.min(source.width-pair[0]+1,pair[1]-pair[0]+2),h:source.height}));
+  }
+  function atlasRow(pageCanvas,box,chars){
+    const row=cropCanvasRegion(pageCanvas,{x:pageCanvas.width*box[0],y:pageCanvas.height*box[1],w:pageCanvas.width*(box[2]-box[0]),h:pageCanvas.height*(box[3]-box[1])});
+    const pieces=verticalInkSegments(row,chars.length);if(!pieces)return null;
+    return Object.fromEntries(Array.from(chars).map((ch,i)=>[ch,normalizedInkMask(pieces[i])]));
+  }
+  async function buildIowanReferenceAtlas(){
+    const pdfjs=await loadIowanPdfJs(),pdf=await pdfjs.getDocument({url:IOWAN_REFERENCE_PDF,withCredentials:false}).promise;
+    const page=await pdf.getPage(9),vp=page.getViewport({scale:2.4}),canvas=document.createElement("canvas");canvas.width=Math.ceil(vp.width);canvas.height=Math.ceil(vp.height);
+    await page.render({canvasContext:canvas.getContext("2d",{alpha:false}),viewport:vp}).promise;
+    const rows={romanUpper:[.355,.258,.885,.285],romanLower:[.355,.286,.885,.311],italicUpper:[.355,.350,.885,.378],italicLower:[.355,.379,.885,.405]};
+    const upper="ABCDEFGHIJKLMNOPQRSTUVWXYZ",lower="abcdefghijklmnopqrstuvwxyz";
+    const ru=atlasRow(canvas,rows.romanUpper,upper),rl=atlasRow(canvas,rows.romanLower,lower),iu=atlasRow(canvas,rows.italicUpper,upper),il=atlasRow(canvas,rows.italicLower,lower);
+    if(!ru||!rl||!iu||!il)throw new Error("Reference alphabet segmentation did not recover all Roman/Italic letters.");
+    return {roman:{...ru,...rl},italic:{...iu,...il},pageSize:[canvas.width,canvas.height]};
+  }
+  async function candidateCanvasForRun(run){
+    const file=state.files?.[Number(run.pageIndex)];if(!file||!run.reviewBox)return null;
+    const img=await loadImageFromFile(file),page=makeCroppedCanvas(img),b=run.reviewBox;
+    return cropCanvasRegion(page,{x:Number(b.x||0),y:Number(b.y||0),w:Number(b.w||b.width||0),h:Number(b.h||b.height||0)});
+  }
+  async function runIowanReferenceAtlasStudy(){
+    const atlas=await buildIowanReferenceAtlas(),profile=currentItalicLearningProfile(),examples=(profile.examples||[]).filter(x=>x.label==="ITALIC"||x.label==="ROMAN");
+    const oldMode=state.italicReviewSelectionMode;state.italicReviewSelectionMode="validation";downloadItalicDiagnostics(false);state.italicReviewSelectionMode=oldMode;
+    const runs=state.italicCalibrationReviewSet||[],byPhysical=new Map(runs.map(r=>[String(r.pageIndex)+":"+String(r.lineIndex)+":"+String(r.startWordIndex),r]));
+    const physicalFromId=id=>{const tail=String(id||"").split("::").pop()||"",m=tail.match(/^(\d+):(\d+):(\d+):(\d+)$/);return m?m[1]+":"+m[2]+":"+m[3]:null;};
+    const out=[];let segmentationSkipped=0,missingRun=0,unsupported=0;
+    for(let ei=0;ei<examples.length;ei++){
+      const ex=examples[ei],run=byPhysical.get(physicalFromId(ex.id));if(!run){missingRun++;continue;}
+      const word=String(run.text||"").replace(/[^\p{L}]/gu,"");if(!word||!Array.from(word).every(ch=>atlas.roman[ch]&&atlas.italic[ch])){unsupported++;continue;}
+      const c=await candidateCanvasForRun(run);if(!c)continue;const pieces=verticalInkSegments(c,Array.from(word).length);if(!pieces){segmentationSkipped++;continue;}
+      let rd=0,id=0,n=0;Array.from(word).forEach((ch,i)=>{const m=normalizedInkMask(pieces[i]),r=maskDistance(m,atlas.roman[ch]),it=maskDistance(m,atlas.italic[ch]);if(r!=null&&it!=null){rd+=r;id+=it;n++;}});
+      if(!n)continue;rd/=n;id/=n;out.push({label:ex.label,textLength:Array.from(word).length,romanDistance:rd,italicDistance:id,italicAdvantage:rd-id,predicted:id<rd?"ITALIC":"ROMAN"});
+      if(ei%40===0)await new Promise(requestAnimationFrame);
+    }
+    const summarize=label=>{const a=out.filter(r=>r.label===label),correct=a.filter(r=>r.predicted===label).length,vals=a.map(r=>r.italicAdvantage).sort((x,y)=>x-y),mean=vals.length?vals.reduce((x,y)=>x+y,0)/vals.length:null;return {n:a.length,correct,accuracy:a.length?correct/a.length:null,meanItalicAdvantage:mean,medianItalicAdvantage:vals.length?vals[Math.floor(vals.length/2)]:null};};
+    const all=out.length,correct=out.filter(r=>r.predicted===r.label).length;
+    return {diagnosticOnly:true,source:IOWAN_REFERENCE_PDF,referencePage:9,referencePageSize:atlas.pageSize,measured:all,correct,accuracy:all?correct/all:null,italic:summarize("ITALIC"),roman:summarize("ROMAN"),segmentationSkipped,missingRun,unsupported,rows:out,note:"v150 canonical Iowan Roman-vs-Italic bitmap reference experiment. Diagnostic only; no Hunt ranking, learning, OCR, Repair Book, or Final Polish changes."};
+  }
+  els.italicReferenceAtlasBtn?.addEventListener("click",async()=>{
+    const btn=els.italicReferenceAtlasBtn,old=btn.textContent;btn.disabled=true;btn.textContent="Reference atlas…";setStatus("Reference atlas: loading published Iowan Roman/Italic specimen…");
+    try{const study=await runIowanReferenceAtlasStudy();state.iowanReferenceAtlasStudy=study;downloadBlob(new Blob([JSON.stringify({build:BUILD_VERSION,sourceProfile:state.sourceProfile,referenceAtlasStudy:study},null,2)],{type:"application/json"}),"iowan-reference-atlas-v"+BUILD_VERSION+".json");setStatus("Reference atlas complete: "+study.measured+" labeled specimens measured · "+study.correct+"/"+study.measured+" nearest-face matches.");}
+    catch(err){const study={diagnosticOnly:true,available:false,error:String(err?.message||err),source:IOWAN_REFERENCE_PDF};state.iowanReferenceAtlasStudy=study;downloadBlob(new Blob([JSON.stringify({build:BUILD_VERSION,sourceProfile:state.sourceProfile,referenceAtlasStudy:study},null,2)],{type:"application/json"}),"iowan-reference-atlas-v"+BUILD_VERSION+".json");setStatus("Reference atlas experiment could not load/segment the published specimen; diagnostic JSON downloaded.");console.warn(err);}
+    finally{btn.disabled=false;btn.textContent=old;}
+  });
+
   els.italicPixelStudyBtn?.addEventListener("click",async ()=>{
     const btn=els.italicPixelStudyBtn, oldText=btn.textContent;
     btn.disabled=true; btn.textContent="Pixel study…";
@@ -8982,7 +9070,7 @@ ${coverSpine}${spine.join("\n")}
     const modeSummary=(rankField)=>{const ranked=rows.filter(r=>Number.isFinite(Number(r[rankField]))),out={labeled:ranked.length,knownItalics:controls.length,knownRomans:romans.length,cutoffs:{}};for(const n of cutoffs){const selected=ranked.filter(r=>Number(r[rankField])<=n),tp=selected.filter(r=>r.label==="ITALIC").length,fp=selected.filter(r=>r.label==="ROMAN").length;out.cutoffs[n]={selectedLabeled:selected.length,trueItalics:tp,romans:fp,precision:selected.length?tp/selected.length:null,recall:controls.length?tp/controls.length:null};}out.italicRanks=controls.map(r=>Number(r[rankField])).filter(Number.isFinite).sort((a,b)=>a-b);return out;};
     const controlRows=controls.map(r=>({standardRank:r.standardRank,learnedRank:r.learnedRank,huntRank:r.huntRank,standardScore:r.standardScore,learnedProbability:r.learnedScore,huntScore:r.huntScore,glyphClass:r.glyphClass,vector:r.vector}));
     const reviewedSpecimens=(state.italicReviewHistory||[]).map((r,i)=>({reviewOrder:i+1,text:italicNormalizedSpecimenText(r),label:r.reviewChosenLabel||state.italicCalibrationLabels?.[italicCalibrationKey(r)]||null,fragment:!!r.reviewIsFragment,specimenKey:italicCalibrationKey(r),pageIndex:r.pageIndex,lineIndex:r.lineIndex,startWordIndex:r.startWordIndex,endWordIndex:r.endWordIndex,servedRank:r.validationHuntRank||r.originalReviewRank||null,learnedProbability:r.learnedItalicProbability,positivePrototypeScore:r.positiveEnvelopeScore,huntPositiveScore:r.huntPositiveScore,selectionSource:r.huntSelectionSource||null}));
-    const payload={build:BUILD_VERSION,sourceProfile:state.sourceProfile,reviewRound:state.italicReviewRoundStats||null,timing:state.italicReviewTiming||null,deepTiming:state.italicValidationDeepTiming||state.italicDiagnosticsTiming||null,populationTiming:state.italicValidationPopulationTiming||state.italicPopulationTiming||null,huntTiming:{replay:replay.huntTiming,live:state.italicValidationLiveHuntTiming||null,lastRealHunt:state.lastRealItalicHuntTiming||((state.italicReviewTiming?.mode==="hunt")?state.italicReviewTiming:null)},validation:{labelsReviewed:rows.length,knownItalics:controls.length,knownRomans:romans.length,persistedLabels:rows.length,replayablePersisted:rows.length,unreplayablePersisted:0,standard:modeSummary("standardRank"),learned:modeSummary("learnedRank"),hunt:modeSummary("huntRank")},geometryModel:italicGeometryModel(),featureSeparation:italicFeatureSeparationReport(),featureDiscovery:italicFeatureDiscoveryReport(rows),slantInteractionStudy:italicSlantInteractionReport(rows),visualFeatureStudy:state.italicVisualFeatureStudy||null,queueSize:0,huntFunnel:state.italicHuntDiagnostics||null,knownItalicControls:controlRows,reviewedSpecimens,note:"v145 combined validation: the live specimen-population path is timed stage-by-stage, then Standard, Learned, and Hunt are replayed directly over the same stored human-labeled feature vectors for retrospective quality counts; no page/crop reattachment is required. Standard score is reconstructed from the persisted structural features. Learned uses the production feature learner on reconstructed typography-only specimens. Hunt v97 uses the production Learned-ranking backbone over persisted vectors; production-only unseen-text, glyph/decorative, fragment, and duplicate suppression cannot be reproduced by a replay in which every row is already labeled. Labels are used only after ranking to count outcomes. This is a retrospective diagnostic on training examples, not a held-out generalization estimate."};
+    const payload={build:BUILD_VERSION,sourceProfile:state.sourceProfile,reviewRound:state.italicReviewRoundStats||null,timing:state.italicReviewTiming||null,deepTiming:state.italicValidationDeepTiming||state.italicDiagnosticsTiming||null,populationTiming:state.italicValidationPopulationTiming||state.italicPopulationTiming||null,huntTiming:{replay:replay.huntTiming,live:state.italicValidationLiveHuntTiming||null,lastRealHunt:state.lastRealItalicHuntTiming||((state.italicReviewTiming?.mode==="hunt")?state.italicReviewTiming:null)},validation:{labelsReviewed:rows.length,knownItalics:controls.length,knownRomans:romans.length,persistedLabels:rows.length,replayablePersisted:rows.length,unreplayablePersisted:0,standard:modeSummary("standardRank"),learned:modeSummary("learnedRank"),hunt:modeSummary("huntRank")},geometryModel:italicGeometryModel(),featureSeparation:italicFeatureSeparationReport(),featureDiscovery:italicFeatureDiscoveryReport(rows),slantInteractionStudy:italicSlantInteractionReport(rows),visualFeatureStudy:state.italicVisualFeatureStudy||null,referenceAtlasStudy:state.iowanReferenceAtlasStudy||null,queueSize:0,huntFunnel:state.italicHuntDiagnostics||null,knownItalicControls:controlRows,reviewedSpecimens,note:"v145 combined validation: the live specimen-population path is timed stage-by-stage, then Standard, Learned, and Hunt are replayed directly over the same stored human-labeled feature vectors for retrospective quality counts; no page/crop reattachment is required. Standard score is reconstructed from the persisted structural features. Learned uses the production feature learner on reconstructed typography-only specimens. Hunt v97 uses the production Learned-ranking backbone over persisted vectors; production-only unseen-text, glyph/decorative, fragment, and duplicate suppression cannot be reproduced by a replay in which every row is already labeled. Labels are used only after ranking to count outcomes. This is a retrospective diagnostic on training examples, not a held-out generalization estimate."};
     downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),`italic-validation-v${BUILD_VERSION}.json`);
   });
   updatePreview();
