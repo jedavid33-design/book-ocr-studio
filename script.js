@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "147";
+  const BUILD_VERSION = "148";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -5909,10 +5909,28 @@
         if (state.italicCalibrationLabels[key] && state.italicReviewSelectionMode!=="line-hunt") return;
         const round=state.italicReviewRoundStats;
         const label=btn.dataset.label;
+        if(state.italicReviewSelectionMode==="line-hunt" && run.lineHunt && label!=="ROMAN" && round) round.linesReviewed=(round.linesReviewed||0)+1;
         if(state.italicReviewSelectionMode==="hunt"){
           if(!(state.italicHuntSessionServedTexts instanceof Set)) state.italicHuntSessionServedTexts=new Set();
           const servedText=italicNormalizedSpecimenText(run);
           if(servedText) state.italicHuntSessionServedTexts.add(servedText);
+        }
+        if(state.italicReviewSelectionMode==="line-hunt" && run.lineHunt && label==="ROMAN" && Array.isArray(run.splitChildren)){
+          if(round){ round.presses=(round.presses||0)+1; round.roman=(round.roman||0)+1; round.linesReviewed=(round.linesReviewed||0)+1; }
+          if(!Array.isArray(state.italicReviewHistory)) state.italicReviewHistory=[];
+          state.italicReviewHistory.push(run);
+          let added=0,updated=0,failed=0;
+          for(const child of run.splitChildren){
+            const ck=italicCalibrationKey(child); state.italicCalibrationLabels[ck]="ROMAN";
+            child.reviewChosenLabel="ROMAN"; child.reviewIsFragment=false;
+            const before=italicLearningStats(), result=saveItalicTrainingExample(child,"ROMAN");
+            if(result?.ok){state.italicLearningProfile=null;const after=italicLearningStats();if(after.total>before.total)added++;else updated++;}else failed++;
+          }
+          if(round){round.newPersisted=(round.newPersisted||0)+added;round.updated=(round.updated||0)+updated;round.lineWordLabels=(round.lineWordLabels||0)+run.splitChildren.length;}
+          updateItalicLearningUi();
+          const queue=state.italicCalibrationReviewSet||[], idx=queue.indexOf(run); if(idx>=0) queue.splice(idx,1);
+          setStatus(`LINE ROMAN · learned ${run.splitChildren.length} words · ${added} new / ${updated} updated${failed?` / ${failed} failed`:""} · ${Math.max(0,Number(round?.linesPlanned||100)-Number(round?.linesReviewed||0))} lines left`);
+          renderItalicCalibrationReview(); return;
         }
         state.italicCalibrationLabels[key] = label;
         if(round){
@@ -5992,8 +6010,10 @@
         const queue=state.italicCalibrationReviewSet||[];
         const idx=queue.indexOf(run);
         if(idx>=0) queue.splice(idx,1,...children);
-        state.italicCalibrationReviewSet=[...children,...queue];
-        setStatus(`Split mixed typography specimen into ${children.length} spoiler-safe word specimens.`);
+        else queue.unshift(...children);
+        state.italicCalibrationReviewSet=queue;
+        if(state.italicReviewSelectionMode==="line-hunt" && run.lineHunt && state.italicReviewRoundStats) state.italicReviewRoundStats.linesReviewed=(state.italicReviewRoundStats.linesReviewed||0)+1;
+        setStatus(state.italicReviewSelectionMode==="line-hunt"?`LINE SPLIT · label ${children.length} words, then Line Hunt continues automatically.`:`Split mixed typography specimen into ${children.length} spoiler-safe word specimens.`);
         renderItalicCalibrationReview();
       });
       els.italicCalibrationReviewList.appendChild(card);
@@ -8687,16 +8707,19 @@ ${coverSpine}${spine.join("\n")}
       const vals=rs.map(r=>Math.max(0,Number(r.localSlantLift||0))*3.5+Math.max(0,Number(r.localGainLift||0))*50+Math.max(0,Number(r.gain||0))*8).sort((a,b)=>b-a);
       return {k,rs,score:(vals[0]||0)+(vals[1]||0)*.45};
     }).sort((a,b)=>b.score-a.score);
-    const chosen=lines[0];
-    if(!chosen){setStatus(`Line Hunt found no reviewable lines · ${words.length} OCR words across ${groups.size} lines.`);state.italicCalibrationReviewSet=[];renderItalicCalibrationReview();return;}
-    state.italicLineHuntSeenLines.add(chosen.k);
-    const rs=chosen.rs, boxes=rs.map(r=>r.reviewBox), x=Math.min(...boxes.map(b=>b.x)), y=Math.min(...boxes.map(b=>b.y));
-    const right=Math.max(...boxes.map(b=>b.x+b.w)), bottom=Math.max(...boxes.map(b=>b.y+b.h));
-    const line={...rs[0],startWordIndex:rs[0].wordIndex,endWordIndex:rs[rs.length-1].wordIndex,wordCount:rs.length,
-      text:rs.map(r=>r.text||"").join(" "),reviewBox:{x,y,w:right-x,h:bottom-y},
-      splitChildren:rs.map(r=>({...r,lineHunt:true,reviewLabel:null})),sampleKind:"line-hunt",lineHunt:true};
-    state.italicCalibrationReviewSet=[line];
-    setStatus(`LINE HUNT · ${groups.size} OCR lines available · duplicates allowed · Split to label individual words.`);
+    const chosenLines=lines.slice(0,100);
+    if(!chosenLines.length){setStatus(`Line Hunt found no reviewable lines · ${words.length} OCR words across ${groups.size} lines.`);state.italicCalibrationReviewSet=[];renderItalicCalibrationReview();return;}
+    const queue=chosenLines.map(chosen=>{
+      state.italicLineHuntSeenLines.add(chosen.k);
+      const rs=chosen.rs, boxes=rs.map(r=>r.reviewBox), x=Math.min(...boxes.map(b=>b.x)), y=Math.min(...boxes.map(b=>b.y));
+      const right=Math.max(...boxes.map(b=>b.x+b.w)), bottom=Math.max(...boxes.map(b=>b.y+b.h));
+      return {...rs[0],startWordIndex:rs[0].wordIndex,endWordIndex:rs[rs.length-1].wordIndex,wordCount:rs.length,
+        text:rs.map(r=>r.text||"").join(" "),reviewBox:{x,y,w:right-x,h:bottom-y},
+        splitChildren:rs.map(r=>({...r,lineHunt:true,reviewLabel:null})),sampleKind:"line-hunt",lineHunt:true};
+    });
+    state.italicCalibrationReviewSet=queue;
+    state.italicReviewRoundStats.linesPlanned=queue.length; state.italicReviewRoundStats.linesReviewed=0;
+    setStatus(`LINE HUNT · ${queue.length} suspicious lines queued · duplicates allowed · Roman whole lines learn word-by-word · Split mixed lines.`);
     renderItalicCalibrationReview();
   }
 
