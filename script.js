@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "151";
+  const BUILD_VERSION = "152";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -8979,6 +8979,36 @@ ${coverSpine}${spine.join("\n")}
       img.onerror=()=>reject(new Error("Could not load bundled reference image: "+url));
       img.src=url+"?v="+BUILD_VERSION;
     });
+  }
+  function trimInkCanvas(source){
+    const ctx=source.getContext("2d",{willReadFrequently:true}),im=ctx.getImageData(0,0,source.width,source.height),d=im.data;
+    let x0=source.width,y0=source.height,x1=-1,y1=-1;
+    for(let y=0;y<source.height;y++)for(let x=0;x<source.width;x++){
+      const i=(y*source.width+x)*4,gray=(d[i]+d[i+1]+d[i+2])/3;
+      if(gray<205){if(x<x0)x0=x;if(x>x1)x1=x;if(y<y0)y0=y;if(y>y1)y1=y;}
+    }
+    if(x1<x0||y1<y0)return null;
+    return cropCanvasRegion(source,{x:Math.max(0,x0-1),y:Math.max(0,y0-1),w:Math.min(source.width-x0+1,x1-x0+3),h:Math.min(source.height-y0+1,y1-y0+3)});
+  }
+  function normalizedInkMask(source,w=24,h=32){
+    const trimmed=trimInkCanvas(source);if(!trimmed)return null;
+    const c=document.createElement("canvas");c.width=w;c.height=h;
+    const x=c.getContext("2d",{alpha:false,willReadFrequently:true});x.fillStyle="#fff";x.fillRect(0,0,w,h);
+    const scale=Math.min((w-4)/trimmed.width,(h-4)/trimmed.height),dw=Math.max(1,trimmed.width*scale),dh=Math.max(1,trimmed.height*scale);
+    x.drawImage(trimmed,(w-dw)/2,(h-dh)/2,dw,dh);
+    const d=x.getImageData(0,0,w,h).data,m=new Float32Array(w*h);
+    for(let i=0;i<m.length;i++){const j=i*4,gray=(d[j]+d[j+1]+d[j+2])/3;m[i]=Math.max(0,Math.min(1,(245-gray)/190));}
+    return m;
+  }
+  function maskDistance(a,b){if(!a||!b||a.length!==b.length)return null;let sum=0,ws=0;for(let i=0;i<a.length;i++){const w=.2+.8*Math.max(a[i],b[i]),z=a[i]-b[i];sum+=w*z*z;ws+=w;}return ws?Math.sqrt(sum/ws):null;}
+  function verticalInkSegments(source,expected){
+    const ctx=source.getContext("2d",{willReadFrequently:true}),d=ctx.getImageData(0,0,source.width,source.height).data,active=[];
+    for(let x=0;x<source.width;x++){let n=0;for(let y=0;y<source.height;y++){const i=(y*source.width+x)*4;if((d[i]+d[i+1]+d[i+2])/3<210)n++;}active[x]=n>0;}
+    const seg=[];let start=-1;
+    for(let x=0;x<=active.length;x++){if(x<active.length&&active[x]&&start<0)start=x;if((x===active.length||!active[x])&&start>=0){if(x-start>=1)seg.push([start,x]);start=-1;}}
+    while(seg.length>expected&&seg.length>1){let best=0,gap=Infinity;for(let i=0;i<seg.length-1;i++){const g=seg[i+1][0]-seg[i][1];if(g<gap){gap=g;best=i;}}seg.splice(best,2,[seg[best][0],seg[best+1][1]]);}
+    if(seg.length!==expected)return null;
+    return seg.map(pair=>cropCanvasRegion(source,{x:Math.max(0,pair[0]-1),y:0,w:Math.min(source.width-pair[0]+1,pair[1]-pair[0]+2),h:source.height}));
   }
   function atlasCellMask(canvas,row,col){
     const cols=IOWAN_ATLAS_GRID.columns,rows=5;
