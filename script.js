@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "154";
+  const BUILD_VERSION = "155";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -153,6 +153,7 @@
     italicValidationBtn: $("italicValidationBtn"),
     italicPixelStudyBtn: $("italicPixelStudyBtn"),
     italicReferenceAtlasBtn: $("italicReferenceAtlasBtn"),
+    tesseractSidecarBtn: $("tesseractSidecarBtn"),
     exportItalicValidation: $("exportItalicValidation"),
     italicCalibrationProgress: $("italicCalibrationProgress"),
     italicReviewModeTitle: $("italicReviewModeTitle"),
@@ -9117,6 +9118,66 @@ ${coverSpine}${spine.join("\n")}
     const features=["italicAdvantage","deltaProjection","deltaCorrelation"].map(separation).sort((a,b)=>(b.separation??-1)-(a.separation??-1));
     return {diagnosticOnly:true,source:"bundled-user-captured-Iowan-Old-Style-atlas",referenceAssets:IOWAN_REFERENCE_ASSETS,referencePageSize:atlas.pageSize,atlasGlyphCount:atlas.glyphCount,totalExamples:examples.length,parsedIds:parsed.length,reattached,measured:out.length,featureSeparation:features,invalidIds,outOfRange,missingLines,missingFiles,wordRangeMisses,unsupported,segmentationSkipped,rows:out,note:"v154 Iowan paired Roman↔Italic delta diagnostic. Tests only the style-change direction encoded by paired glyphs, rather than raw nearest-face distance. Diagnostic only; no Hunt ranking, learning, OCR, Repair Book, or Final Polish changes."};
   }
+  async function ensureTesseractSidecar(){
+    if(globalThis.Tesseract?.createWorker)return globalThis.Tesseract;
+    setStatus("Loading Tesseract sidecar…");
+    await new Promise((resolve,reject)=>{
+      const prior=document.querySelector('script[data-book-ocr-tesseract]');
+      if(prior){prior.addEventListener("load",resolve,{once:true});prior.addEventListener("error",reject,{once:true});return;}
+      const tag=document.createElement("script");tag.dataset.bookOcrTesseract="1";
+      tag.src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";
+      tag.onload=resolve;tag.onerror=()=>reject(new Error("Could not load Tesseract.js"));
+      document.head.appendChild(tag);
+    });
+    if(!globalThis.Tesseract?.createWorker)throw new Error("Tesseract.js loaded without createWorker");
+    return globalThis.Tesseract;
+  }
+  function tesseractWordsToLayout(words){
+    const usable=(Array.isArray(words)?words:[]).filter(w=>String(w?.text||"").trim()&&w?.bbox);
+    if(!usable.length)return [];
+    const heights=usable.map(w=>Math.max(1,Number(w.bbox.y1)-Number(w.bbox.y0))),typicalH=median(heights)||28;
+    const groups=[];
+    for(const w of usable.sort((a,b)=>(a.bbox.y0-b.bbox.y0)||(a.bbox.x0-b.bbox.x0))){
+      const cy=(w.bbox.y0+w.bbox.y1)/2;let g=groups.find(x=>Math.abs(x.cy-cy)<=typicalH*.45);
+      if(!g){g={items:[],cy};groups.push(g);}g.items.push(w);g.cy=median(g.items.map(q=>(q.bbox.y0+q.bbox.y1)/2));
+    }
+    return groups.map(g=>{
+      const row=g.items.sort((a,b)=>a.bbox.x0-b.bbox.x0),x=Math.min(...row.map(w=>w.bbox.x0)),y=Math.min(...row.map(w=>w.bbox.y0)),x2=Math.max(...row.map(w=>w.bbox.x1)),y2=Math.max(...row.map(w=>w.bbox.y1));
+      return {text:row.map(w=>String(w.text||"").trim()).filter(Boolean).join(" "),score:Math.min(...row.map(w=>Number(w.confidence||0)/100)),box:{x,y,w:x2-x,h:y2-y,cx:(x+x2)/2,cy:(y+y2)/2}};
+    }).sort((a,b)=>a.box.y-b.box.y||a.box.x-b.box.x);
+  }
+  function textSimilarity(a,b){
+    const aa=String(a||"").replace(/\s+/g," ").trim(),bb=String(b||"").replace(/\s+/g," ").trim();
+    if(!aa&&!bb)return 1;if(!aa||!bb)return 0;
+    let prev=Array(bb.length+1).fill(0).map((_,i)=>i);
+    for(let i=1;i<=aa.length;i++){const cur=[i];for(let j=1;j<=bb.length;j++)cur[j]=Math.min(cur[j-1]+1,prev[j]+1,prev[j-1]+(aa[i-1]===bb[j-1]?0:1));prev=cur;}
+    return 1-prev[bb.length]/Math.max(aa.length,bb.length,1);
+  }
+  async function runTesseractSidecar(){
+    if(!state.files.length){setStatus("Add the book screenshots first.");return;}
+    const T=await ensureTesseractSidecar(),sample=[0,Math.floor(state.files.length/2),state.files.length-1].filter((v,i,a)=>v>=0&&a.indexOf(v)===i);
+    const worker=await T.createWorker("eng",1,{logger:m=>{if(m?.status)setStatus("Tesseract sidecar: "+m.status+(Number.isFinite(m.progress)?" "+Math.round(m.progress*100)+"%":""));}});
+    try{
+      const rows=[];
+      for(const index of sample){
+        const img=await loadImageFromFile(state.files[index]),canvas=makeCroppedCanvas(img),r=await worker.recognize(canvas,{}, {text:true,blocks:true,hocr:true,tsv:true});
+        const data=r?.data||{},words=data.words||[],layout=tesseractWordsToLayout(words);
+        const bookProfile=layout.length?buildBookLayoutProfile([{layoutLines:layout}]):null;
+        const rebuilt=layout.length?reconstructParagraphsFromLayout(layout,{bookProfile}):{text:data.text||""};
+        const raw=cleanBodyText(data.text||""),repaired0=cleanBodyText(rebuilt.text||raw);
+        const safe=globalThis.BookOcrEpubPolish?.safePolishText,repaired1=typeof safe==="function"?safe(repaired0).text:repaired0,repaired=applyProfileKnownOcrCleanup(repaired1).text;
+        const paddle=state.pages?.[index]?.text||"";
+        const italicWords=words.filter(w=>w?.font_name&&/italic|oblique/i.test(String(w.font_name)));
+        rows.push({pageIndex:index,fileName:state.files[index].name,rawText:raw,repairedText:repaired,paddleText:paddle,rawVsPaddleSimilarity:paddle?textSimilarity(raw,paddle):null,repairedVsPaddleSimilarity:paddle?textSimilarity(repaired,paddle):null,wordCount:words.length,italicStyleWordCount:italicWords.length,italicStyleWords:italicWords.slice(0,100).map(w=>({text:w.text,font_name:w.font_name,confidence:w.confidence,bbox:w.bbox})),tesseractMetadata:{hasWords:!!words.length,hasBlocks:!!data.blocks?.length,hasHocr:!!data.hocr,hasTsv:!!data.tsv}});
+        canvas.width=1;canvas.height=1;
+      }
+      const payload={build:BUILD_VERSION,diagnosticOnly:true,engine:"Tesseract.js v5 sidecar",samplePages:sample.map(i=>i+1),rows,note:"v155 sidecar only. Tesseract does not replace Paddle or modify saved OCR/learning. Tesseract text is passed through current paragraph reconstruction where geometry is available, safe polish, and profile-known cleanup; output is compared with existing Paddle text."};
+      downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),"tesseract-sidecar-v"+BUILD_VERSION+".json");
+      setStatus("Tesseract sidecar complete on "+rows.length+" pages. Diagnostic JSON downloaded; Paddle OCR and learning were untouched.");
+    }finally{await worker.terminate();}
+  }
+  els.tesseractSidecarBtn?.addEventListener("click",async()=>{const b=els.tesseractSidecarBtn,old=b.textContent;b.disabled=true;b.textContent="Testing Tesseract…";try{await runTesseractSidecar();}catch(err){console.error(err);setStatus("Tesseract sidecar failed: "+(err?.message||err));}finally{b.disabled=false;b.textContent=old;}});
+
   els.italicReferenceAtlasBtn?.addEventListener("click",async()=>{
     const btn=els.italicReferenceAtlasBtn,old=btn.textContent;btn.disabled=true;btn.textContent="Reference atlas…";setStatus("Reference atlas: loading bundled Iowan Roman/Italic glyph atlas…");
     try{const study=await runIowanReferenceAtlasStudy();state.iowanReferenceAtlasStudy=study;downloadBlob(new Blob([JSON.stringify({build:BUILD_VERSION,sourceProfile:state.sourceProfile,referenceAtlasStudy:study},null,2)],{type:"application/json"}),"iowan-reference-atlas-v"+BUILD_VERSION+".json");setStatus("Reference atlas complete: "+study.atlasGlyphCount+" glyph pairs · "+study.measured+" labeled specimens measured · "+study.correct+"/"+study.measured+" nearest-face matches.");}
