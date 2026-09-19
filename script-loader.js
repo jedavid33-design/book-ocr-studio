@@ -34,7 +34,7 @@
 
   const experimentCode = String.raw`
   function romanResidualLetters(value){
-    return [...new Set(String(value||"").normalize("NFKC").toLocaleLowerCase().match(/\\p{L}/gu)||[])];
+    return [...new Set(String(value||"").normalize("NFKC").toLocaleLowerCase().match(/\p{L}/gu)||[])];
   }
   function romanResidualExampleKey(x){
     return [Number(x?.sourcePage),Number(x?.sourceLine),Number(x?.startWordIndex),Number(x?.endWordIndex)].join(":");
@@ -65,7 +65,7 @@
     const groups=new Map();
     for(const x of examples){
       const key=kind==="token"
-        ? (String(x.normalizedText||x.specimenText||"").normalize("NFKC").toLocaleLowerCase().replace(/[^\\p{L}\\p{N}]+/gu," ").trim()||String(x.id))
+        ? (String(x.normalizedText||x.specimenText||"").normalize("NFKC").toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu," ").trim()||String(x.id))
         : String(x.sourceRunId||"legacy")+"::"+String(x.sourcePage);
       if(!groups.has(key))groups.set(key,[]);
       groups.get(key).push(x);
@@ -130,7 +130,7 @@
         const baseline=canonicalItalicCandidateScore(clone,{trainingExamples:training}).finalScore;
         rows.push({example,run,romanResidualScore:rr.score,baselineScore:baseline,combinedScore:.75*baseline+.25*rr.score,residual:rr.residual,letters:rr.letters,referenceCount:rr.referenceCount});
       }
-      const trainGroups=new Set(training.map(x=>kind==="token"?(String(x.normalizedText||x.specimenText||"").normalize("NFKC").toLocaleLowerCase().replace(/[^\\p{L}\\p{N}]+/gu," ").trim()):String(x.sourceRunId||"legacy")+"::"+String(x.sourcePage)));
+      const trainGroups=new Set(training.map(x=>kind==="token"?(String(x.normalizedText||x.specimenText||"").normalize("NFKC").toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu," ").trim()):String(x.sourceRunId||"legacy")+"::"+String(x.sourcePage)));
       const testGroups=new Set(bucket.map(z=>z.group));
       const overlap=[...testGroups].filter(g=>trainGroups.has(g));
       const report={fold:foldIndex+1,training:training.length,heldOut:held.length,usable:rows.length,coverage:held.length?rows.length/held.length:0,
