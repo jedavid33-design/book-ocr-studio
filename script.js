@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "152";
+  const BUILD_VERSION = "153";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -9039,26 +9039,46 @@ ${coverSpine}${spine.join("\n")}
   }
   async function runIowanReferenceAtlasStudy(){
     const atlas=await buildIowanReferenceAtlas(),profile=currentItalicLearningProfile(),examples=(profile.examples||[]).filter(x=>x.label==="ITALIC"||x.label==="ROMAN");
-    const oldMode=state.italicReviewSelectionMode;state.italicReviewSelectionMode="validation";downloadItalicDiagnostics(false);state.italicReviewSelectionMode=oldMode;
-    const runs=state.italicCalibrationReviewSet||[],byPhysical=new Map(runs.map(r=>[String(r.pageIndex)+":"+String(r.lineIndex)+":"+String(r.startWordIndex),r]));
-    const physicalFromId=id=>{const tail=String(id||"").split("::").pop()||"",m=tail.match(/^(\d+):(\d+):(\d+):(\d+)$/);return m?m[1]+":"+m[2]+":"+m[3]:null;};
-    const out=[];let segmentationSkipped=0,missingRun=0,unsupported=0;
-    for(let ei=0;ei<examples.length;ei++){
-      const ex=examples[ei],run=byPhysical.get(physicalFromId(ex.id));if(!run){missingRun++;continue;}
-      const word=String(run.text||"").replace(/[^\p{L}\p{N}'’]/gu,"");
-      if(!word){unsupported++;continue;}
-      const chars=Array.from(word).map(ch=>ch==="’"?"'":ch);
-      if(!chars.every(ch=>atlas.roman[ch]&&atlas.italic[ch])){unsupported++;continue;}
-      const c=await candidateCanvasForRun(run);if(!c)continue;
-      const pieces=verticalInkSegments(c,chars.length);if(!pieces){segmentationSkipped++;continue;}
-      let rd=0,id=0,n=0;chars.forEach((ch,i)=>{const m=normalizedInkMask(pieces[i]),r=maskDistance(m,atlas.roman[ch]),it=maskDistance(m,atlas.italic[ch]);if(r!=null&&it!=null){rd+=r;id+=it;n++;}});
-      if(!n)continue;rd/=n;id/=n;
-      out.push({label:ex.label,textLength:chars.length,romanDistance:rd,italicDistance:id,italicAdvantage:rd-id,predicted:id<rd?"ITALIC":"ROMAN"});
-      if(ei%40===0)await new Promise(requestAnimationFrame);
+    // v153: persisted learning IDs point into saved OCR layout geometry, not the
+    // transient review population. Reattach exactly the same way the proven pixel
+    // study does: page -> saved layoutLine -> estimateInkAlignedWordBoxes.
+    const parsed=[];let invalidIds=0,outOfRange=0,missingLines=0,missingFiles=0,wordRangeMisses=0,unsupported=0,segmentationSkipped=0;
+    for(const ex of examples){
+      const tail=String(ex.id||"").split("::").pop()||"",m=tail.match(/^(\d+):(\d+):(\d+):(\d+)$/);
+      if(!m){invalidIds++;continue;}
+      parsed.push({ex,pageIndex:Number(m[1]),lineIndex:Number(m[2]),lo:Math.min(Number(m[3]),Number(m[4])),hi:Math.max(Number(m[3]),Number(m[4]))});
+    }
+    const byPage=new Map();for(const p of parsed){if(!byPage.has(p.pageIndex))byPage.set(p.pageIndex,[]);byPage.get(p.pageIndex).push(p);}
+    const out=[];let reattached=0;
+    for(const [pageIndex,items] of byPage){
+      const page=state.pages?.[pageIndex];if(!page){outOfRange+=items.length;continue;}
+      const file=page.file||state.files?.[pageIndex];if(!file){missingFiles+=items.length;continue;}
+      let canvas;try{const img=await loadImageFromFile(file);canvas=makeCroppedCanvas(img);}catch(_){missingFiles+=items.length;continue;}
+      const lineCache=new Map();
+      for(const item of items){
+        const line=page.layoutLines?.[item.lineIndex];if(!line){missingLines++;continue;}
+        let words=lineCache.get(item.lineIndex);
+        if(!words){words=estimateInkAlignedWordBoxes(canvas,line).map((w,i)=>({...w,wordIndex:i}));lineCache.set(item.lineIndex,words);}
+        const chosen=words.filter(w=>w.wordIndex>=item.lo&&w.wordIndex<=item.hi);
+        if(!chosen.length){wordRangeMisses++;continue;}
+        const text=String(item.ex.normalizedText||item.ex.specimenText||chosen.map(w=>w.text||"").join(" ")).replace(/[^\p{L}\p{N}'’]/gu,"");
+        if(!text){unsupported++;continue;}
+        const chars=Array.from(text).map(ch=>ch==="’"?"'":ch);
+        if(!chars.every(ch=>atlas.roman[ch]&&atlas.italic[ch])){unsupported++;continue;}
+        const boxes=chosen.map(w=>w.box).filter(Boolean);if(!boxes.length){wordRangeMisses++;continue;}
+        const x=Math.min(...boxes.map(q=>q.x)),y=Math.min(...boxes.map(q=>q.y)),x2=Math.max(...boxes.map(q=>q.x+q.w)),y2=Math.max(...boxes.map(q=>q.y+q.h));
+        const crop=cropCanvasRegion(canvas,{x,y,w:x2-x,h:y2-y});reattached++;
+        const pieces=verticalInkSegments(crop,chars.length);if(!pieces){segmentationSkipped++;continue;}
+        let rd=0,id=0,n=0;
+        chars.forEach((ch,i)=>{const m=normalizedInkMask(pieces[i]),r=maskDistance(m,atlas.roman[ch]),it=maskDistance(m,atlas.italic[ch]);if(r!=null&&it!=null){rd+=r;id+=it;n++;}});
+        if(!n)continue;rd/=n;id/=n;
+        out.push({label:item.ex.label,textLength:chars.length,romanDistance:rd,italicDistance:id,italicAdvantage:rd-id,predicted:id<rd?"ITALIC":"ROMAN"});
+      }
+      canvas.width=1;canvas.height=1;await new Promise(resolve=>setTimeout(resolve,0));
     }
     const summarize=label=>{const a=out.filter(r=>r.label===label),correct=a.filter(r=>r.predicted===label).length,vals=a.map(r=>r.italicAdvantage).sort((x,y)=>x-y),mean=vals.length?vals.reduce((x,y)=>x+y,0)/vals.length:null;return {n:a.length,correct,accuracy:a.length?correct/a.length:null,meanItalicAdvantage:mean,medianItalicAdvantage:vals.length?vals[Math.floor(vals.length/2)]:null};};
     const all=out.length,correct=out.filter(r=>r.predicted===r.label).length;
-    return {diagnosticOnly:true,source:"bundled-user-captured-Iowan-Old-Style-atlas",referenceAssets:IOWAN_REFERENCE_ASSETS,referencePageSize:atlas.pageSize,atlasGlyphCount:atlas.glyphCount,measured:all,correct,accuracy:all?correct/all:null,italic:summarize("ITALIC"),roman:summarize("ROMAN"),segmentationSkipped,missingRun,unsupported,rows:out,note:"v151 local canonical Iowan Roman-vs-Italic bitmap reference experiment. Uses bundled clean Basic Latin Roman/Italic screenshots, including punctuation and digits. Diagnostic only; no Hunt ranking, learning, OCR, Repair Book, or Final Polish changes."};
+    return {diagnosticOnly:true,source:"bundled-user-captured-Iowan-Old-Style-atlas",referenceAssets:IOWAN_REFERENCE_ASSETS,referencePageSize:atlas.pageSize,atlasGlyphCount:atlas.glyphCount,totalExamples:examples.length,parsedIds:parsed.length,reattached,measured:all,correct,accuracy:all?correct/all:null,italic:summarize("ITALIC"),roman:summarize("ROMAN"),invalidIds,outOfRange,missingLines,missingFiles,wordRangeMisses,unsupported,segmentationSkipped,rows:out,note:"v153 canonical Iowan Roman-vs-Italic bitmap reference experiment. Persisted labels are reattached through saved layoutLines and estimateInkAlignedWordBoxes. Diagnostic only; no Hunt ranking, learning, OCR, Repair Book, or Final Polish changes."};
   }
   els.italicReferenceAtlasBtn?.addEventListener("click",async()=>{
     const btn=els.italicReferenceAtlasBtn,old=btn.textContent;btn.disabled=true;btn.textContent="Reference atlas…";setStatus("Reference atlas: loading bundled Iowan Roman/Italic glyph atlas…");
