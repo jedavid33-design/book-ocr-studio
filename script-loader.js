@@ -156,8 +156,8 @@
     const p100=page.pooled.combined.top100.italic,t100=token.pooled.combined.top100.italic;
     payload.successGate.passed=p100>=17&&t100>=17;
     state.romanResidualExperiment=payload;
-    downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),`italic-roman-residual-v159.json`);
-    setStatus(`ROMAN RESIDUAL EXPERIMENT READY · combined top 100: page ${p100}, token ${t100} · exported italic-roman-residual-v159.json · production Hunt unchanged.`);
+    downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),"italic-roman-residual-v159.json");
+    setStatus("ROMAN RESIDUAL EXPERIMENT READY · combined top 100: page "+p100+", token "+t100+" · exported italic-roman-residual-v159.json · production Hunt unchanged.");
     return payload;
   }
   async function launchRomanResidualExperiment(){
