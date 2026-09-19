@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "156";
+  const BUILD_VERSION = "157";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -8669,7 +8669,7 @@ ${coverSpine}${spine.join("\n")}
       state.italicValidationEvidenceByPhysical=new Map();
       ordered.forEach(r=>state.italicValidationEvidenceByPhysical.set(`${r.pageIndex}:${r.lineIndex}:${r.startWordIndex}`,{hiddenContext:r.hiddenContext||null,pixelFeatures:r.pixelFeatures||null,pixelItalicProbability:r.pixelItalicProbability,supervisedScore:r.supervisedScore,finalRankDiagnostics:r.finalRankDiagnostics,reviewBox:r.reviewBox||null}));
       state.italicHuntSelectionSourceByKey=Object.fromEntries(ordered.map(r=>[italicCalibrationKey(r),r.huntSelectionSource]));
-      if(state.italicHuntDiagnostics){const contextValues=ordered.map(r=>Number(r.hiddenContext?.phraseBonus||0)).filter(x=>x>0),pixelAppliedCount=ordered.filter(r=>Number(r.finalRankComponents?.pixelWeight||0)>0).length;state.italicHuntDiagnostics.finalRanking={canonical:true,pixelAssistApplied:pixelAppliedCount>0,pixelAssistAppliedCount,servedPopulation:ordered.length,hiddenContextDistribution:{appliedCount:contextValues.length,appliedRate:ordered.length?contextValues.length/ordered.length:0,averageBonus:contextValues.length?contextValues.reduce((a,b)=>a+b,0)/contextValues.length:0,maxBonus:contextValues.length?Math.max(...contextValues):0,guardrail:"Only all-strong contiguous spans (structural minimum >= 0.10 and consistency = 1) qualify."},top:ordered.slice(0,250).map(r=>({specimenKey:italicCalibrationKey(r),text:italicNormalizedSpecimenText(r),pageIndex:r.pageIndex,lineIndex:r.lineIndex,startWordIndex:r.startWordIndex,servedRank:r.finalServedRank,finalScore:r.finalItalicScore,diagnostics:r.finalRankDiagnostics}))};state.italicHuntDiagnostics.top=state.italicHuntDiagnostics.finalRanking.top;}
+      if(state.italicHuntDiagnostics){const contextValues=ordered.map(r=>Number(r.hiddenContext?.phraseBonus||0)).filter(x=>x>0),pixelAssistAppliedCount=ordered.filter(r=>Number(r.finalRankComponents?.pixelWeight||0)>0).length;state.italicHuntDiagnostics.finalRanking={canonical:true,pixelAssistApplied:pixelAssistAppliedCount>0,pixelAssistAppliedCount,servedPopulation:ordered.length,hiddenContextDistribution:{appliedCount:contextValues.length,appliedRate:ordered.length?contextValues.length/ordered.length:0,averageBonus:contextValues.length?contextValues.reduce((a,b)=>a+b,0)/contextValues.length:0,maxBonus:contextValues.length?Math.max(...contextValues):0,guardrail:"Only all-strong contiguous spans (structural minimum >= 0.10 and consistency = 1) qualify."},top:ordered.slice(0,250).map(r=>({specimenKey:italicCalibrationKey(r),text:italicNormalizedSpecimenText(r),pageIndex:r.pageIndex,lineIndex:r.lineIndex,startWordIndex:r.startWordIndex,servedRank:r.finalServedRank,finalScore:r.finalItalicScore,diagnostics:r.finalRankDiagnostics}))};state.italicHuntDiagnostics.top=state.italicHuntDiagnostics.finalRanking.top;}
       return true;
     }
     if(mode==="learned"){
