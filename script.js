@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "148";
+  const BUILD_VERSION = "149";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -5015,7 +5015,6 @@
         const bw=Math.max(1,Number(r.reviewBox?.w||r.reviewBox?.width||0));
         const bh=Math.max(1,Number(r.reviewBox?.h||r.reviewBox?.height||0));
         if(letterCount<=2 && bw/bh>=3.25){huntDiag.shapeRejected++;auditReject("shape",r,{letterCount,aspectRatio:bw/bh});continue;}
-        r.learnedItalicProbability=cachedItalicLearnedProbability(r);
         candidates.push(r); huntDiag.accepted++;
       }
 
@@ -5052,7 +5051,7 @@
       // positives better than the blended Hunt score. Do not second-guess Learned
       // with neighbor resemblance or diversity reshuffling here. Hunt's job is to
       // clean the unseen population, then preserve Learned order.
-      const candidateRows=candidates.map(r=>({r,v:italicLearningVector(r)}));
+      const candidateRows=candidates.map(r=>{const v=italicLearningVector(r);r.learnedItalicProbability=cachedItalicLearnedProbability(r);return {r,v};});
       __popMark("huntVectorizeMs");
       // v122: positive-envelope active acquisition. Roman labels outnumber
       // italics ~30:1, so do not let global class probability dominate discovery.
@@ -5077,16 +5076,18 @@
         // v141: learned probability is the primary production signal. Prototype
         // similarity is only a light secondary boost, preventing the short-word
         // prototype avalanche seen in v139-v140.
-        x.huntPositiveScore=.90*learned+.10*x.positiveEnvelopeScore;
-        x.robustItalicNudge=0;
+        const structural=italicFeatureWeightedProbability(x.r);
+        x.r.structuralItalicProbability=structural;
+        x.huntPositiveScore=.62*learned+.30*structural+.08*x.positiveEnvelopeScore;
+        x.robustItalicNudge=structural;
         x.r.huntPositiveScore=x.huntPositiveScore;
         x.r.huntRobustItalicNudge=0;
       });
       const learnedRanked=candidateRows.sort((a,b)=>{
+        if(b.huntPositiveScore!==a.huntPositiveScore)return b.huntPositiveScore-a.huntPositiveScore;
         const ap=Number.isFinite(a.r.learnedItalicProbability)?a.r.learnedItalicProbability:-1;
         const bp=Number.isFinite(b.r.learnedItalicProbability)?b.r.learnedItalicProbability:-1;
         if(bp!==ap)return bp-ap;
-        if(b.huntPositiveScore!==a.huntPositiveScore)return b.huntPositiveScore-a.huntPositiveScore;
         return Number(b.r.supervisedScore||0)-Number(a.r.supervisedScore||0);
       });
       // v131 diagnostic: inspect alternative signals on the actual unseen eligible pool.
@@ -5155,11 +5156,11 @@
       supervisedReviewSet.splice(0,supervisedReviewSet.length,...orderedRuns);
       supervisedReviewSet.forEach((r,i)=>{
         r.huntSelectionSource="learned-primary-diverse-phrase";
-        r.activeLearningReason="italic-hunt-learned-primary-diverse-phrase-v145";
+        r.activeLearningReason="italic-hunt-structural-scalpel-v149";
         r.validationHuntRank=i+1;
       });
       state.italicHuntSelectionSourceByKey=Object.fromEntries(supervisedReviewSet.map(r=>[italicCalibrationKey(r),"learned-primary-diverse-phrase"]));
-      huntDiag.selectionMix={requested:"unbounded learned-primary; repeated text deferred; modest phrase acquisition",actualQueue:orderedRows.length};
+      huntDiag.selectionMix={requested:"v149 structural scalpel: learned + current structural evidence; repeated text deferred; modest phrase acquisition",actualQueue:orderedRows.length};
       state.italicHuntTiming={totalMs:Math.round((globalThis.performance?.now?.()??Date.now())-__huntT0),population:supervisedReviewSet.length,shortlist:supervisedReviewSet.length,picked:supervisedReviewSet.length,learnedBackbone:true,positiveEnvelope:true,diagnostics:huntDiag};
       __popMark("huntReorderMs");
     }
@@ -5508,7 +5509,7 @@
       romanCount:R.length,
       featureCount:ITALIC_FEATURE_NAMES.length,
       features,
-      note:`Diagnostic only. Build ${BUILD_VERSION} does not use these separation values to change ranking or learned probabilities.`
+      note:`Build ${BUILD_VERSION}: feature-separation diagnostics now inform Hunt through the cached structural feature model; this table remains descriptive.`
     };
   }
 
@@ -5576,48 +5577,24 @@
     return 1/(1+Math.exp(-1.35*(score/n)));
   }
 
+  let italicFeatureModelCache=null, italicFeatureModelRevision="";
+  function italicFeatureModel(){
+    const p=currentItalicLearningProfile(), examples=(p.examples||[]).filter(x=>(x.label==="ITALIC"||x.label==="ROMAN")&&Array.isArray(x.vector)&&x.vector.length===ITALIC_FEATURE_NAMES.length);
+    const rev=`${examples.length}:${p.updatedAt||""}`; if(italicFeatureModelCache&&italicFeatureModelRevision===rev)return italicFeatureModelCache;
+    const I=examples.filter(x=>x.label==="ITALIC"),R=examples.filter(x=>x.label==="ROMAN");
+    // v149: current 114/3857-label evidence. Structural consistency is the
+    // strongest separator; structural min/average and slant follow. Do not
+    // double-count duplicate local dimensions.
+    const chosen=[{i:2,w:1.493},{i:1,w:1.274},{i:0,w:1.274},{i:3,w:1.121},{i:4,w:.669},{i:8,w:.555}];
+    const stat=(rows,i)=>{const a=rows.map(x=>Number(x.vector[i])).filter(Number.isFinite);if(!a.length)return null;const mean=a.reduce((x,y)=>x+y,0)/a.length;const variance=a.reduce((x,y)=>x+(y-mean)**2,0)/Math.max(1,a.length-1);return{mean,sd:Math.sqrt(variance)};};
+    const features=chosen.map(f=>({...f,is:stat(I,f.i),rs:stat(R,f.i)})).filter(f=>f.is&&f.rs);
+    italicFeatureModelCache={ready:I.length>=10&&R.length>=40,features,italicCount:I.length,romanCount:R.length}; italicFeatureModelRevision=rev; return italicFeatureModelCache;
+  }
   function italicFeatureWeightedProbability(run){
-    const p=currentItalicLearningProfile(), examples=(p.examples||[]).filter(x=>
-      (x.label==="ITALIC"||x.label==="ROMAN") &&
-      Array.isArray(x.vector) && x.vector.length===ITALIC_FEATURE_NAMES.length
-    );
-    const I=examples.filter(x=>x.label==="ITALIC"), R=examples.filter(x=>x.label==="ROMAN");
-    // Stay neutral until we have enough positive examples to avoid early overfitting.
-    if(I.length<10 || R.length<40)return .5;
-
-    const chosen=[
-      {i:0,w:.7087980703}, // structuralAverage
-      {i:1,w:.6675001632}, // structuralMinimum
-      {i:5,w:.6465410980}, // shearSupport (do not double-count meanLocalShearLift)
-      {i:8,w:.5703953230}, // meanAbsEdgeDelta
-      {i:9,w:.5517625230}, // meanAbsWidthRatioDelta
-      {i:4,w:.4999866091}  // gainSupport (do not double-count meanLocalGainLift)
-    ];
-    const stat=(rows,i)=>{
-      const a=rows.map(x=>Number(x.vector[i])).filter(Number.isFinite);
-      if(!a.length)return null;
-      const mean=a.reduce((x,y)=>x+y,0)/a.length;
-      const variance=a.reduce((x,y)=>x+(y-mean)**2,0)/Math.max(1,a.length-1);
-      return {mean,sd:Math.sqrt(variance)};
-    };
-
-    let weighted=0, weights=0;
-    for(const f of chosen){
-      const is=stat(I,f.i), rs=stat(R,f.i), v=Number(italicLearningVector(run)[f.i]);
-      if(!is||!rs||!Number.isFinite(v))continue;
-      const pooled=Math.sqrt((is.sd**2+rs.sd**2)/2);
-      if(!(pooled>1e-9))continue;
-      // Positive z means "toward the italic mean" regardless of raw feature direction.
-      const midpoint=(is.mean+rs.mean)/2;
-      const direction=is.mean>=rs.mean?1:-1;
-      const z=direction*(v-midpoint)/pooled;
-      // Clamp individual features so one noisy measurement cannot dominate.
-      weighted+=Math.max(-2,Math.min(2,z))*f.w;
-      weights+=f.w;
-    }
-    if(!weights)return .5;
-    const z=weighted/weights;
-    return 1/(1+Math.exp(-1.35*z));
+    const m=italicFeatureModel(); if(!m.ready)return .5; const v=italicLearningVector(run);
+    let weighted=0,weights=0;
+    for(const f of m.features){const pooled=Math.sqrt((f.is.sd**2+f.rs.sd**2)/2),x=Number(v[f.i]);if(!Number.isFinite(x)||!(pooled>1e-9))continue;const midpoint=(f.is.mean+f.rs.mean)/2,direction=f.is.mean>=f.rs.mean?1:-1,z=direction*(x-midpoint)/pooled;weighted+=Math.max(-2.5,Math.min(2.5,z))*f.w;weights+=f.w;}
+    if(!weights)return .5; return 1/(1+Math.exp(-1.45*(weighted/weights)));
   }
 
   function italicGeometryProbability(run){
