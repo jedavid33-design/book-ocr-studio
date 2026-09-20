@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "157";
+  const BUILD_VERSION = "158";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -45,6 +45,8 @@
     italicHuntSessionServedTexts: new Set(),
     italicLineHuntSeenLines: new Set(),
     iowanReferenceAtlasStudy: null,
+    visualItalicResults: [],
+    visualItalicSession: null,
   };
 
   let PaddleOCRClass = null;
@@ -151,6 +153,8 @@
     italicReviewLearnedBtn: $("italicReviewLearnedBtn"),
     italicReviewRandomBtn: $("italicReviewRandomBtn"),
     italicReviewHuntBtn: $("italicReviewHuntBtn"),
+    visualItalicBtn: $("visualItalicBtn"),
+    exportVisualItalic: $("exportVisualItalic"),
     italicLineHuntBtn: $("italicLineHuntBtn"),
     italicValidationBtn: $("italicValidationBtn"),
     italicPixelStudyBtn: $("italicPixelStudyBtn"),
@@ -8834,6 +8838,76 @@ ${coverSpine}${spine.join("\n")}
     renderItalicCalibrationReview();
   }
 
+
+  // Build 158: experimental direct visual classifier. Diagnostic only.
+  let visualItalicOrtPromise=null, visualItalicSessionPromise=null;
+  async function ensureVisualItalicOrt(){
+    if(!visualItalicOrtPromise) visualItalicOrtPromise=import("https://cdn.jsdelivr.net/npm/onnxruntime-web@1.23.2/+esm");
+    return visualItalicOrtPromise;
+  }
+  async function ensureVisualItalicSession(){
+    if(!visualItalicSessionPromise) visualItalicSessionPromise=(async()=>{
+      const ort=await ensureVisualItalicOrt();
+      ort.env.wasm.wasmPaths="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.23.2/dist/";
+      const session=await ort.InferenceSession.create("./visual-model/italic-mobilenetv3-synthetic.onnx",{executionProviders:["wasm"]});
+      state.visualItalicSession=session;
+      return session;
+    })();
+    return visualItalicSessionPromise;
+  }
+  function visualItalicTensorFromCanvas(ort,source,box){
+    const pad=Math.max(1,Math.round(box.h*.12));
+    const crop=cropCanvasRegion(source,{x:box.x-pad,y:box.y-pad,w:box.w+2*pad,h:box.h+2*pad});
+    const c=document.createElement("canvas");c.width=320;c.height=96;
+    const x=c.getContext("2d",{alpha:false,willReadFrequently:true});x.fillStyle="#fff";x.fillRect(0,0,320,96);
+    const scale=Math.min(320/crop.width,96/crop.height),dw=Math.max(1,Math.round(crop.width*scale)),dh=Math.max(1,Math.round(crop.height*scale));
+    x.drawImage(crop,Math.round((320-dw)/2),Math.round((96-dh)/2),dw,dh);
+    const d=x.getImageData(0,0,320,96).data,out=new Float32Array(3*96*320);
+    const mean=[.485,.456,.406],std=[.229,.224,.225],plane=96*320;
+    for(let i=0,p=0;i<d.length;i+=4,p++){out[p]=(d[i]/255-mean[0])/std[0];out[plane+p]=(d[i+1]/255-mean[1])/std[1];out[2*plane+p]=(d[i+2]/255-mean[2])/std[2];}
+    return new ort.Tensor("float32",out,[1,3,96,320]);
+  }
+  async function runVisualItalicExperiment(){
+    if(!state.files.length||!state.pages.length) throw new Error("Load an OCR project with screenshots first.");
+    const ort=await ensureVisualItalicOrt(),session=await ensureVisualItalicSession(),results=[];
+    const inputName=session.inputNames[0],outputName=session.outputNames[0];
+    for(let pi=0;pi<state.pages.length;pi++){
+      const page=state.pages[pi], file=state.files[pi]||page.file;
+      if(!file) continue;
+      setStatus(`Visual Italic · page ${pi+1} of ${state.pages.length}…`);
+      const img=await loadImageFromFile(file), canvas=makeCroppedCanvas(img);
+      const raw=Array.isArray(page.rawOcrItems)&&page.rawOcrItems.length?page.rawOcrItems:(Array.isArray(page.layoutLines)?page.layoutLines:[]);
+      for(let li=0;li<raw.length;li++){
+        const line=raw[li]; if(!line?.box||!line?.text) continue;
+        // Paddle's stored geometry can be line-level. Split only when individual word boxes exist;
+        // otherwise score the detected region honestly as one visual specimen.
+        const words=Array.isArray(line.words)&&line.words.length?line.words:[line];
+        for(let wi=0;wi<words.length;wi++){
+          const w=words[wi],box=w.box||line.box;if(!box)continue;
+          const tensor=visualItalicTensorFromCanvas(ort,canvas,box);
+          const output=await session.run({[inputName]:tensor});
+          const logit=Number(output[outputName].data[0]),prob=1/(1+Math.exp(-logit));
+          results.push({pageIndex:pi,pageNumber:pi+1,fileName:file.name,lineIndex:li,wordIndex:wi,text:String(w.text||line.text||""),box,visualItalicProbability:prob,visualItalicSpanScore:prob});
+        }
+      }
+      canvas.width=1;canvas.height=1;
+      await new Promise(r=>setTimeout(r,0));
+    }
+    const groups=new Map();for(const r of results){const k=`${r.pageIndex}:${r.lineIndex}`;if(!groups.has(k))groups.set(k,[]);groups.get(k).push(r);}
+    for(const g of groups.values()){g.sort((a,b)=>a.wordIndex-b.wordIndex);for(let i=0;i<g.length;i++){const r=g[i],L=g[i-1],R=g[i+1],p=r.visualItalicProbability;if(p<.20)continue;
+      if(L&&R&&L.visualItalicProbability>=.95&&R.visualItalicProbability>=.95&&p<.95)r.visualItalicSpanScore=Math.max(p,Math.min(L.visualItalicProbability,R.visualItalicProbability)*.97);
+      else {const anchor=Math.max(L?.visualItalicProbability||0,R?.visualItalicProbability||0);if(anchor>=.98&&p<anchor)r.visualItalicSpanScore=Math.max(p,anchor*.90);}
+    }}
+    results.sort((a,b)=>b.visualItalicSpanScore-a.visualItalicSpanScore||b.visualItalicProbability-a.visualItalicProbability);
+    results.forEach((r,i)=>r.visualItalicRank=i+1);state.visualItalicResults=results;
+    setStatus(`Visual Italic ready · ${results.length} specimens ranked · raw neural + conservative span scores kept separate · diagnostic only.`);
+    return results;
+  }
+  function exportVisualItalicResults(){
+    const payload={format:"book-ocr-studio-visual-italic-v1",buildVersion:BUILD_VERSION,model:"italic-mobilenetv3-synthetic.onnx",diagnosticOnly:true,spanRules:{visualFloor:.20,sandwichAnchor:.95,oneSidedAnchor:.98},results:state.visualItalicResults||[]};
+    downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),`${cleanFilename(els.bookTitle?.value||"book")}-visual-italic.json`);
+  }
+
   els.italicReviewLearnedBtn?.addEventListener("click", async () => {
     els.italicReviewLearnedBtn.disabled=true;
     try { await launchItalicLearningReview("learned"); }
@@ -8844,6 +8918,8 @@ ${coverSpine}${spine.join("\n")}
     try { await launchItalicLearningReview("random"); }
     finally { els.italicReviewRandomBtn.disabled=false; }
   });
+  els.visualItalicBtn?.addEventListener("click",async()=>{els.visualItalicBtn.disabled=true;try{await runVisualItalicExperiment();}catch(err){console.error(err);setStatus(`Visual Italic failed: ${err?.message||err}`);}finally{els.visualItalicBtn.disabled=false;}});
+  els.exportVisualItalic?.addEventListener("click",exportVisualItalicResults);
   els.italicReviewHuntBtn?.addEventListener("click", async () => {
     const buttonTiming={performanceNow:(globalThis.performance?.now?.()??Date.now()),wallStartedAt:Date.now(),queueAtButton:state.italicCalibrationReviewSet?.length||0};
     els.italicReviewHuntBtn.disabled=true;
