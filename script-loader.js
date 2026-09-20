@@ -1,4 +1,4 @@
-// Book OCR Studio 165 loader.
+// Book OCR Studio 166 loader.
 // Keeps the v158 READY-state repair and adds an experimental, parallel
 // book-native Roman Residual validator. Production Hunt remains frozen at v157.
 
@@ -9,7 +9,7 @@
 
   source = source.replace(
     '  const BUILD_VERSION = "157";',
-    '  const BUILD_VERSION = "165";'
+    '  const BUILD_VERSION = "166";'
   );
 
   const reviewAnchor =
@@ -156,6 +156,30 @@
     return{kind,foldCount:5,folds:foldReports,pooled:{usable:pooled.length,coverage:examples.length?pooled.length/examples.length:0,
       baseline:romanResidualMetrics(pooled,"baselineScore"),romanResidual:romanResidualMetrics(pooled,"romanResidualScore"),combined:romanResidualMetrics(pooled,"combinedScore")}};
   }
+  function romanResidualWeightSweep(kind,examples,runByKey){
+    const weights=[0,.05,.10,.15,.20,.25,.30,.40];
+    const folds=romanResidualGroups(examples,kind),foldRows=[],pooledByWeight=new Map(weights.map(w=>[w,[]]));
+    for(let fi=0;fi<folds.length;fi++){
+      const test=folds[fi],testIds=new Set(test.map(x=>x.id)),training=examples.filter(x=>!testIds.has(x.id));
+      const model=romanResidualModel(training,runByKey),baseRows=[];
+      for(const example of test){
+        const run=runByKey.get(romanResidualExampleKey(example));if(!run)continue;
+        const rr=romanResidualScore(run,example.normalizedText||example.specimenText,model);
+        const baseline=Number.isFinite(run.canonicalScore)?run.canonicalScore:Number.isFinite(run.learnedItalicProbability)?run.learnedItalicProbability:0;
+        baseRows.push({example,run,baselineScore:baseline,romanResidualScore:rr.score});
+      }
+      const byWeight={};
+      for(const w of weights){
+        const rows=baseRows.map(row=>({...row,sweepScore:(1-w)*row.baselineScore+w*row.romanResidualScore}));
+        byWeight[String(w)]=romanResidualMetrics(rows,"sweepScore");
+        pooledByWeight.get(w).push(...rows);
+      }
+      foldRows.push({fold:fi+1,heldOut:test.length,byWeight});
+    }
+    const pooled={};
+    for(const w of weights)pooled[String(w)]=romanResidualMetrics(pooledByWeight.get(w),"sweepScore");
+    return {kind,weights,folds:foldRows,pooled};
+  }
   function runRomanResidualExperiment(){
     const attached=romanResidualAttachedExamples();
     const examples=attached.examples, reattached=attached.attached;
@@ -186,7 +210,7 @@
     const p100=page.pooled.combined.top100.italic,t100=token.pooled.combined.top100.italic;
     payload.successGate.passed=p100>=17&&t100>=17;
     state.romanResidualExperiment=payload;
-    downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),"italic-roman-residual-v165.json");
+    downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),"italic-roman-residual-v166.json");
     setStatus("ROMAN RESIDUAL EXPERIMENT READY · combined top 100: page "+p100+", token "+t100+" · exported italic-roman-residual-v159.json · production Hunt unchanged.");
     return payload;
   }
@@ -228,11 +252,12 @@
       attachment:{persistedEligible:labels.length,liveMatched:liveMatched.length,rate,exact,physical},
       pixelAssist,thresholds:{minimumRomanReferencesPerLetter:5,combinedWeight:{baseline:.75,romanResidual:.25}},
       pageGrouped:page,tokenGrouped:token,
+      weightSweep:{note:"Offline only. Reuses the same live candidates and fold-specific Roman-reference models; no additional screenshot or Pixel Assist pass.",page:romanResidualWeightSweep("page",examples,runByKey),token:romanResidualWeightSweep("token",examples,runByKey)},
       successGate:{targetTop100:"17-18+ italics in both grouping schemes, improvement across most page folds, no major top-250 collapse",passed:false}};
     const p100=page.pooled.combined.top100.italic,t100=token.pooled.combined.top100.italic;
     payload.successGate.passed=p100>=17&&t100>=17;
     state.romanResidualExperiment=payload;
-    downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),"italic-roman-residual-v165.json");
+    downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),"italic-roman-residual-v166.json");
     const msg="ROMAN RESIDUAL READY · attachment "+liveMatched.length+"/"+labels.length+" · combined top 100: page "+p100+", token "+t100+" · production Hunt unchanged.";
     console.log(msg);setStatus(msg);
     return payload;
@@ -248,7 +273,7 @@
   if(!source.includes(listenerAnchor))throw new Error("Experiment listener anchor not found.");
   source=source.replace(listenerAnchor,listenerReplacement);
 
-  source += "\n//# sourceURL=book-ocr-studio-165.js";
+  source += "\n//# sourceURL=book-ocr-studio-166.js";
   (0, eval)(source);
 })().catch((err) => {
   console.error("Book OCR Studio loader failed", err);
