@@ -1,4 +1,4 @@
-// Book OCR Studio 177 loader.
+// Book OCR Studio 178 loader.
 // Keeps the v158 READY-state repair and adds an experimental, parallel
 // book-native Roman Residual validator. Production Hunt remains frozen at v157.
 
@@ -9,7 +9,7 @@
 
   source = source.replace(
     '  const BUILD_VERSION = "157";',
-    '  const BUILD_VERSION = "177";'
+    '  const BUILD_VERSION = "178";'
   );
 
   const reviewAnchor =
@@ -94,7 +94,20 @@
           const match=line.italicWordMeta.find(w=>String(w?.text||"").trim().toLocaleLowerCase()===text&&Number(w?.box?.w||0)>1&&Number(w?.box?.h||0)>1);
           box=match?.box||null;
         }
-        if(!box){console.warn("Classifier crop export: no usable box",key,{exampleBox:ex.reviewBox||ex.box||null,wordBox:word?.box||null,evidenceBox:evidence?.reviewBox||null});continue;}
+        if(!box&&line?.box){
+          try{
+            const rebuilt=estimateInkAlignedWordBoxes(canvas,line)||[];
+            const text=String(ex.normalizedText||ex.specimenText||"").trim().toLocaleLowerCase();
+            const indexed=rebuilt[parts[2]];
+            if(indexed?.box&&Number(indexed.box.w||0)>1&&Number(indexed.box.h||0)>1)box=indexed.box;
+            if(!box&&text){
+              const match=rebuilt.find(w=>String(w?.text||"").trim().toLocaleLowerCase()===text&&Number(w?.box?.w||0)>1&&Number(w?.box?.h||0)>1);
+              box=match?.box||null;
+            }
+            if(box)console.log("Classifier crop export: rebuilt OCR word box",key,{box:box});
+          }catch(err){console.warn("Classifier crop export: word-box rebuild failed",key,err);}
+        }
+        if(!box){console.warn("Classifier crop export: no usable box",key,{exampleBox:ex.reviewBox||ex.box||null,wordBox:word?.box||null,evidenceBox:evidence?.reviewBox||null,lineBox:line?.box||null});continue;}
         const bw=Number(box.w??box.width??0),bh=Number(box.h??box.height??0);
         const bx=Number(box.x??box.left??0),by=Number(box.y??box.top??0);
         const pad=Math.max(2,Math.round(bh*.18));
@@ -145,7 +158,7 @@
     console.log("Classifier crop export: ZIP generation starting",{files:files.length});
     const out=await zip.generateAsync({type:"blob",compression:"STORE"},meta=>{const pct=Math.round(meta.percent);if(pct%10===0){console.log("Classifier crop export: ZIP progress",pct);setStatus("Classifier crop export · ZIP "+pct+"%");}});
     console.log("Classifier crop export: ZIP ready",{bytes:out.size});
-    downloadBlob(out,"italic-labeled-word-crops-v177.zip");
+    downloadBlob(out,"italic-labeled-word-crops-v178.zip");
     console.log("Classifier crop export: download triggered");
     setStatus("CLASSIFIER CROPS READY · "+italicCount+" Italic · "+romanCount+" Roman · "+manifest.length+" total.");
   }
@@ -331,7 +344,7 @@
     const p100=page.pooled.combined.top100.italic,t100=token.pooled.combined.top100.italic;
     payload.successGate.passed=p100>=17&&t100>=17;
     state.romanResidualExperiment=payload;
-    downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),"italic-roman-residual-v177.json");
+    downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),"italic-roman-residual-v178.json");
     setStatus("ROMAN RESIDUAL EXPERIMENT READY · combined top 100: page "+p100+", token "+t100+" · exported italic-roman-residual-v159.json · production Hunt unchanged.");
     return payload;
   }
@@ -366,7 +379,7 @@
       note:"Offline Roman-penalty sweep only. Negative weights subtract the Roman Residual signal while increasing baseline proportion so coefficients sum to 1. No OCR, screenshots, Pixel Assist, labels, or production Hunt changed.",
       page,token};
     state.romanResidualOfflineSimulation=result;
-    downloadBlob(new Blob([JSON.stringify(result,null,2)],{type:"application/json"}),"italic-roman-residual-penalty-v177.json");
+    downloadBlob(new Blob([JSON.stringify(result,null,2)],{type:"application/json"}),"italic-roman-residual-penalty-v178.json");
     const summary=weights.map(w=>{const p=page.byWeight[String(w)],t=token.byWeight[String(w)];return w+": page "+p.top25.italics+"/"+p.top50.italics+"/"+p.top100.italics+"/"+p.top250.italics+", token "+t.top25.italics+"/"+t.top50.italics+"/"+t.top100.italics+"/"+t.top250.italics;}).join(" | ");
     const msg="ROMAN PENALTY SWEEP READY · italics at top 25/50/100/250 · "+summary;
     console.log(msg);setStatus("ROMAN PENALTY SWEEP READY · JSON downloaded.");return result;
@@ -429,7 +442,7 @@
     const p100=page.pooled.combined.top100.italic,t100=token.pooled.combined.top100.italic;
     payload.successGate.passed=p100>=17&&t100>=17;
     state.romanResidualExperiment=payload;
-    downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),"italic-roman-residual-v177.json");
+    downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),"italic-roman-residual-v178.json");
     const msg="ROMAN RESIDUAL READY · attachment "+liveMatched.length+"/"+labels.length+" · combined top 100: page "+p100+", token "+t100+" · production Hunt unchanged.";
     console.log(msg);setStatus(msg);
     return payload;
@@ -441,11 +454,11 @@
   source = source.replace(experimentAnchor, experimentCode + "\n" + experimentAnchor);
 
   const listenerAnchor='  els.resetItalicLearning?.addEventListener("click", resetItalicLearningProfile);';
-  const listenerReplacement=listenerAnchor+'\n  document.getElementById("italicRomanResidualBtn")?.addEventListener("click",()=>launchRomanResidualExperiment().catch(err=>{console.error("Roman Residual experiment failed",err);setStatus("Roman Residual experiment failed: "+(err?.message||err));}));\n  document.getElementById("italicRomanResidualOfflineBtn")?.addEventListener("click",importRomanResidualExport);\n  document.getElementById("italicCropExportBtn")?.addEventListener("click",()=>{console.log("Classifier crop export clicked · v177");setStatus("Classifier crop export starting…");exportLabeledWordCrops().catch(err=>{console.error("Labeled crop export failed",err);setStatus("Labeled crop export failed: "+(err?.message||err));});});';
+  const listenerReplacement=listenerAnchor+'\n  document.getElementById("italicRomanResidualBtn")?.addEventListener("click",()=>launchRomanResidualExperiment().catch(err=>{console.error("Roman Residual experiment failed",err);setStatus("Roman Residual experiment failed: "+(err?.message||err));}));\n  document.getElementById("italicRomanResidualOfflineBtn")?.addEventListener("click",importRomanResidualExport);\n  document.getElementById("italicCropExportBtn")?.addEventListener("click",()=>{console.log("Classifier crop export clicked · v178");setStatus("Classifier crop export starting…");exportLabeledWordCrops().catch(err=>{console.error("Labeled crop export failed",err);setStatus("Labeled crop export failed: "+(err?.message||err));});});';
   if(!source.includes(listenerAnchor))throw new Error("Experiment listener anchor not found.");
   source=source.replace(listenerAnchor,listenerReplacement);
 
-  source += "\n//# sourceURL=book-ocr-studio-177.js";
+  source += "\n//# sourceURL=book-ocr-studio-178.js";
   (0, eval)(source);
 })().catch((err) => {
   console.error("Book OCR Studio loader failed", err);
