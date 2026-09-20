@@ -1,0 +1,26 @@
+name: Publish visual italic ONNX
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download validated ONNX artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: italic-visual-model-onnx
+          path: visual-model
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 35532180979
+      - name: Commit model into app
+        run: |
+          test -s visual-model/italic-mobilenetv3-synthetic.onnx
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add visual-model/italic-mobilenetv3-synthetic.onnx
+          git diff --cached --quiet || git commit -m "publish validated visual italic ONNX model"
+          git push
