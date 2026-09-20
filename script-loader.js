@@ -1,4 +1,4 @@
-// Book OCR Studio 160 loader.
+// Book OCR Studio 161 loader.
 // Keeps the v158 READY-state repair and adds an experimental, parallel
 // book-native Roman Residual validator. Production Hunt remains frozen at v157.
 
@@ -9,7 +9,7 @@
 
   source = source.replace(
     '  const BUILD_VERSION = "157";',
-    '  const BUILD_VERSION = "160";'
+    '  const BUILD_VERSION = "161";'
   );
 
   const reviewAnchor =
@@ -37,7 +37,12 @@
     return [...new Set(String(value||"").normalize("NFKC").toLocaleLowerCase().match(/\p{L}/gu)||[])];
   }
   function romanResidualExampleKey(x){
-    return [Number(x?.sourcePage),Number(x?.sourceLine),Number(x?.startWordIndex)].join(":");
+    const tail=String(x?.id||"").split("::").pop()||"";
+    const m=tail.match(/^(\\d+):(\\d+):(\\d+):(\\d+)$/);
+    if(m)return [Number(m[1]),Number(m[2]),Number(m[3])].join(":");
+    if(x?.sourcePage!=null&&x?.sourceLine!=null&&x?.startWordIndex!=null)
+      return [Number(x.sourcePage),Number(x.sourceLine),Number(x.startWordIndex)].join(":");
+    return "";
   }
   function romanResidualRunKey(r){
     return [Number(r?.pageIndex),Number(r?.lineIndex),Number(r?.startWordIndex)].join(":");
@@ -163,7 +168,7 @@
     const p100=page.pooled.combined.top100.italic,t100=token.pooled.combined.top100.italic;
     payload.successGate.passed=p100>=17&&t100>=17;
     state.romanResidualExperiment=payload;
-    downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),"italic-roman-residual-v160.json");
+    downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),"italic-roman-residual-v161.json");
     setStatus("ROMAN RESIDUAL EXPERIMENT READY · combined top 100: page "+p100+", token "+t100+" · exported italic-roman-residual-v159.json · production Hunt unchanged.");
     return payload;
   }
@@ -184,7 +189,7 @@
   if(!source.includes(listenerAnchor))throw new Error("Experiment listener anchor not found.");
   source=source.replace(listenerAnchor,listenerReplacement);
 
-  source += "\n//# sourceURL=book-ocr-studio-160.js";
+  source += "\n//# sourceURL=book-ocr-studio-161.js";
   (0, eval)(source);
 })().catch((err) => {
   console.error("Book OCR Studio loader failed", err);
