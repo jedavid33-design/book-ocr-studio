@@ -1,4 +1,4 @@
-// Book OCR Studio 164 loader.
+// Book OCR Studio 165 loader.
 // Keeps the v158 READY-state repair and adds an experimental, parallel
 // book-native Roman Residual validator. Production Hunt remains frozen at v157.
 
@@ -9,7 +9,7 @@
 
   source = source.replace(
     '  const BUILD_VERSION = "157";',
-    '  const BUILD_VERSION = "164";'
+    '  const BUILD_VERSION = "165";'
   );
 
   const reviewAnchor =
@@ -186,12 +186,12 @@
     const p100=page.pooled.combined.top100.italic,t100=token.pooled.combined.top100.italic;
     payload.successGate.passed=p100>=17&&t100>=17;
     state.romanResidualExperiment=payload;
-    downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),"italic-roman-residual-v164.json");
+    downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),"italic-roman-residual-v165.json");
     setStatus("ROMAN RESIDUAL EXPERIMENT READY · combined top 100: page "+p100+", token "+t100+" · exported italic-roman-residual-v159.json · production Hunt unchanged.");
     return payload;
   }
   async function launchRomanResidualExperiment(){
-    setStatus("Roman Residual diagnostic: building validation candidates only…");
+    setStatus("Roman Residual: building validation candidates…");
     state.italicReviewSelectionMode="validation";
     state.italicReviewHistory=[];
     const hasMeasurements=state.pages.some(page=>(page.layoutLines||[]).some(line=>line.italicMeta||(Array.isArray(line.italicWordMeta)&&line.italicWordMeta.length)));
@@ -201,18 +201,41 @@
     }
     downloadItalicDiagnostics(false);
     const queue=state.italicCalibrationReviewSet||[];
+    const matched=queue.filter(r=>r.validationLabel==="ITALIC"||r.validationLabel==="ROMAN");
     const profile=currentItalicLearningProfile();
     const labels=(profile.examples||[]).filter(x=>(x.label==="ITALIC"||x.label==="ROMAN")&&!x.fragment);
-    const matched=queue.filter(r=>r.validationLabel==="ITALIC"||r.validationLabel==="ROMAN");
     const exact=matched.filter(r=>r.validationMatch==="exact-id").length;
     const physical=matched.filter(r=>r.validationMatch==="physical-word").length;
-    const msg="Roman Residual diagnostic: "+matched.length+" validation-labeled candidates in queue; "+exact+" exact-id, "+physical+" physical-word; "+labels.length+" persisted eligible labels. Pixel Assist and held-out folds NOT started.";
-    console.log(msg);
-    setStatus(msg);
-    state.romanResidualAttachmentDiagnostic={buildVersion:BUILD_VERSION,queueSize:queue.length,persistedEligible:labels.length,matched:matched.length,exact,physical,
-      sample:matched.slice(0,20).map(r=>({key:romanResidualRunKey(r),label:r.validationLabel,match:r.validationMatch,text:italicNormalizedSpecimenText(r)}))};
-    if(!matched.length)throw new Error("Roman Residual diagnostic found 0 validation-labeled live candidates. No long validation was started.");
-    return state.romanResidualAttachmentDiagnostic;
+    const rate=labels.length?matched.length/labels.length:0;
+    console.log("Roman Residual live attachment: "+matched.length+" / "+labels.length+" labels ("+Math.round(rate*1000)/10+"%); "+exact+" exact-id, "+physical+" physical-word.");
+    if(!matched.length||rate<0.5)throw new Error("Roman Residual aborted before Pixel Assist: live validation attachment unexpectedly low ("+matched.length+"/"+labels.length+").");
+    setStatus("Roman Residual: measuring Pixel Assist on the attached live candidates…");
+    const pixelAssist=await applyItalicPixelAssistToQueue("validation");
+    finalizeItalicReviewRanking("validation");
+    const liveMatched=(state.italicCalibrationReviewSet||[]).filter(r=>r.validationLabel==="ITALIC"||r.validationLabel==="ROMAN");
+    const examples=liveMatched.map((r,i)=>({
+      id:"live::"+romanResidualRunKey(r),label:r.validationLabel,fragment:false,
+      normalizedText:italicNormalizedSpecimenText(r),specimenText:italicNormalizedSpecimenText(r),
+      sourceRunId:"live",sourcePage:r.pageIndex,sourceLine:r.lineIndex,startWordIndex:r.startWordIndex,endWordIndex:r.endWordIndex,
+      __liveRun:r
+    }));
+    const runByKey=new Map(liveMatched.map(r=>[romanResidualRunKey(r),r]));
+    const page=buildRomanResidualFoldReport("page",examples,runByKey);
+    const token=buildRomanResidualFoldReport("token",examples,runByKey);
+    const payload={format:"book-ocr-studio-roman-residual-experiment-v2",buildVersion:BUILD_VERSION,exportedAt:new Date().toISOString(),
+      productionHuntChanged:false,baseline:"Frozen v157 canonical scoring; experimental ranks are offline only.",
+      method:"Book-native Roman residual v2, operating directly on the validation-labeled live candidates proven by v164. No post-hoc reattachment.",
+      attachment:{persistedEligible:labels.length,liveMatched:liveMatched.length,rate,exact,physical},
+      pixelAssist,thresholds:{minimumRomanReferencesPerLetter:5,combinedWeight:{baseline:.75,romanResidual:.25}},
+      pageGrouped:page,tokenGrouped:token,
+      successGate:{targetTop100:"17-18+ italics in both grouping schemes, improvement across most page folds, no major top-250 collapse",passed:false}};
+    const p100=page.pooled.combined.top100.italic,t100=token.pooled.combined.top100.italic;
+    payload.successGate.passed=p100>=17&&t100>=17;
+    state.romanResidualExperiment=payload;
+    downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),"italic-roman-residual-v165.json");
+    const msg="ROMAN RESIDUAL READY · attachment "+liveMatched.length+"/"+labels.length+" · combined top 100: page "+p100+", token "+t100+" · production Hunt unchanged.";
+    console.log(msg);setStatus(msg);
+    return payload;
   }
 `;
 
@@ -225,7 +248,7 @@
   if(!source.includes(listenerAnchor))throw new Error("Experiment listener anchor not found.");
   source=source.replace(listenerAnchor,listenerReplacement);
 
-  source += "\n//# sourceURL=book-ocr-studio-164.js";
+  source += "\n//# sourceURL=book-ocr-studio-165.js";
   (0, eval)(source);
 })().catch((err) => {
   console.error("Book OCR Studio loader failed", err);
