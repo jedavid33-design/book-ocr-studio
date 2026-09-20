@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "182";
+  const BUILD_VERSION = "183";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -158,6 +158,7 @@
     visualItalicBtn: $("visualItalicBtn"),
     exportVisualItalic: $("exportVisualItalic"),
     visualItalicReview: $("visualItalicReview"),
+    visualItalicStatus: $("visualItalicStatus"),
     italicLineHuntBtn: $("italicLineHuntBtn"),
     italicValidationBtn: $("italicValidationBtn"),
     italicPixelStudyBtn: $("italicPixelStudyBtn"),
@@ -8870,6 +8871,7 @@ ${coverSpine}${spine.join("\n")}
     for(let i=0,p=0;i<d.length;i+=4,p++){out[p]=(d[i]/255-mean[0])/std[0];out[plane+p]=(d[i+1]/255-mean[1])/std[1];out[2*plane+p]=(d[i+2]/255-mean[2])/std[2];}
     return new ort.Tensor("float32",out,[1,3,96,320]);
   }
+  function setVisualItalicStatus(message){ if(els.visualItalicStatus) els.visualItalicStatus.textContent=message; setStatus(message); }
   async function runVisualItalicExperiment(){
     if(!state.files.length||!state.pages.length) throw new Error("Load an OCR project with screenshots first.");
     const ort=await ensureVisualItalicOrt(),session=await ensureVisualItalicSession(),results=[];
@@ -8877,7 +8879,7 @@ ${coverSpine}${spine.join("\n")}
     for(let pi=0;pi<state.pages.length;pi++){
       const page=state.pages[pi], file=state.files[pi]||page.file;
       if(!file) continue;
-      setStatus(`Visual Italic · page ${pi+1} of ${state.pages.length}…`);
+      setVisualItalicStatus(`Visual Italic · page ${pi+1} of ${state.pages.length}… · ${results.length} specimens scored`);
       const img=await loadImageFromFile(file), canvas=makeCroppedCanvas(img);
       const raw=Array.isArray(page.rawOcrItems)&&page.rawOcrItems.length?page.rawOcrItems:(Array.isArray(page.layoutLines)?page.layoutLines:[]);
       for(let li=0;li<raw.length;li++){
@@ -8903,7 +8905,7 @@ ${coverSpine}${spine.join("\n")}
     }}
     results.sort((a,b)=>b.visualItalicSpanScore-a.visualItalicSpanScore||b.visualItalicProbability-a.visualItalicProbability);
     results.forEach((r,i)=>r.visualItalicRank=i+1);state.visualItalicResults=results;
-    setStatus(`Visual Italic ready · ${results.length} specimens ranked · raw neural + conservative span scores kept separate · diagnostic only.`);
+    setVisualItalicStatus(`Visual Italic ready · ${results.length} specimens ranked · raw neural + conservative span scores kept separate · diagnostic only.`);
     return results;
   }
 
@@ -8941,7 +8943,7 @@ ${coverSpine}${spine.join("\n")}
     try { await launchItalicLearningReview("random"); }
     finally { els.italicReviewRandomBtn.disabled=false; }
   });
-  els.visualItalicBtn?.addEventListener("click",async()=>{els.visualItalicBtn.disabled=true;try{await runVisualItalicExperiment();startVisualItalicReview();}catch(err){console.error(err);setStatus(`Visual Italic failed: ${err?.message||err}`);}finally{els.visualItalicBtn.disabled=false;}});
+  els.visualItalicBtn?.addEventListener("click",async()=>{els.visualItalicBtn.disabled=true;try{await runVisualItalicExperiment();startVisualItalicReview();}catch(err){console.error(err);setVisualItalicStatus(`Visual Italic failed: ${err?.message||err}`);}finally{els.visualItalicBtn.disabled=false;}});
   els.exportVisualItalic?.addEventListener("click",exportVisualItalicResults);
   els.italicReviewHuntBtn?.addEventListener("click", async () => {
     const buttonTiming={performanceNow:(globalThis.performance?.now?.()??Date.now()),wallStartedAt:Date.now(),queueAtButton:state.italicCalibrationReviewSet?.length||0};
