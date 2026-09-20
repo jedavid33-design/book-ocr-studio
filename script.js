@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "181";
+  const BUILD_VERSION = "182";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -47,6 +47,8 @@
     iowanReferenceAtlasStudy: null,
     visualItalicResults: [],
     visualItalicSession: null,
+    visualItalicReviewIndex: 0,
+    visualItalicLabels: [],
   };
 
   let PaddleOCRClass = null;
@@ -155,6 +157,7 @@
     italicReviewHuntBtn: $("italicReviewHuntBtn"),
     visualItalicBtn: $("visualItalicBtn"),
     exportVisualItalic: $("exportVisualItalic"),
+    visualItalicReview: $("visualItalicReview"),
     italicLineHuntBtn: $("italicLineHuntBtn"),
     italicValidationBtn: $("italicValidationBtn"),
     italicPixelStudyBtn: $("italicPixelStudyBtn"),
@@ -8903,8 +8906,28 @@ ${coverSpine}${spine.join("\n")}
     setStatus(`Visual Italic ready · ${results.length} specimens ranked · raw neural + conservative span scores kept separate · diagnostic only.`);
     return results;
   }
+
+  function visualItalicLabelCounts(){
+    const a=state.visualItalicLabels||[]; return ["ITALIC","ROMAN","GLYPH","FRAGMENT","UNSURE"].map(k=>`${k.toLowerCase()} ${a.filter(x=>x.label===k).length}`).join(" · ");
+  }
+  async function renderVisualItalicReview(){
+    const host=els.visualItalicReview;if(!host)return;
+    const q=state.visualItalicResults||[],i=state.visualItalicReviewIndex||0;
+    if(!q.length){host.innerHTML="";return;}
+    const r=q[i]; if(!r){host.innerHTML=`<div class="status">Visual Italic review complete · ${visualItalicLabelCounts()}</div>`;return;}
+    const file=state.files[r.pageIndex], img=file?await loadImageFromFile(file):null;
+    let src="";if(img){const canvas=makeCroppedCanvas(img),crop=cropCanvasRegion(canvas,r.box),out=document.createElement("canvas");out.width=Math.max(360,crop.width*3);out.height=Math.max(100,crop.height*3);const x=out.getContext("2d");x.fillStyle="#fff";x.fillRect(0,0,out.width,out.height);const scale=Math.min((out.width-24)/crop.width,(out.height-24)/crop.height);x.imageSmoothingEnabled=false;x.drawImage(crop,(out.width-crop.width*scale)/2,(out.height-crop.height*scale)/2,crop.width*scale,crop.height*scale);src=out.toDataURL("image/png");canvas.width=1;canvas.height=1;}
+    host.innerHTML=`<div class="review-card"><div style="display:flex;justify-content:space-between;gap:12px;align-items:center"><strong>Visual Italic Review · ${i+1} / ${q.length}</strong><span class="pill">raw ${(r.visualItalicProbability*100).toFixed(3)}% · span ${(r.visualItalicSpanScore*100).toFixed(3)}%</span></div>${src?`<div style="margin:12px 0"><img src="${src}" alt="spoiler-safe visual italic crop" style="display:block;max-width:100%;max-height:150px;margin:auto;object-fit:contain"></div>`:""}<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center"><button class="button secondary" data-vilabel="ITALIC">Italic</button><button class="button secondary" data-vilabel="ROMAN">Roman</button><button class="button secondary" data-vilabel="GLYPH">Glyph / Decorative</button><button class="button secondary" data-vilabel="FRAGMENT">Fragment</button><button class="button secondary" data-vilabel="UNSURE">Unsure</button><button class="button secondary" data-viprev ${i?"":"disabled"}>← Previous</button></div><div class="muted" style="text-align:center;margin-top:8px">Independent validation only · does not train either italic system · ${visualItalicLabelCounts()}</div></div>`;
+    host.querySelectorAll("[data-vilabel]").forEach(b=>b.addEventListener("click",()=>{state.visualItalicLabels.push({visualItalicRank:r.visualItalicRank,label:b.dataset.vilabel,pageIndex:r.pageIndex,lineIndex:r.lineIndex,wordIndex:r.wordIndex,raw:r.visualItalicProbability,span:r.visualItalicSpanScore});state.visualItalicReviewIndex=i+1;renderVisualItalicReview();}));
+    host.querySelector("[data-viprev]")?.addEventListener("click",()=>{state.visualItalicReviewIndex=Math.max(0,i-1);renderVisualItalicReview();});
+  }
+  function startVisualItalicReview(){
+    if(!(state.visualItalicResults||[]).length)throw new Error("Run Visual Italic first.");
+    state.visualItalicReviewIndex=0;state.visualItalicLabels=[];renderVisualItalicReview();els.visualItalicReview?.scrollIntoView({behavior:"smooth",block:"center"});
+  }
+
   function exportVisualItalicResults(){
-    const payload={format:"book-ocr-studio-visual-italic-v1",buildVersion:BUILD_VERSION,model:"italic-mobilenetv3-synthetic.onnx",diagnosticOnly:true,spanRules:{visualFloor:.20,sandwichAnchor:.95,oneSidedAnchor:.98},results:state.visualItalicResults||[]};
+    const payload={format:"book-ocr-studio-visual-italic-v2",buildVersion:BUILD_VERSION,model:"italic-mobilenetv3-synthetic.onnx",diagnosticOnly:true,spanRules:{visualFloor:.20,sandwichAnchor:.95,oneSidedAnchor:.98},validationLabels:state.visualItalicLabels||[],results:state.visualItalicResults||[]};
     downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),`${cleanFilename(els.bookTitle?.value||"book")}-visual-italic.json`);
   }
 
@@ -8918,7 +8941,7 @@ ${coverSpine}${spine.join("\n")}
     try { await launchItalicLearningReview("random"); }
     finally { els.italicReviewRandomBtn.disabled=false; }
   });
-  els.visualItalicBtn?.addEventListener("click",async()=>{els.visualItalicBtn.disabled=true;try{await runVisualItalicExperiment();}catch(err){console.error(err);setStatus(`Visual Italic failed: ${err?.message||err}`);}finally{els.visualItalicBtn.disabled=false;}});
+  els.visualItalicBtn?.addEventListener("click",async()=>{els.visualItalicBtn.disabled=true;try{await runVisualItalicExperiment();startVisualItalicReview();}catch(err){console.error(err);setStatus(`Visual Italic failed: ${err?.message||err}`);}finally{els.visualItalicBtn.disabled=false;}});
   els.exportVisualItalic?.addEventListener("click",exportVisualItalicResults);
   els.italicReviewHuntBtn?.addEventListener("click", async () => {
     const buttonTiming={performanceNow:(globalThis.performance?.now?.()??Date.now()),wallStartedAt:Date.now(),queueAtButton:state.italicCalibrationReviewSet?.length||0};
