@@ -1,4 +1,4 @@
-// Book OCR Studio 159 loader.
+// Book OCR Studio 160 loader.
 // Keeps the v158 READY-state repair and adds an experimental, parallel
 // book-native Roman Residual validator. Production Hunt remains frozen at v157.
 
@@ -9,7 +9,7 @@
 
   source = source.replace(
     '  const BUILD_VERSION = "157";',
-    '  const BUILD_VERSION = "159";'
+    '  const BUILD_VERSION = "160";'
   );
 
   const reviewAnchor =
@@ -37,10 +37,10 @@
     return [...new Set(String(value||"").normalize("NFKC").toLocaleLowerCase().match(/\p{L}/gu)||[])];
   }
   function romanResidualExampleKey(x){
-    return [Number(x?.sourcePage),Number(x?.sourceLine),Number(x?.startWordIndex),Number(x?.endWordIndex)].join(":");
+    return [Number(x?.sourcePage),Number(x?.sourceLine),Number(x?.startWordIndex)].join(":");
   }
   function romanResidualRunKey(r){
-    return [Number(r?.pageIndex),Number(r?.lineIndex),Number(r?.startWordIndex),Number(r?.endWordIndex)].join(":");
+    return [Number(r?.pageIndex),Number(r?.lineIndex),Number(r?.startWordIndex)].join(":");
   }
   function romanResidualDiversityOrder(rows,scoreField){
     const sorted=[...rows].sort((a,b)=>Number(b[scoreField]??-1)-Number(a[scoreField]??-1));
@@ -144,6 +144,13 @@
     const examples=(currentItalicLearningProfile().examples||[]).filter(x=>(x.label==="ITALIC"||x.label==="ROMAN")&&!x.fragment);
     const runs=state.italicCalibrationReviewSet||[],runByKey=new Map(runs.map(r=>[romanResidualRunKey(r),r]));
     const reattached=examples.filter(x=>runByKey.has(romanResidualExampleKey(x)));
+    if(!reattached.length){
+      throw new Error("Roman Residual aborted: 0 persisted examples reattached to reconstructed physical OCR words.");
+    }
+    const reattachedRate=reattached.length/Math.max(1,examples.length);
+    if(reattachedRate<0.5){
+      throw new Error("Roman Residual aborted: unexpectedly low persisted-example reattachment ("+reattached.length+"/"+examples.length+", "+Math.round(reattachedRate*1000)/10+"%).");
+    }
     const page=buildRomanResidualFoldReport("page",reattached,runByKey);
     const token=buildRomanResidualFoldReport("token",reattached,runByKey);
     const payload={format:"book-ocr-studio-roman-residual-experiment-v1",buildVersion:BUILD_VERSION,exportedAt:new Date().toISOString(),
@@ -156,7 +163,7 @@
     const p100=page.pooled.combined.top100.italic,t100=token.pooled.combined.top100.italic;
     payload.successGate.passed=p100>=17&&t100>=17;
     state.romanResidualExperiment=payload;
-    downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),"italic-roman-residual-v159.json");
+    downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),"italic-roman-residual-v160.json");
     setStatus("ROMAN RESIDUAL EXPERIMENT READY · combined top 100: page "+p100+", token "+t100+" · exported italic-roman-residual-v159.json · production Hunt unchanged.");
     return payload;
   }
@@ -177,7 +184,7 @@
   if(!source.includes(listenerAnchor))throw new Error("Experiment listener anchor not found.");
   source=source.replace(listenerAnchor,listenerReplacement);
 
-  source += "\n//# sourceURL=book-ocr-studio-159.js";
+  source += "\n//# sourceURL=book-ocr-studio-160.js";
   (0, eval)(source);
 })().catch((err) => {
   console.error("Book OCR Studio loader failed", err);
