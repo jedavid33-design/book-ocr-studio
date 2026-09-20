@@ -1,4 +1,4 @@
-// Book OCR Studio 163 loader.
+// Book OCR Studio 164 loader.
 // Keeps the v158 READY-state repair and adds an experimental, parallel
 // book-native Roman Residual validator. Production Hunt remains frozen at v157.
 
@@ -9,7 +9,7 @@
 
   source = source.replace(
     '  const BUILD_VERSION = "157";',
-    '  const BUILD_VERSION = "163";'
+    '  const BUILD_VERSION = "164";'
   );
 
   const reviewAnchor =
@@ -186,20 +186,33 @@
     const p100=page.pooled.combined.top100.italic,t100=token.pooled.combined.top100.italic;
     payload.successGate.passed=p100>=17&&t100>=17;
     state.romanResidualExperiment=payload;
-    downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),"italic-roman-residual-v163.json");
+    downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),"italic-roman-residual-v164.json");
     setStatus("ROMAN RESIDUAL EXPERIMENT READY · combined top 100: page "+p100+", token "+t100+" · exported italic-roman-residual-v159.json · production Hunt unchanged.");
     return payload;
   }
   async function launchRomanResidualExperiment(){
-    setStatus("Roman Residual: building the proven v157 validation evidence map…");
-    await launchItalicLearningReview("validation");
-    const attached=romanResidualAttachedExamples();
-    const rate=attached.examples.length?attached.attached.length/attached.examples.length:0;
-    console.log("Roman Residual canonical attachment: "+attached.attached.length+" / "+attached.examples.length+" labels ("+Math.round(rate*1000)/10+"%).");
-    if(!attached.attached.length) throw new Error("Roman Residual aborted: canonical v157 validation evidence map attached 0 labels.");
-    if(rate<0.5) throw new Error("Roman Residual aborted: canonical v157 validation evidence coverage unexpectedly low ("+attached.attached.length+"/"+attached.examples.length+").");
-    setStatus("Roman Residual: canonical attachment passed · scoring book-native same-letter Roman references…");
-    return runRomanResidualExperiment();
+    setStatus("Roman Residual diagnostic: building validation candidates only…");
+    state.italicReviewSelectionMode="validation";
+    state.italicReviewHistory=[];
+    const hasMeasurements=state.pages.some(page=>(page.layoutLines||[]).some(line=>line.italicMeta||(Array.isArray(line.italicWordMeta)&&line.italicWordMeta.length)));
+    if(!hasMeasurements){
+      const restored=await restoreCachedItalicMeasurements();
+      if(!restored)await autoScanItalics({rebuildText:false});
+    }
+    downloadItalicDiagnostics(false);
+    const queue=state.italicCalibrationReviewSet||[];
+    const profile=currentItalicLearningProfile();
+    const labels=(profile.examples||[]).filter(x=>(x.label==="ITALIC"||x.label==="ROMAN")&&!x.fragment);
+    const matched=queue.filter(r=>r.validationLabel==="ITALIC"||r.validationLabel==="ROMAN");
+    const exact=matched.filter(r=>r.validationMatch==="exact-id").length;
+    const physical=matched.filter(r=>r.validationMatch==="physical-word").length;
+    const msg="Roman Residual diagnostic: "+matched.length+" validation-labeled candidates in queue; "+exact+" exact-id, "+physical+" physical-word; "+labels.length+" persisted eligible labels. Pixel Assist and held-out folds NOT started.";
+    console.log(msg);
+    setStatus(msg);
+    state.romanResidualAttachmentDiagnostic={buildVersion:BUILD_VERSION,queueSize:queue.length,persistedEligible:labels.length,matched:matched.length,exact,physical,
+      sample:matched.slice(0,20).map(r=>({key:romanResidualRunKey(r),label:r.validationLabel,match:r.validationMatch,text:italicNormalizedSpecimenText(r)}))};
+    if(!matched.length)throw new Error("Roman Residual diagnostic found 0 validation-labeled live candidates. No long validation was started.");
+    return state.romanResidualAttachmentDiagnostic;
   }
 `;
 
@@ -212,7 +225,7 @@
   if(!source.includes(listenerAnchor))throw new Error("Experiment listener anchor not found.");
   source=source.replace(listenerAnchor,listenerReplacement);
 
-  source += "\n//# sourceURL=book-ocr-studio-163.js";
+  source += "\n//# sourceURL=book-ocr-studio-164.js";
   (0, eval)(source);
 })().catch((err) => {
   console.error("Book OCR Studio loader failed", err);
