@@ -8895,13 +8895,20 @@ ${coverSpine}${spine.join("\n")}
         const line=raw[li]; if(!line?.box||!line?.text) continue;
         // Paddle's stored geometry can be line-level. Split only when individual word boxes exist;
         // otherwise score the detected region honestly as one visual specimen.
-        const words=Array.isArray(line.words)&&line.words.length?line.words:[line];
+        // Visual Italic is a word-crop classifier. Paddle's persisted OCR is line-level,
+        // so derive ink-aligned word boxes from the original screenshot pixels rather than
+        // feeding the network a whole line as one specimen.
+        let words=Array.isArray(line.words)&&line.words.length?line.words:null;
+        if(!words){
+          const derived=estimateInkAlignedWordBoxes(canvas,line);
+          words=Array.isArray(derived)&&derived.length?derived:[line];
+        }
         for(let wi=0;wi<words.length;wi++){
           const w=words[wi],box=w.box||line.box;if(!box)continue;
           const tensor=visualItalicTensorFromCanvas(ort,canvas,box);
           const output=await session.run({[inputName]:tensor});
           const logit=Number(output[outputName].data[0]),prob=1/(1+Math.exp(-logit));
-          results.push({pageIndex:pi,pageNumber:pi+1,fileName:file.name,lineIndex:li,wordIndex:wi,text:String(w.text||line.text||""),box,visualItalicProbability:prob,visualItalicSpanScore:prob,geometryType:(Array.isArray(line.words)&&line.words.length)?"word/run":"line-level",cropWidth:Number(box.w??box.width??0),cropHeight:Number(box.h??box.height??0)});
+          results.push({pageIndex:pi,pageNumber:pi+1,fileName:file.name,lineIndex:li,wordIndex:wi,text:String(w.text||line.text||""),box,visualItalicProbability:prob,visualItalicSpanScore:prob,geometryType:(w!==line)?"word/run":"line-level",cropWidth:Number(box.w??box.width??0),cropHeight:Number(box.h??box.height??0)});
         }
       }
       canvas.width=1;canvas.height=1;
