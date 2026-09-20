@@ -72,7 +72,7 @@
     if(typeof JSZip==="undefined")throw new Error("JSZip is required for crop export.");
     const zip=new JSZip();
     for(const item of files)zip.file(item.name,item.blob);
-    zip.file("manifest.json",JSON.stringify({format:"book-ocr-studio-labeled-word-crops-v1",buildVersion:BUILD_VERSION,exportedAt:new Date().toISOString(),count:manifest.length,italic:manifest.filter(x=>x.label==="ITALIC").length,roman:manifest.filter(x=>x.label==="ROMAN").length,source:"Original screenshot pixels cropped from persisted labeled Paddle-aligned word boxes.",items:manifest},null,2));
+    zip.file("manifest.json",JSON.stringify({format:"book-ocr-studio-labeled-word-crops-v1",buildVersion:BUILD_VERSION,exportedAt:new Date().toISOString(),count:manifest.length,italic:manifest.filter(x=>x.label==="ITALIC").length,roman:manifest.filter(x=>x.label==="ROMAN").length,source:"original screenshot crop",items:manifest},null,2));
     const out=await zip.generateAsync({type:"blob",compression:"DEFLATE",compressionOptions:{level:6}});
     downloadBlob(out,"italic-labeled-word-crops-v172.zip");
     setStatus("LABELED WORD CROPS READY · "+manifest.filter(x=>x.label==="ITALIC").length+" Italic · "+manifest.filter(x=>x.label==="ROMAN").length+" Roman · original screenshot pixels.");
