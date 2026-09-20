@@ -1,4 +1,4 @@
-// Book OCR Studio 179 loader.
+// Book OCR Studio 180 loader.
 // Keeps the v158 READY-state repair and adds an experimental, parallel
 // book-native Roman Residual validator. Production Hunt remains frozen at v157.
 
@@ -9,7 +9,7 @@
 
   source = source.replace(
     '  const BUILD_VERSION = "157";',
-    '  const BUILD_VERSION = "179";'
+    '  const BUILD_VERSION = "180";'
   );
 
   const reviewAnchor =
@@ -54,17 +54,28 @@
       for(let i=0;i<limit;i++)out.push(items[Math.floor(i*(items.length-1)/(limit-1))]);
       return out;
     }
-    const italicSample=spreadSample(italics,100);
-    const hardRomanRanked=romans.map((x,i)=>{
+    const cleanSingle=x=>{
+      const text=String(x.normalizedText||x.specimenText||"").trim();
+      const words=text.split(/\s+/).filter(Boolean);
+      const span=(Number.isFinite(Number(x.startWordIndex))&&Number.isFinite(Number(x.endWordIndex)))?Math.abs(Number(x.endWordIndex)-Number(x.startWordIndex))+1:words.length;
+      return !x.fragment&&words.length===1&&span===1;
+    };
+    const cleanItalics=italics.filter(cleanSingle);
+    const cleanRomans=romans.filter(cleanSingle);
+    const rankedRomans=cleanRomans.map((x,i)=>{
       const v=Array.isArray(x.vector)?x.vector:[];
       const structuralAvg=Number(v[0]||0),structuralMin=Number(v[1]||0),structuralConsistency=Number(v[2]||0);
       const slantSupport=Number(v[3]||0),gainSupport=Number(v[4]||0),shearSupport=Number(v[8]||0);
       const hardScore=structuralConsistency*1.493+structuralMin*1.274+structuralAvg*1.274+slantSupport*1.121+gainSupport*.669+shearSupport*.555;
       return {x,i,hardScore:Number.isFinite(hardScore)?hardScore:-Infinity};
     }).sort((a,b)=>b.hardScore-a.hardScore||a.i-b.i);
-    const hardRomanSample=hardRomanRanked.slice(0,Math.min(500,hardRomanRanked.length)).map(r=>r.x);
-    const selected=[...italicSample,...hardRomanSample];
-    console.log("Classifier crop export: hard-negative sample selected", {italics:italicSample.length,hardRomans:hardRomanSample.length,total:selected.length});
+    const hardCount=Math.min(1000,rankedRomans.length);
+    const hardRomanSample=rankedRomans.slice(0,hardCount).map(r=>r.x);
+    const hardKeys=new Set(hardRomanSample.map(romanResidualExampleKey));
+    const ordinaryPool=cleanRomans.filter(x=>!hardKeys.has(romanResidualExampleKey(x)));
+    const ordinaryRomanSample=spreadSample(ordinaryPool,Math.min(1000,ordinaryPool.length));
+    const selected=[...cleanItalics,...hardRomanSample,...ordinaryRomanSample];
+    console.log("Classifier crop export: training corpus selected",{cleanItalics:cleanItalics.length,hardRomans:hardRomanSample.length,ordinaryRomans:ordinaryRomanSample.length,total:selected.length});
     const byKey=new Map();
     for(const ex of selected){const key=romanResidualExampleKey(ex);if(key&&!byKey.has(key))byKey.set(key,ex);}
     const manifest=[],files=[];
@@ -142,7 +153,7 @@
         if(!blob)continue;
         const name=(ex.label==="ITALIC"?"italic":"roman")+"/"+String(manifest.length+1).padStart(4,"0")+"_"+pageIndex+"_"+parts[1]+"_"+parts[2]+".png";
         files.push({name,blob});
-        manifest.push({file:name,label:ex.label,text:String(ex.normalizedText||ex.text||ex.specimenText||word?.text||""),pageIndex,lineIndex:parts[1],wordIndex:parts[2],sourceFile:file.name,box:{x,y,w,h},specimenId:String(ex.id||"")});
+        manifest.push({file:name,label:ex.label,text:String(ex.normalizedText||ex.text||ex.specimenText||word?.text||""),pageIndex,lineIndex:parts[1],wordIndex:parts[2],sourceFile:file.name,box:{x,y,w,h},specimenId:String(ex.id||""),sampleRole:ex.label==="ITALIC"?"italic":(hardKeys.has(key)?"hard-roman":"ordinary-roman"),existingVector:Array.isArray(ex.vector)?ex.vector:null});
         encoded++;
         if(encoded%5===0){
           setStatus("Classifier crop export · "+encoded+"/"+byKey.size+" crops");
@@ -162,12 +173,12 @@
     for(const item of files)zip.file(item.name,item.blob);
     const italicCount=manifest.reduce((n,x)=>n+(x.label==="ITALIC"?1:0),0);
     const romanCount=manifest.reduce((n,x)=>n+(x.label==="ROMAN"?1:0),0);
-    const cropManifest={format:"book-ocr-studio-labeled-word-crops-v2",buildVersion:BUILD_VERSION,exportedAt:new Date().toISOString(),selection:"100 spread-sampled confirmed Italics + up to 500 confirmed Romans ranked by existing structural italic-likeness (hard negatives)",count:manifest.length,italic:italicCount,roman:romanCount,source:"original screenshot crop",items:manifest};
+    const cropManifest={format:"book-ocr-studio-labeled-word-crops-v2",buildVersion:BUILD_VERSION,exportedAt:new Date().toISOString(),selection:"all clean single-word confirmed Italics + up to 1000 structurally hard confirmed Romans + up to 1000 deterministic ordinary confirmed Romans",count:manifest.length,italic:italicCount,roman:romanCount,source:"original screenshot crop",items:manifest};
     zip.file("manifest.json",JSON.stringify(cropManifest,null,2));
     console.log("Classifier crop export: ZIP generation starting",{files:files.length});
     const out=await zip.generateAsync({type:"blob",compression:"STORE"},meta=>{const pct=Math.round(meta.percent);if(pct%10===0){console.log("Classifier crop export: ZIP progress",pct);setStatus("Classifier crop export · ZIP "+pct+"%");}});
     console.log("Classifier crop export: ZIP ready",{bytes:out.size});
-    downloadBlob(out,"italic-labeled-word-crops-v179-hard-negatives.zip");
+    downloadBlob(out,"italic-visual-training-corpus-v180.zip");
     console.log("Classifier crop export: download triggered");
     setStatus("CLASSIFIER CROPS READY · "+italicCount+" Italic · "+romanCount+" Roman · "+manifest.length+" total.");
   }
@@ -353,7 +364,7 @@
     const p100=page.pooled.combined.top100.italic,t100=token.pooled.combined.top100.italic;
     payload.successGate.passed=p100>=17&&t100>=17;
     state.romanResidualExperiment=payload;
-    downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),"italic-roman-residual-v179.json");
+    downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),"italic-roman-residual-v180.json");
     setStatus("ROMAN RESIDUAL EXPERIMENT READY · combined top 100: page "+p100+", token "+t100+" · exported italic-roman-residual-v159.json · production Hunt unchanged.");
     return payload;
   }
@@ -388,7 +399,7 @@
       note:"Offline Roman-penalty sweep only. Negative weights subtract the Roman Residual signal while increasing baseline proportion so coefficients sum to 1. No OCR, screenshots, Pixel Assist, labels, or production Hunt changed.",
       page,token};
     state.romanResidualOfflineSimulation=result;
-    downloadBlob(new Blob([JSON.stringify(result,null,2)],{type:"application/json"}),"italic-roman-residual-penalty-v179.json");
+    downloadBlob(new Blob([JSON.stringify(result,null,2)],{type:"application/json"}),"italic-roman-residual-penalty-v180.json");
     const summary=weights.map(w=>{const p=page.byWeight[String(w)],t=token.byWeight[String(w)];return w+": page "+p.top25.italics+"/"+p.top50.italics+"/"+p.top100.italics+"/"+p.top250.italics+", token "+t.top25.italics+"/"+t.top50.italics+"/"+t.top100.italics+"/"+t.top250.italics;}).join(" | ");
     const msg="ROMAN PENALTY SWEEP READY · italics at top 25/50/100/250 · "+summary;
     console.log(msg);setStatus("ROMAN PENALTY SWEEP READY · JSON downloaded.");return result;
@@ -451,7 +462,7 @@
     const p100=page.pooled.combined.top100.italic,t100=token.pooled.combined.top100.italic;
     payload.successGate.passed=p100>=17&&t100>=17;
     state.romanResidualExperiment=payload;
-    downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),"italic-roman-residual-v179.json");
+    downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),"italic-roman-residual-v180.json");
     const msg="ROMAN RESIDUAL READY · attachment "+liveMatched.length+"/"+labels.length+" · combined top 100: page "+p100+", token "+t100+" · production Hunt unchanged.";
     console.log(msg);setStatus(msg);
     return payload;
@@ -463,11 +474,11 @@
   source = source.replace(experimentAnchor, experimentCode + "\n" + experimentAnchor);
 
   const listenerAnchor='  els.resetItalicLearning?.addEventListener("click", resetItalicLearningProfile);';
-  const listenerReplacement=listenerAnchor+'\n  document.getElementById("italicRomanResidualBtn")?.addEventListener("click",()=>launchRomanResidualExperiment().catch(err=>{console.error("Roman Residual experiment failed",err);setStatus("Roman Residual experiment failed: "+(err?.message||err));}));\n  document.getElementById("italicRomanResidualOfflineBtn")?.addEventListener("click",importRomanResidualExport);\n  document.getElementById("italicCropExportBtn")?.addEventListener("click",()=>{console.log("Classifier crop export clicked · v179");setStatus("Classifier crop export starting…");exportLabeledWordCrops().catch(err=>{console.error("Labeled crop export failed",err);setStatus("Labeled crop export failed: "+(err?.message||err));});});';
+  const listenerReplacement=listenerAnchor+'\n  document.getElementById("italicRomanResidualBtn")?.addEventListener("click",()=>launchRomanResidualExperiment().catch(err=>{console.error("Roman Residual experiment failed",err);setStatus("Roman Residual experiment failed: "+(err?.message||err));}));\n  document.getElementById("italicRomanResidualOfflineBtn")?.addEventListener("click",importRomanResidualExport);\n  document.getElementById("italicCropExportBtn")?.addEventListener("click",()=>{console.log("Classifier crop export clicked · v180");setStatus("Classifier crop export starting…");exportLabeledWordCrops().catch(err=>{console.error("Labeled crop export failed",err);setStatus("Labeled crop export failed: "+(err?.message||err));});});';
   if(!source.includes(listenerAnchor))throw new Error("Experiment listener anchor not found.");
   source=source.replace(listenerAnchor,listenerReplacement);
 
-  source += "\n//# sourceURL=book-ocr-studio-179.js";
+  source += "\n//# sourceURL=book-ocr-studio-180.js";
   (0, eval)(source);
 })().catch((err) => {
   console.error("Book OCR Studio loader failed", err);
