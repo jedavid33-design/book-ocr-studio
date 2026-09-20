@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "186";
+  const BUILD_VERSION = "187";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -8874,6 +8874,13 @@ ${coverSpine}${spine.join("\n")}
   }
   function setVisualItalicStatus(message){ if(els.visualItalicStatus) els.visualItalicStatus.textContent=message; setStatus(message); }
   function setVisualItalicStatus(message){ if(els.visualItalicStatus) els.visualItalicStatus.textContent=message; setStatus(message); }
+  function visualItalicCacheKey(){ return "visualItalic:schema1:"+italicMeasurementCacheSignature(); }
+  async function cacheVisualItalicResults(){
+    try{const db=await openItalicLearningDb(),key=visualItalicCacheKey(),payload={cacheSchema:1,savedAt:new Date().toISOString(),results:state.visualItalicResults||[],labels:state.visualItalicLabels||[]};await new Promise((resolve,reject)=>{const tx=db.transaction(ITALIC_LEARNING_DB_STORE,"readwrite");tx.objectStore(ITALIC_LEARNING_DB_STORE).put(payload,key);tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);});return true;}catch(err){console.warn("Could not cache Visual Italic results",err);return false;}
+  }
+  async function restoreCachedVisualItalicResults(){
+    try{const db=await openItalicLearningDb(),key=visualItalicCacheKey();const cached=await new Promise((resolve,reject)=>{const tx=db.transaction(ITALIC_LEARNING_DB_STORE,"readonly"),req=tx.objectStore(ITALIC_LEARNING_DB_STORE).get(key);req.onsuccess=()=>resolve(req.result||null);req.onerror=()=>reject(req.error);});if(!cached||!Array.isArray(cached.results)||!cached.results.length)return false;state.visualItalicResults=cached.results;state.visualItalicLabels=Array.isArray(cached.labels)?cached.labels:[];state.visualItalicReviewIndex=0;setVisualItalicStatus(`Visual Italic restored · ${state.visualItalicResults.length} cached specimens ranked · diagnostic only.`);await renderVisualItalicReview();return true;}catch(err){console.warn("Could not restore cached Visual Italic results",err);return false;}
+  }
   async function runVisualItalicExperiment(){
     if(!state.files.length||!state.pages.length) throw new Error("Load an OCR project with screenshots first.");
     const ort=await ensureVisualItalicOrt(),session=await ensureVisualItalicSession(),results=[];
@@ -8906,7 +8913,7 @@ ${coverSpine}${spine.join("\n")}
       else {const anchor=Math.max(L?.visualItalicProbability||0,R?.visualItalicProbability||0);if(anchor>=.98&&p<anchor)r.visualItalicSpanScore=Math.max(p,anchor*.90);}
     }}
     results.sort((a,b)=>b.visualItalicSpanScore-a.visualItalicSpanScore||b.visualItalicProbability-a.visualItalicProbability);
-    results.forEach((r,i)=>r.visualItalicRank=i+1);state.visualItalicResults=results;
+    results.forEach((r,i)=>r.visualItalicRank=i+1);state.visualItalicResults=results;await cacheVisualItalicResults();
     setVisualItalicStatus(`Visual Italic ready · ${results.length} specimens ranked · raw neural + conservative span scores kept separate · diagnostic only.`);
     return results;
   }
@@ -8928,7 +8935,7 @@ ${coverSpine}${spine.join("\n")}
     host.querySelectorAll("[data-vilabel]").forEach(b=>b.addEventListener("click",()=>{state.visualItalicLabels.push({visualItalicRank:r.visualItalicRank,label:b.dataset.vilabel,pageIndex:r.pageIndex,lineIndex:r.lineIndex,wordIndex:r.wordIndex,raw:r.visualItalicProbability,span:r.visualItalicSpanScore,cropWidth:cropW,cropHeight:cropH,cropAspect,geometryType});state.visualItalicReviewIndex=i+1;renderVisualItalicReview();}));
     host.querySelector("[data-viprev]")?.addEventListener("click",()=>{state.visualItalicReviewIndex=Math.max(0,i-1);renderVisualItalicReview();}); host.querySelector("[data-vinext]")?.addEventListener("click",()=>{state.visualItalicReviewIndex=Math.min(q.length-1,i+1);renderVisualItalicReview();}); host.querySelector("[data-vigorank]")?.addEventListener("click",()=>{const n=Math.max(1,Math.min(q.length,Number(host.querySelector("[data-virank]")?.value)||1));state.visualItalicReviewIndex=n-1;renderVisualItalicReview();}); host.querySelector("[data-virank]")?.addEventListener("keydown",e=>{if(e.key==="Enter")host.querySelector("[data-vigorank]")?.click();}); host.querySelector("[data-vigoscore]")?.addEventListener("click",()=>{let v=Number(host.querySelector("[data-viscore]")?.value);if(!Number.isFinite(v))return;if(v>1)v/=100;let best=0,dist=Infinity;q.forEach((x,j)=>{const d=Math.abs(x.visualItalicProbability-v);if(d<dist){dist=d;best=j;}});state.visualItalicReviewIndex=best;renderVisualItalicReview();}); host.querySelector("[data-viscore]")?.addEventListener("keydown",e=>{if(e.key==="Enter")host.querySelector("[data-vigoscore]")?.click();});
   }
-  function startVisualItalicReview(){
+  async function restoreVisualItalicAfterRecovery(){if(state.pages.length&&state.files.length)await restoreCachedVisualItalicResults();}\n\n  function startVisualItalicReview(){
     if(!(state.visualItalicResults||[]).length)throw new Error("Run Visual Italic first.");
     state.visualItalicReviewIndex=0;state.visualItalicLabels=[];renderVisualItalicReview();els.visualItalicReview?.scrollIntoView({behavior:"smooth",block:"center"});
   }
@@ -8949,7 +8956,7 @@ ${coverSpine}${spine.join("\n")}
     finally { els.italicReviewRandomBtn.disabled=false; }
   });
   els.visualItalicBtn?.addEventListener("click",async()=>{els.visualItalicBtn.disabled=true;try{await runVisualItalicExperiment();startVisualItalicReview();}catch(err){console.error(err);setVisualItalicStatus(`Visual Italic failed: ${err?.message||err}`);}finally{els.visualItalicBtn.disabled=false;}});
-  els.exportVisualItalic?.addEventListener("click",exportVisualItalicResults);
+  els.exportVisualItalic?.addEventListener("click",exportVisualItalicResults);\n  setTimeout(()=>restoreVisualItalicAfterRecovery().catch(()=>{}),1500);
   els.italicReviewHuntBtn?.addEventListener("click", async () => {
     const buttonTiming={performanceNow:(globalThis.performance?.now?.()??Date.now()),wallStartedAt:Date.now(),queueAtButton:state.italicCalibrationReviewSet?.length||0};
     els.italicReviewHuntBtn.disabled=true;
