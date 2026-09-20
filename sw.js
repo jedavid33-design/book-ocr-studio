@@ -1,4 +1,4 @@
-const CACHE_NAME = "book-ocr-studio-shell-v60";
+const CACHE_NAME = "book-ocr-studio-shell-v61";
 const APP_SHELL = [
   "./styles.css?v=57",
   "./epub-polish.js?v=57",
@@ -30,7 +30,10 @@ self.addEventListener("fetch", (event) => {
   }
 
   event.respondWith(caches.match(event.request).then((cached) => cached || fetch(event.request).then((response) => {
-    if (response && response.ok) caches.open(CACHE_NAME).then((cache) => cache.put(event.request, response.clone()));
+    if (response && response.ok) {
+      const cacheCopy = response.clone();
+      caches.open(CACHE_NAME).then((cache) => cache.put(event.request, cacheCopy)).catch(() => {});
+    }
     return response;
   })));
 });
