@@ -1,0 +1,47 @@
+name: Re-export visual italic ONNX
+
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install export dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r visual-model/requirements.txt
+
+      - name: Download preserved trained model
+        uses: actions/download-artifact@v4
+        with:
+          name: italic-visual-model-pytorch
+          path: .trained-model
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 35532180979
+
+      - name: Export self-contained ONNX
+        run: |
+          python visual-model/export_onnx.py .trained-model/italic-mobilenetv3-synthetic.pt --out visual-model/italic-mobilenetv3-synthetic.onnx
+          test ! -e visual-model/italic-mobilenetv3-synthetic.onnx.data
+          ls -lh visual-model/italic-mobilenetv3-synthetic.onnx
+
+      - name: Commit browser model
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add visual-model/italic-mobilenetv3-synthetic.onnx
+          git diff --cached --quiet || git commit -m "replace visual italic model with self-contained ONNX"
+          git push
