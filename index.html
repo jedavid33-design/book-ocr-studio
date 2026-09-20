@@ -197,6 +197,8 @@
 <button class="button secondary" id="italicReviewRandomBtn" type="button">Random review</button>
 <button class="button secondary" id="italicValidationBtn" type="button">Held-out Italic Validation</button>
 <button class="button secondary" id="italicRomanResidualBtn" type="button">Roman Residual Experiment</button>
+<button class="button secondary" id="italicRomanResidualOfflineBtn" type="button">Analyze Roman Residual Export</button>
+<input accept="application/json,.json" id="italicRomanResidualImport" style="display:none" type="file">
 <button class="button secondary" id="italicPixelStudyBtn" type="button">Pixel study</button>
 <button class="button secondary" id="italicReferenceAtlasBtn" type="button">Iowan reference atlas</button>
 <button class="button secondary" id="tesseractSidecarBtn" type="button">Tesseract sidecar test</button>
@@ -273,7 +275,7 @@
 </dialog>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="epub-polish.js?v=56"></script>
-<script src="script-loader.js?v=70"></script>
+<script src="script-loader.js?v=71"></script>
 <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
