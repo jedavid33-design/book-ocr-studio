@@ -1,4 +1,4 @@
-// Book OCR Studio 168 loader.
+// Book OCR Studio 169 loader.
 // Keeps the v158 READY-state repair and adds an experimental, parallel
 // book-native Roman Residual validator. Production Hunt remains frozen at v157.
 
@@ -9,7 +9,7 @@
 
   source = source.replace(
     '  const BUILD_VERSION = "157";',
-    '  const BUILD_VERSION = "168";'
+    '  const BUILD_VERSION = "169";'
   );
 
   const reviewAnchor =
@@ -214,7 +214,7 @@
     const p100=page.pooled.combined.top100.italic,t100=token.pooled.combined.top100.italic;
     payload.successGate.passed=p100>=17&&t100>=17;
     state.romanResidualExperiment=payload;
-    downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),"italic-roman-residual-v168.json");
+    downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),"italic-roman-residual-v169.json");
     setStatus("ROMAN RESIDUAL EXPERIMENT READY · combined top 100: page "+p100+", token "+t100+" · exported italic-roman-residual-v159.json · production Hunt unchanged.");
     return payload;
   }
@@ -243,7 +243,7 @@
       note:"Offline simulation only. Uses exported fold-specific specimen scores; no OCR, screenshots, Pixel Assist, labels, or production Hunt changed.",
       page:analyze("page"),token:analyze("token")};
     state.romanResidualOfflineSimulation=result;
-    downloadBlob(new Blob([JSON.stringify(result,null,2)],{type:"application/json"}),"italic-roman-residual-offline-v168.json");
+    downloadBlob(new Blob([JSON.stringify(result,null,2)],{type:"application/json"}),"italic-roman-residual-offline-v169.json");
     const msg="ROMAN RESIDUAL OFFLINE READY · 15% blend · page top 25/50/100: "+result.page.top25.italics+"/"+result.page.top50.italics+"/"+result.page.top100.italics+" italics · token: "+result.token.top25.italics+"/"+result.token.top50.italics+"/"+result.token.top100.italics+".";
     console.log(msg);setStatus(msg);return result;
   }
@@ -305,7 +305,7 @@
     const p100=page.pooled.combined.top100.italic,t100=token.pooled.combined.top100.italic;
     payload.successGate.passed=p100>=17&&t100>=17;
     state.romanResidualExperiment=payload;
-    downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),"italic-roman-residual-v168.json");
+    downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),"italic-roman-residual-v169.json");
     const msg="ROMAN RESIDUAL READY · attachment "+liveMatched.length+"/"+labels.length+" · combined top 100: page "+p100+", token "+t100+" · production Hunt unchanged.";
     console.log(msg);setStatus(msg);
     return payload;
@@ -317,12 +317,11 @@
   source = source.replace(experimentAnchor, experimentCode + "\n" + experimentAnchor);
 
   const listenerAnchor='  els.resetItalicLearning?.addEventListener("click", resetItalicLearningProfile);';
-  const listenerReplacement=listenerAnchor+'\n  document.getElementById("italicRomanResidualBtn")?.addEventListener("click",()=>launchRomanResidualExperiment().catch(err=>{console.error("Roman Residual experiment failed",err);setStatus("Roman Residual experiment failed: "+(err?.message||err));}));
-  document.getElementById("italicRomanResidualOfflineBtn")?.addEventListener("click",importRomanResidualExport);';
+  const listenerReplacement=listenerAnchor+'\n  document.getElementById("italicRomanResidualBtn")?.addEventListener("click",()=>launchRomanResidualExperiment().catch(err=>{console.error("Roman Residual experiment failed",err);setStatus("Roman Residual experiment failed: "+(err?.message||err));}));\n  document.getElementById("italicRomanResidualOfflineBtn")?.addEventListener("click",importRomanResidualExport);';
   if(!source.includes(listenerAnchor))throw new Error("Experiment listener anchor not found.");
   source=source.replace(listenerAnchor,listenerReplacement);
 
-  source += "\n//# sourceURL=book-ocr-studio-168.js";
+  source += "\n//# sourceURL=book-ocr-studio-169.js";
   (0, eval)(source);
 })().catch((err) => {
   console.error("Book OCR Studio loader failed", err);
