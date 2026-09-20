@@ -159,6 +159,7 @@
     exportVisualItalic: $("exportVisualItalic"),
     visualItalicReview: $("visualItalicReview"),
     visualItalicStatus: $("visualItalicStatus"),
+    visualItalicStatus: $("visualItalicStatus"),
     italicLineHuntBtn: $("italicLineHuntBtn"),
     italicValidationBtn: $("italicValidationBtn"),
     italicPixelStudyBtn: $("italicPixelStudyBtn"),
@@ -8871,6 +8872,7 @@ ${coverSpine}${spine.join("\n")}
     for(let i=0,p=0;i<d.length;i+=4,p++){out[p]=(d[i]/255-mean[0])/std[0];out[plane+p]=(d[i+1]/255-mean[1])/std[1];out[2*plane+p]=(d[i+2]/255-mean[2])/std[2];}
     return new ort.Tensor("float32",out,[1,3,96,320]);
   }
+  function setVisualItalicStatus(message){ if(els.visualItalicStatus) els.visualItalicStatus.textContent=message; setStatus(message); }
   function setVisualItalicStatus(message){ if(els.visualItalicStatus) els.visualItalicStatus.textContent=message; setStatus(message); }
   async function runVisualItalicExperiment(){
     if(!state.files.length||!state.pages.length) throw new Error("Load an OCR project with screenshots first.");
