@@ -1,4 +1,4 @@
-// Book OCR Studio 166 loader.
+// Book OCR Studio 167 loader.
 // Keeps the v158 READY-state repair and adds an experimental, parallel
 // book-native Roman Residual validator. Production Hunt remains frozen at v157.
 
@@ -9,7 +9,7 @@
 
   source = source.replace(
     '  const BUILD_VERSION = "157";',
-    '  const BUILD_VERSION = "166";'
+    '  const BUILD_VERSION = "167";'
   );
 
   const reviewAnchor =
@@ -162,11 +162,14 @@
     for(let fi=0;fi<folds.length;fi++){
       const test=folds[fi],testIds=new Set(test.map(x=>x.id)),training=examples.filter(x=>!testIds.has(x.id));
       const model=romanResidualModel(training,runByKey),baseRows=[];
-      for(const example of test){
+      for(const wrapped of test){
+        const example=wrapped.x;
         const run=runByKey.get(romanResidualExampleKey(example));if(!run)continue;
         const rr=romanResidualScore(run,example.normalizedText||example.specimenText,model);
-        const baseline=Number.isFinite(run.canonicalScore)?run.canonicalScore:Number.isFinite(run.learnedItalicProbability)?run.learnedItalicProbability:0;
-        baseRows.push({example,run,baselineScore:baseline,romanResidualScore:rr.score});
+        if(rr.score==null)continue;
+        const clone={...run,words:Array.isArray(run.words)?run.words.map(w=>({...w})):run.words,hiddenContext:run.hiddenContext?{...run.hiddenContext}:run.hiddenContext};
+        const baseline=canonicalItalicCandidateScore(clone,{trainingExamples:training}).finalScore;
+        baseRows.push({example,run,baselineScore:baseline,romanResidualScore:rr.score,residual:rr.residual,letters:rr.letters,referenceCount:rr.referenceCount});
       }
       const byWeight={};
       for(const w of weights){
@@ -178,7 +181,8 @@
     }
     const pooled={};
     for(const w of weights)pooled[String(w)]=romanResidualMetrics(pooledByWeight.get(w),"sweepScore");
-    return {kind,weights,folds:foldRows,pooled};
+    return {kind,weights,folds:foldRows,pooled,
+      specimenScores:[...pooledByWeight.get(.25)].map(row=>({id:row.example.id,label:row.example.label,key:romanResidualRunKey(row.run),text:italicNormalizedSpecimenText(row.run),baselineScore:row.baselineScore,romanResidualScore:row.romanResidualScore,residual:row.residual??null,referenceCount:row.referenceCount??null}))};
   }
   function runRomanResidualExperiment(){
     const attached=romanResidualAttachedExamples();
@@ -210,7 +214,7 @@
     const p100=page.pooled.combined.top100.italic,t100=token.pooled.combined.top100.italic;
     payload.successGate.passed=p100>=17&&t100>=17;
     state.romanResidualExperiment=payload;
-    downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),"italic-roman-residual-v166.json");
+    downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),"italic-roman-residual-v167.json");
     setStatus("ROMAN RESIDUAL EXPERIMENT READY · combined top 100: page "+p100+", token "+t100+" · exported italic-roman-residual-v159.json · production Hunt unchanged.");
     return payload;
   }
@@ -257,7 +261,7 @@
     const p100=page.pooled.combined.top100.italic,t100=token.pooled.combined.top100.italic;
     payload.successGate.passed=p100>=17&&t100>=17;
     state.romanResidualExperiment=payload;
-    downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),"italic-roman-residual-v166.json");
+    downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),"italic-roman-residual-v167.json");
     const msg="ROMAN RESIDUAL READY · attachment "+liveMatched.length+"/"+labels.length+" · combined top 100: page "+p100+", token "+t100+" · production Hunt unchanged.";
     console.log(msg);setStatus(msg);
     return payload;
@@ -273,7 +277,7 @@
   if(!source.includes(listenerAnchor))throw new Error("Experiment listener anchor not found.");
   source=source.replace(listenerAnchor,listenerReplacement);
 
-  source += "\n//# sourceURL=book-ocr-studio-166.js";
+  source += "\n//# sourceURL=book-ocr-studio-167.js";
   (0, eval)(source);
 })().catch((err) => {
   console.error("Book OCR Studio loader failed", err);
