@@ -1,4 +1,4 @@
-// Book OCR Studio 161 loader.
+// Book OCR Studio 162 loader.
 // Keeps the v158 READY-state repair and adds an experimental, parallel
 // book-native Roman Residual validator. Production Hunt remains frozen at v157.
 
@@ -9,7 +9,7 @@
 
   source = source.replace(
     '  const BUILD_VERSION = "157";',
-    '  const BUILD_VERSION = "161";'
+    '  const BUILD_VERSION = "162";'
   );
 
   const reviewAnchor =
@@ -168,12 +168,26 @@
     const p100=page.pooled.combined.top100.italic,t100=token.pooled.combined.top100.italic;
     payload.successGate.passed=p100>=17&&t100>=17;
     state.romanResidualExperiment=payload;
-    downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),"italic-roman-residual-v161.json");
+    downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),"italic-roman-residual-v162.json");
     setStatus("ROMAN RESIDUAL EXPERIMENT READY · combined top 100: page "+p100+", token "+t100+" · exported italic-roman-residual-v159.json · production Hunt unchanged.");
     return payload;
   }
+  function romanResidualPreflight(){
+    const examples=(currentItalicLearningProfile().examples||[]).filter(x=>(x.label==="ITALIC"||x.label==="ROMAN")&&!x.fragment);
+    const runs=state.italicCalibrationReviewSet||[];
+    const runByKey=new Map(runs.map(r=>[romanResidualRunKey(r),r]));
+    const reattached=examples.filter(x=>runByKey.has(romanResidualExampleKey(x)));
+    const rate=examples.length?reattached.length/examples.length:0;
+    const msg="Roman Residual preflight: "+reattached.length+" / "+examples.length+" labels reattached ("+Math.round(rate*1000)/10+"%).";
+    console.log(msg);
+    setStatus(msg);
+    if(!reattached.length) throw new Error("Roman Residual preflight aborted: 0 persisted examples reattached. Long held-out validation was NOT started.");
+    if(rate<0.5) throw new Error("Roman Residual preflight aborted: reattachment unexpectedly low ("+reattached.length+"/"+examples.length+"). Long held-out validation was NOT started.");
+    return {examples:examples.length,reattached:reattached.length,rate};
+  }
   async function launchRomanResidualExperiment(){
-    setStatus("Roman Residual: rebuilding the frozen held-out baseline and pixel evidence…");
+    romanResidualPreflight();
+    setStatus("Roman Residual preflight passed · rebuilding the frozen held-out baseline and pixel evidence…");
     await launchItalicLearningReview("validation");
     setStatus("Roman Residual: scoring book-native same-letter Roman references…");
     return runRomanResidualExperiment();
@@ -189,7 +203,7 @@
   if(!source.includes(listenerAnchor))throw new Error("Experiment listener anchor not found.");
   source=source.replace(listenerAnchor,listenerReplacement);
 
-  source += "\n//# sourceURL=book-ocr-studio-161.js";
+  source += "\n//# sourceURL=book-ocr-studio-162.js";
   (0, eval)(source);
 })().catch((err) => {
   console.error("Book OCR Studio loader failed", err);
