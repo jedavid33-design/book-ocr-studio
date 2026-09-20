@@ -206,6 +206,8 @@
 <button class="button secondary" id="italicPixelStudyBtn" type="button">Pixel study</button>
 <button class="button secondary" id="italicReferenceAtlasBtn" type="button">Iowan reference atlas</button>
 <button class="button secondary" id="tesseractSidecarBtn" type="button">Tesseract sidecar test</button>
+<button class="button secondary" id="visualItalicBtn" type="button">Run Visual Italic</button>
+<button class="button secondary" id="exportVisualItalic" type="button">Export Visual Italic</button>
 </div></details>
 <span class="progress-pill" id="italicLearningStatus">Learned: 0 italic · 0 Roman</span>
 </div>
@@ -213,7 +215,7 @@
 <div class="italic-calibration-head"><strong id="italicReviewModeTitle">Spoiler-safe Italic Review</strong><span class="progress-pill" id="italicCalibrationProgress">Ready</span></div>
 <p class="hint">Story order, page location, and surrounding text stay hidden. Italic and Roman train this OCR/font profile across books; Glyph / Decorative is remembered as an exclusion class without entering the Italic-vs-Roman learner; Unsure skips training. Split mixed specimens into OCR-word pieces. Labels are still training-only and do not change EPUB formatting yet. Punctuation-only crops are excluded automatically.</p>
 <div class="review-list" id="italicCalibrationReviewList"><div class="hint">Choose Learned review or Random review to begin.</div></div>
-<div class="subcard" id="visualItalicTesting" style="margin-top:16px"><h4 style="margin-top:0">Visual Italic · experimental validation</h4><p class="hint">Independent spoiler-safe neural validation. Labels here do not train either italic system.</p><div class="actions"><button class="button secondary" id="visualItalicBtn" type="button">Run Visual Italic</button><button class="button secondary" id="exportVisualItalic" type="button">Export Visual Italic</button></div><div id="visualItalicStatus" class="status" style="margin-top:12px">Visual Italic ready to run.</div><div id="visualItalicReview" style="margin-top:12px"></div></div>
+<div class="subcard" id="visualItalicTesting" style="margin-top:16px"><h4 style="margin-top:0">Visual Italic · experimental validation</h4><p class="hint">Independent spoiler-safe neural validation. Labels here do not train either italic system.</p><div id="visualItalicStatus" class="status" style="margin-top:12px">Visual Italic ready to run.</div><div id="visualItalicReview" style="margin-top:12px"></div></div>
 </div>
 </div></section><details class="card hidden advanced-collapsible" id="advancedSection"><summary class="advanced-summary">7. Advanced</summary><div class="advanced-body"><p class="hint advanced-label"><strong>Diagnostics and individual tools</strong> · Use these when testing a build or rerunning one stage manually.</p><div class="subcard regression-card">
 <h3>Regression Check</h3>
