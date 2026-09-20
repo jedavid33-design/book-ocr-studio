@@ -83,7 +83,7 @@
   }
   function romanResidualExampleKey(x){
     const tail=String(x?.id||"").split("::").pop()||"";
-    const m=tail.match(/^(\\d+):(\\d+):(\\d+):(\\d+)$/);
+    const m=tail.match(/^([0-9]+):([0-9]+):([0-9]+):([0-9]+)$/);
     if(m)return [Number(m[1]),Number(m[2]),Number(m[3])].join(":");
     if(x?.sourcePage!=null&&x?.sourceLine!=null&&x?.startWordIndex!=null)
       return [Number(x.sourcePage),Number(x.sourceLine),Number(x.startWordIndex)].join(":");
