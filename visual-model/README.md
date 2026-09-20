@@ -26,3 +26,18 @@ Current HOG baseline target to beat:
 Do not generate synthetic Italic primarily by shearing Roman text. Use genuine Italic font files.
 
 The browser production target is MobileNetV3-Small exported to ONNX for ONNX Runtime Web.
+
+## Synthetic pretraining
+
+Generate paired word images from a directory of open fonts:
+
+```
+python generate_synthetic.py --fonts ./fonts --out ./synthetic-data
+```
+
+The generator pairs genuine Regular/Roman faces with genuine Italic faces from
+the same family, excludes Oblique-only faces, renders the same token in each
+style, and adds mild screenshot-like resampling/blur/contrast variation.
+
+For the first transfer experiment, train on this synthetic corpus and evaluate
+the frozen resulting model on Ruby Circle v180 before any Ruby fine-tuning.
