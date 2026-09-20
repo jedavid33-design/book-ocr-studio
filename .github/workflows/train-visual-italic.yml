@@ -45,17 +45,23 @@ jobs:
             --seed 180 \
             --out italic-mobilenetv3-synthetic.pt
 
+      - name: Preserve trained PyTorch model immediately
+        uses: actions/upload-artifact@v4
+        with:
+          name: italic-visual-model-pytorch
+          path: |
+            italic-mobilenetv3-synthetic.pt
+            synthetic-data/manifest.json
+          retention-days: 30
+
       - name: Export ONNX
         run: |
           python visual-model/export_onnx.py italic-mobilenetv3-synthetic.pt \
             --out italic-mobilenetv3-synthetic.onnx
 
-      - name: Save model and synthetic manifest
+      - name: Save ONNX model
         uses: actions/upload-artifact@v4
         with:
-          name: italic-visual-model-synthetic
-          path: |
-            italic-mobilenetv3-synthetic.pt
-            italic-mobilenetv3-synthetic.onnx
-            synthetic-data/manifest.json
+          name: italic-visual-model-onnx
+          path: italic-mobilenetv3-synthetic.onnx
           retention-days: 30
