@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "191";
+  const BUILD_VERSION = "192";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -8530,7 +8530,10 @@ ${coverSpine}${spine.join("\n")}
       console.warn("Could not render crop preview", err);
     }
     if (restored) {
-      setStatus(`Recovered ${restored} processed pages. Tap Process all pages to resume at page ${Math.min(restored + 1, state.files.length)}, or review what is already saved.`);
+      const visualRestored = await restoreCachedVisualItalicResults();
+      if (!visualRestored) {
+        setStatus(`Recovered ${restored} processed pages. Tap Process all pages to resume at page ${Math.min(restored + 1, state.files.length)}, or review what is already saved.`);
+      }
     } else {
       setStatus(state.files.length ? "Ready to process all pages." : "Add screenshots to begin.");
     }
@@ -8977,7 +8980,7 @@ ${coverSpine}${spine.join("\n")}
   });
   els.visualItalicBtn?.addEventListener("click",async()=>{els.visualItalicBtn.disabled=true;try{await runVisualItalicExperiment();startVisualItalicReview();}catch(err){console.error(err);setVisualItalicStatus(`Visual Italic failed: ${err?.message||err}`);}finally{els.visualItalicBtn.disabled=false;}});
   els.exportVisualItalic?.addEventListener("click",exportVisualItalicResults);
-  setTimeout(()=>restoreVisualItalicAfterRecovery().catch(()=>{}),1500);
+
   els.italicReviewHuntBtn?.addEventListener("click", async () => {
     const buttonTiming={performanceNow:(globalThis.performance?.now?.()??Date.now()),wallStartedAt:Date.now(),queueAtButton:state.italicCalibrationReviewSet?.length||0};
     els.italicReviewHuntBtn.disabled=true;
