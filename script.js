@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "187";
+  const BUILD_VERSION = "188";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -8935,7 +8935,9 @@ ${coverSpine}${spine.join("\n")}
     host.querySelectorAll("[data-vilabel]").forEach(b=>b.addEventListener("click",()=>{state.visualItalicLabels.push({visualItalicRank:r.visualItalicRank,label:b.dataset.vilabel,pageIndex:r.pageIndex,lineIndex:r.lineIndex,wordIndex:r.wordIndex,raw:r.visualItalicProbability,span:r.visualItalicSpanScore,cropWidth:cropW,cropHeight:cropH,cropAspect,geometryType});state.visualItalicReviewIndex=i+1;renderVisualItalicReview();}));
     host.querySelector("[data-viprev]")?.addEventListener("click",()=>{state.visualItalicReviewIndex=Math.max(0,i-1);renderVisualItalicReview();}); host.querySelector("[data-vinext]")?.addEventListener("click",()=>{state.visualItalicReviewIndex=Math.min(q.length-1,i+1);renderVisualItalicReview();}); host.querySelector("[data-vigorank]")?.addEventListener("click",()=>{const n=Math.max(1,Math.min(q.length,Number(host.querySelector("[data-virank]")?.value)||1));state.visualItalicReviewIndex=n-1;renderVisualItalicReview();}); host.querySelector("[data-virank]")?.addEventListener("keydown",e=>{if(e.key==="Enter")host.querySelector("[data-vigorank]")?.click();}); host.querySelector("[data-vigoscore]")?.addEventListener("click",()=>{let v=Number(host.querySelector("[data-viscore]")?.value);if(!Number.isFinite(v))return;if(v>1)v/=100;let best=0,dist=Infinity;q.forEach((x,j)=>{const d=Math.abs(x.visualItalicProbability-v);if(d<dist){dist=d;best=j;}});state.visualItalicReviewIndex=best;renderVisualItalicReview();}); host.querySelector("[data-viscore]")?.addEventListener("keydown",e=>{if(e.key==="Enter")host.querySelector("[data-vigoscore]")?.click();});
   }
-  async function restoreVisualItalicAfterRecovery(){if(state.pages.length&&state.files.length)await restoreCachedVisualItalicResults();}\n\n  function startVisualItalicReview(){
+  async function restoreVisualItalicAfterRecovery(){if(state.pages.length&&state.files.length)await restoreCachedVisualItalicResults();}
+
+  function startVisualItalicReview(){
     if(!(state.visualItalicResults||[]).length)throw new Error("Run Visual Italic first.");
     state.visualItalicReviewIndex=0;state.visualItalicLabels=[];renderVisualItalicReview();els.visualItalicReview?.scrollIntoView({behavior:"smooth",block:"center"});
   }
