@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "189";
+  const BUILD_VERSION = "190";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -8958,7 +8958,8 @@ ${coverSpine}${spine.join("\n")}
     finally { els.italicReviewRandomBtn.disabled=false; }
   });
   els.visualItalicBtn?.addEventListener("click",async()=>{els.visualItalicBtn.disabled=true;try{await runVisualItalicExperiment();startVisualItalicReview();}catch(err){console.error(err);setVisualItalicStatus(`Visual Italic failed: ${err?.message||err}`);}finally{els.visualItalicBtn.disabled=false;}});
-  els.exportVisualItalic?.addEventListener("click",exportVisualItalicResults);\n  setTimeout(()=>restoreVisualItalicAfterRecovery().catch(()=>{}),1500);
+  els.exportVisualItalic?.addEventListener("click",exportVisualItalicResults);
+  setTimeout(()=>restoreVisualItalicAfterRecovery().catch(()=>{}),1500);
   els.italicReviewHuntBtn?.addEventListener("click", async () => {
     const buttonTiming={performanceNow:(globalThis.performance?.now?.()??Date.now()),wallStartedAt:Date.now(),queueAtButton:state.italicCalibrationReviewSet?.length||0};
     els.italicReviewHuntBtn.disabled=true;
