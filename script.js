@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "193";
+  const BUILD_VERSION = "194";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -49,6 +49,8 @@
     visualItalicSession: null,
     visualItalicReviewIndex: 0,
     visualItalicLabels: [],
+    visualItalicDiversityBand: null,
+    visualItalicDiversitySeenTexts: new Set(),
   };
 
   let PaddleOCRClass = null;
@@ -8948,6 +8950,19 @@ ${coverSpine}${spine.join("\n")}
     const a=normalizeVisualItalicLabels(state.visualItalicLabels||[]);
     return `Reviewed: ${a.length} · Italic ${a.filter(x=>x.label==="ITALIC").length} · Roman ${a.filter(x=>x.label==="ROMAN").length} · Fragment-tagged ${a.filter(x=>x.fragment).length} · Glyph ${a.filter(x=>x.label==="GLYPH").length} · Unsure ${a.filter(x=>x.label==="UNSURE").length}`;
   }
+  function visualItalicNormalizedText(r){return String(r?.text||"").toLowerCase().replace(/[’‘]/g,"'").replace(/[^a-z0-9']+/g,"").trim();}
+  function visualItalicBandKey(r){return (Math.round(Number(r?.visualItalicSpanScore||0)*1000)/1000).toFixed(3);}
+  function visualItalicResetDiversityBand(r){
+    state.visualItalicDiversityBand=visualItalicBandKey(r);
+    state.visualItalicDiversitySeenTexts=new Set();
+    for(const lab of (state.visualItalicLabels||[])){const rr=(state.visualItalicResults||[]).find(x=>Number(x.visualItalicRank)===Number(lab.visualItalicRank));if(rr&&visualItalicBandKey(rr)===state.visualItalicDiversityBand){const t=visualItalicNormalizedText(rr);if(t)state.visualItalicDiversitySeenTexts.add(t);}}
+  }
+  function visualItalicNextDiverseIndex(from){
+    const q=state.visualItalicResults||[],cur=q[from];if(!cur)return Math.min(q.length-1,from+1);
+    const band=state.visualItalicDiversityBand||visualItalicBandKey(cur),seen=state.visualItalicDiversitySeenTexts||new Set();
+    for(let j=from+1;j<q.length;j++){if(visualItalicBandKey(q[j])!==band)break;const t=visualItalicNormalizedText(q[j]);if(!t||!seen.has(t))return j;}
+    return Math.min(q.length-1,from+1);
+  }
   async function renderVisualItalicReview(){
     const host=els.visualItalicReview;if(!host)return;
     state.visualItalicLabels=normalizeVisualItalicLabels(state.visualItalicLabels||[]);
@@ -8960,14 +8975,14 @@ ${coverSpine}${spine.join("\n")}
     const file=state.files[r.pageIndex], img=file?await loadImageFromFile(file):null;
     let src="";if(img){const canvas=makeCroppedCanvas(img),crop=cropCanvasRegion(canvas,r.box),out=document.createElement("canvas");out.width=Math.max(360,crop.width*3);out.height=Math.max(100,crop.height*3);const x=out.getContext("2d");x.fillStyle="#fff";x.fillRect(0,0,out.width,out.height);const scale=Math.min((out.width-24)/crop.width,(out.height-24)/crop.height);x.imageSmoothingEnabled=false;x.drawImage(crop,(out.width-crop.width*scale)/2,(out.height-crop.height*scale)/2,crop.width*scale,crop.height*scale);src=out.toDataURL("image/png");canvas.width=1;canvas.height=1;}
     host.innerHTML=visualItalicPopulationSummary()+`<div class="review-card"><div style="display:flex;justify-content:space-between;gap:12px;align-items:center"><strong>Visual Italic Review · ${i+1} / ${q.length}</strong><span class="pill">raw ${(r.visualItalicProbability*100).toFixed(3)}% · span ${(r.visualItalicSpanScore*100).toFixed(3)}%</span></div><div class="muted" style="text-align:center;margin-top:8px">crop ${Math.round(cropW)} × ${Math.round(cropH)} px · aspect ${cropAspect.toFixed(2)} · ${geometryType}</div>${src?`<div style="margin:12px 0"><img src="${src}" alt="spoiler-safe visual italic crop" style="display:block;max-width:100%;max-height:150px;margin:auto;object-fit:contain"></div>`:""}<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center"><button class="button secondary" data-vilabel="ITALIC">Italic</button><button class="button secondary" data-vilabel="ROMAN">Roman</button><button class="button secondary" data-vilabel="GLYPH">Glyph / Decorative</button><button class="button secondary" data-vilabel="FRAGMENT">Fragment tag</button><button class="button secondary" data-vilabel="UNSURE">Unsure</button><button class="button secondary" data-viprev ${i?"":"disabled"}>← Previous</button><button class="button secondary" data-vinext ${i+1<q.length?"":"disabled"}>Next →</button><label class="muted">Rank <input data-virank type="number" min="1" max="${q.length}" value="${i+1}" style="width:86px"></label><button class="button secondary" data-vigorank>Go</button><label class="muted">Score <input data-viscore type="number" min="0" max="1" step="0.01" placeholder="0.60" style="width:86px"></label><button class="button secondary" data-vigoscore>Nearest</button></div><div class="muted" style="text-align:center;margin-top:8px">Independent validation only · does not train either italic system · ${visualItalicLabelCounts()}</div></div>`;
-    host.querySelectorAll("[data-vilabel]").forEach(b=>b.addEventListener("click",()=>{const chosen=b.dataset.vilabel,idx=state.visualItalicLabels.findIndex(x=>Number(x.visualItalicRank)===Number(r.visualItalicRank)),prior=idx>=0?state.visualItalicLabels[idx]:null,base={visualItalicRank:r.visualItalicRank,pageIndex:r.pageIndex,lineIndex:r.lineIndex,wordIndex:r.wordIndex,raw:r.visualItalicProbability,span:r.visualItalicSpanScore,cropWidth:cropW,cropHeight:cropH,cropAspect,geometryType};let rec;if(chosen==="FRAGMENT"){rec={...(prior||base),...base,label:prior?.label||"UNSURE",fragment:!prior?.fragment};}else{rec={...(prior||base),...base,label:chosen,fragment:!!prior?.fragment};state.visualItalicReviewIndex=Math.min(q.length-1,i+1);}if(idx>=0)state.visualItalicLabels[idx]=rec;else state.visualItalicLabels.push(rec);cacheVisualItalicResults();renderVisualItalicReview();}));
-    host.querySelector("[data-viprev]")?.addEventListener("click",()=>{state.visualItalicReviewIndex=Math.max(0,i-1);renderVisualItalicReview();}); host.querySelector("[data-vinext]")?.addEventListener("click",()=>{state.visualItalicReviewIndex=Math.min(q.length-1,i+1);renderVisualItalicReview();}); host.querySelector("[data-vigorank]")?.addEventListener("click",()=>{const n=Math.max(1,Math.min(q.length,Number(host.querySelector("[data-virank]")?.value)||1));state.visualItalicReviewIndex=n-1;renderVisualItalicReview();}); host.querySelector("[data-virank]")?.addEventListener("keydown",e=>{if(e.key==="Enter")host.querySelector("[data-vigorank]")?.click();}); host.querySelector("[data-vigoscore]")?.addEventListener("click",()=>{let v=Number(host.querySelector("[data-viscore]")?.value);if(!Number.isFinite(v))return;if(v>1)v/=100;let best=0,dist=Infinity;q.forEach((x,j)=>{const d=Math.abs(x.visualItalicProbability-v);if(d<dist){dist=d;best=j;}});state.visualItalicReviewIndex=best;renderVisualItalicReview();}); host.querySelector("[data-viscore]")?.addEventListener("keydown",e=>{if(e.key==="Enter")host.querySelector("[data-vigoscore]")?.click();});
+    host.querySelectorAll("[data-vilabel]").forEach(b=>b.addEventListener("click",()=>{const chosen=b.dataset.vilabel,idx=state.visualItalicLabels.findIndex(x=>Number(x.visualItalicRank)===Number(r.visualItalicRank)),prior=idx>=0?state.visualItalicLabels[idx]:null,base={visualItalicRank:r.visualItalicRank,pageIndex:r.pageIndex,lineIndex:r.lineIndex,wordIndex:r.wordIndex,raw:r.visualItalicProbability,span:r.visualItalicSpanScore,cropWidth:cropW,cropHeight:cropH,cropAspect,geometryType};let rec;if(chosen==="FRAGMENT"){rec={...(prior||base),...base,label:prior?.label||"UNSURE",fragment:!prior?.fragment};}else{rec={...(prior||base),...base,label:chosen,fragment:!!prior?.fragment};const t=visualItalicNormalizedText(r);if(t)(state.visualItalicDiversitySeenTexts||(state.visualItalicDiversitySeenTexts=new Set())).add(t);state.visualItalicReviewIndex=visualItalicNextDiverseIndex(i);}if(idx>=0)state.visualItalicLabels[idx]=rec;else state.visualItalicLabels.push(rec);cacheVisualItalicResults();renderVisualItalicReview();}));
+    host.querySelector("[data-viprev]")?.addEventListener("click",()=>{state.visualItalicReviewIndex=Math.max(0,i-1);renderVisualItalicReview();}); host.querySelector("[data-vinext]")?.addEventListener("click",()=>{state.visualItalicReviewIndex=Math.min(q.length-1,i+1);renderVisualItalicReview();}); host.querySelector("[data-vigorank]")?.addEventListener("click",()=>{const n=Math.max(1,Math.min(q.length,Number(host.querySelector("[data-virank]")?.value)||1));state.visualItalicReviewIndex=n-1;visualItalicResetDiversityBand(q[state.visualItalicReviewIndex]);renderVisualItalicReview();}); host.querySelector("[data-virank]")?.addEventListener("keydown",e=>{if(e.key==="Enter")host.querySelector("[data-vigorank]")?.click();}); host.querySelector("[data-vigoscore]")?.addEventListener("click",()=>{let v=Number(host.querySelector("[data-viscore]")?.value);if(!Number.isFinite(v))return;if(v>1)v/=100;let best=0,dist=Infinity;q.forEach((x,j)=>{const d=Math.abs(x.visualItalicProbability-v);if(d<dist){dist=d;best=j;}});state.visualItalicReviewIndex=best;visualItalicResetDiversityBand(q[best]);renderVisualItalicReview();}); host.querySelector("[data-viscore]")?.addEventListener("keydown",e=>{if(e.key==="Enter")host.querySelector("[data-vigoscore]")?.click();});
   }
   async function restoreVisualItalicAfterRecovery(){if(state.pages.length&&state.files.length)await restoreCachedVisualItalicResults();}
 
   function startVisualItalicReview(){
     if(!(state.visualItalicResults||[]).length)throw new Error("Run Visual Italic first.");
-    state.visualItalicReviewIndex=0;state.visualItalicLabels=[];renderVisualItalicReview();els.visualItalicReview?.scrollIntoView({behavior:"smooth",block:"center"});
+    state.visualItalicReviewIndex=0;state.visualItalicLabels=[];visualItalicResetDiversityBand(state.visualItalicResults[0]);renderVisualItalicReview();els.visualItalicReview?.scrollIntoView({behavior:"smooth",block:"center"});
   }
 
   function exportVisualItalicResults(){
