@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "214";
+  const BUILD_VERSION = "215";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -126,6 +126,8 @@
     importOcrBackupBtn: $("importOcrBackupBtn"),
     importOcrBackupFile: $("importOcrBackupFile"),
     exportTypographyTestBtn: $("exportTypographyTestBtn"),
+    importTypographyAnnotationsBtn: $("importTypographyAnnotationsBtn"),
+    importTypographyAnnotationsFile: $("importTypographyAnnotationsFile"),
     progressWrap: $("progressWrap"),
     progressLabel: $("progressLabel"),
     progressPercent: $("progressPercent"),
@@ -442,6 +444,59 @@
     } catch (err) {
       console.error(err); setStatus("Could not export typography test: " + (err.message || err));
     } finally { if (button) button.disabled = false; }
+  }
+
+  async function importTypographyAnnotationsFile(file) {
+    if (!file) return;
+    if (!state.pages.length) { setStatus("Load the OCR project before importing typography annotations."); return; }
+    try {
+      syncCurrentEditor();
+      const payload = JSON.parse(await file.text());
+      if (payload?.schema !== "book-ocr-studio-chatgpt-typography-annotations-v1" || !Array.isArray(payload.pages)) {
+        throw new Error("That is not a supported Book OCR Studio typography annotation file.");
+      }
+      let requested = 0, applied = 0, alreadyPresent = 0;
+      const misses = [];
+      for (const annotatedPage of payload.pages) {
+        const match = String(annotatedPage?.pageId || "").match(/^p(\d{4})$/);
+        if (!match) continue;
+        const pageIndex = Number(match[1]) - 1;
+        const page = state.pages[pageIndex];
+        if (!page) { misses.push({pageId:annotatedPage.pageId,reason:"page-not-loaded"}); continue; }
+        const current = parseItalicMarkedText(page.text || "");
+        const plain = current.plain;
+        const ranges = [...current.ranges];
+        let searchFrom = 0;
+        for (const span of (annotatedPage.italicSpans || [])) {
+          requested++;
+          const phrase = String(span?.text || "").trim();
+          if (!phrase) { misses.push({pageId:annotatedPage.pageId,itemId:span?.itemId||"",reason:"empty-text"}); continue; }
+          let hit = flexiblePhraseMatch(plain, phrase, searchFrom);
+          if (!hit) hit = flexiblePhraseMatch(plain, phrase, 0);
+          if (!hit) {
+            misses.push({pageId:annotatedPage.pageId,itemId:span?.itemId||"",text:phrase,reason:"text-not-found"});
+            continue;
+          }
+          const covered = ranges.some(r => hit.start >= r.start && hit.end <= r.end);
+          if (covered) alreadyPresent++;
+          else { ranges.push({start:hit.start,end:hit.end}); applied++; }
+          searchFrom = Math.max(searchFrom, hit.end);
+        }
+        page.text = renderItalicRanges(plain, ranges);
+        page.chapterCandidate = chapterHeuristic(page.text);
+        saveRepairOverlayPage(pageIndex);
+      }
+      saveCheckpoint();
+      renderReview();
+      updateNavigationControls();
+      const missCount = misses.length;
+      state.lastTypographyImportReport = {build:BUILD_VERSION,importedAt:new Date().toISOString(),requested,applied,alreadyPresent,misses};
+      setStatus(`Typography annotations imported: ${applied} new italic span${applied===1?"":"s"} applied, ${alreadyPresent} already present, ${missCount} unmatched. Imported italics are now authoritative page text and will export as <em>.`);
+      if (missCount) console.warn("Typography annotation import misses", misses);
+    } catch (err) {
+      console.error(err);
+      setStatus(`Could not import typography annotations: ${err.message || err}`);
+    }
   }
 
   function exportOcrBackup() {
@@ -8751,6 +8806,12 @@ ${coverSpine}${spine.join("\n")}
   els.freshPaddleBtn.addEventListener("click", restartFreshWithPaddle);
   els.exportOcrBackupBtn?.addEventListener("click", exportOcrBackup);
   els.exportTypographyTestBtn?.addEventListener("click", exportTypographyTest);
+  els.importTypographyAnnotationsBtn?.addEventListener("click", () => els.importTypographyAnnotationsFile?.click());
+  els.importTypographyAnnotationsFile?.addEventListener("change", async () => {
+    const file = els.importTypographyAnnotationsFile.files?.[0];
+    await importTypographyAnnotationsFile(file);
+    els.importTypographyAnnotationsFile.value = "";
+  });
   els.importOcrBackupBtn?.addEventListener("click", () => els.importOcrBackupFile?.click());
   els.importOcrBackupFile?.addEventListener("change", async () => {
     const file = els.importOcrBackupFile.files?.[0];
