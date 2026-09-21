@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "203";
+  const BUILD_VERSION = "204";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -8067,9 +8067,12 @@
   }
 
   async function exportLabeledItalicCropDataset(){
-    const examples=(currentItalicLearningProfile().examples||[]).filter(x=>(x.label==="ITALIC"||x.label==="ROMAN")&&x.reviewBox&&Number.isFinite(Number(x.sourcePage)));
-    if(!examples.length){setStatus("No labeled Italic/Roman specimens with saved crop geometry are available.");return;}
-    const byPage=new Map();for(const x of examples){const pi=Number(x.sourcePage);if(!byPage.has(pi))byPage.set(pi,[]);byPage.get(pi).push(x);}
+    const examples=(currentItalicLearningProfile().examples||[]).filter(x=>(x.label==="ITALIC"||x.label==="ROMAN")&&italicExamplePhysicalKey(x));
+    const liveByPhysical=new Map();
+    for(const run of (state.italicCalibrationReviewSet||[])){const key=(Number.isFinite(Number(run.pageIndex))&&Number.isFinite(Number(run.lineIndex))&&Number.isFinite(Number(run.startWordIndex)))?`${Number(run.pageIndex)}:${Number(run.lineIndex)}:${Number(run.startWordIndex)}`:null;if(key&&run.reviewBox&&!liveByPhysical.has(key))liveByPhysical.set(key,run.reviewBox);}
+    const boxFor=ex=>ex.reviewBox||state.italicValidationEvidenceByPhysical?.get(italicExamplePhysicalKey(ex))?.reviewBox||liveByPhysical.get(italicExamplePhysicalKey(ex))||null;
+    if(!examples.length){setStatus("No persisted Italic/Roman specimens with recoverable physical locations are available.");return;}
+    const byPage=new Map();for(const x of examples){const key=italicExamplePhysicalKey(x),pi=Number(key?.split(":")[0]);if(!Number.isFinite(pi))continue;if(!byPage.has(pi))byPage.set(pi,[]);byPage.get(pi).push(x);}
     const rows=[];let done=0,failed=0;
     setStatus(`Preparing neural crop dataset · 0/${examples.length} specimens…`);
     for(const [pi,list] of byPage){
@@ -8077,7 +8080,7 @@
       try{
         const img=await loadImageFromFile(file),pageCanvas=makeCroppedCanvas(img),ctx=pageCanvas.getContext("2d");
         for(const x of list){
-          const b=x.reviewBox||{},sx=Math.max(0,Math.floor(Number(b.x)||0)),sy=Math.max(0,Math.floor(Number(b.y)||0)),sw=Math.max(1,Math.ceil(Number(b.w)||0)),sh=Math.max(1,Math.ceil(Number(b.h)||0));
+          const b=boxFor(x)||{};if(!(Number(b.w??b.width)>0&&Number(b.h??b.height)>0)){failed++;continue;}const sx=Math.max(0,Math.floor(Number(b.x)||0)),sy=Math.max(0,Math.floor(Number(b.y)||0)),sw=Math.max(1,Math.ceil(Number(b.w)||0)),sh=Math.max(1,Math.ceil(Number(b.h)||0));
           const w=Math.max(1,Math.min(sw,pageCanvas.width-sx)),h=Math.max(1,Math.min(sh,pageCanvas.height-sy));if(w<=0||h<=0){failed++;continue;}
           const crop=document.createElement("canvas");crop.width=w;crop.height=h;crop.getContext("2d").drawImage(pageCanvas,sx,sy,w,h,0,0,w,h);
           rows.push({id:x.id,label:x.label,group:{page:pi,token:String(x.normalizedText||x.specimenText||"").toLocaleLowerCase()},source:{pageIndex:pi,lineIndex:x.sourceLine,startWordIndex:x.startWordIndex,endWordIndex:x.endWordIndex,reviewBox:{x:sx,y:sy,w,h}},text:String(x.normalizedText||x.specimenText||""),width:w,height:h,pngDataUrl:crop.toDataURL("image/png")});
