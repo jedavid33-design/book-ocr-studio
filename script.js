@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "219";
+  const BUILD_VERSION = "220";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -7951,33 +7951,37 @@
       syncCurrentEditor();
 
       let rebuiltCount = 0;
-      let italics = null;
+
+      // Build 220: typography is authoritative before Repair begins.
+      // Imported/manual [[i]] markers must never be rediscovered or replaced by
+      // the legacy automatic italic detector. Snapshot the marked page text so
+      // paragraph reconstruction can run, then restore the exact typography-bearing
+      // text before cleanup/dropcap stages. Manual/imported typography therefore
+      // survives Repair byte-for-byte unless a later explicit user edit changes it.
+      const authoritativeTypography = new Map();
+      state.pages.forEach((page,pageIndex)=>{
+        if (/\[\[i\]\]/i.test(String(page?.text||""))) authoritativeTypography.set(pageIndex,String(page.text));
+      });
 
       if (chapterMode) {
-        // Paragraph geometry and italic analysis were already produced by OCR.
-        // Chapter mode intentionally avoids whole-book rebuild/rescan so it
-        // stays fast, local, and cannot disturb repaired text in other chapters.
-        setStatus(`Guided Repair · Chapter ${chapter.number}: preserving paragraph geometry and existing italic analysis…`);
+        setStatus(`Guided Repair · Chapter ${chapter.number}: preserving paragraph geometry and authoritative typography…`);
       } else {
         setStatus(state.repairBookHasRun
-          ? "Guided Repair 1/5 · Preserving already repaired paragraph text…"
-          : "Guided Repair 1/5 · Rebuilding paragraph structure…");
+          ? "Guided Repair 1/5 · Preserving already repaired paragraph text and typography…"
+          : "Guided Repair 1/5 · Rebuilding paragraph structure while protecting typography…");
         repairStage = "paragraph rebuild";
         rebuiltCount = state.repairBookHasRun
           ? 0
           : rebuildParagraphsFromSavedGeometry({ confirmOverwrite: false });
+        authoritativeTypography.forEach((text,pageIndex)=>{
+          if(state.pages[pageIndex]) state.pages[pageIndex].text=text;
+        });
         setGuidedProgress("1/5 · Rebuild", 100);
 
-        setStatus(state.repairBookHasRun
-          ? "Guided Repair 2/5 · Rechecking italics without rebuilding repaired text…"
-          : "Guided Repair 2/5 · Scanning conservative italics…");
-        repairStage = "automatic italic scan";
+        setStatus("Guided Repair 2/5 · Preserving imported/manual typography…");
+        repairStage = "preserve authoritative typography";
         if (els.repairBookStatus) els.repairBookStatus.textContent = "Running · 2/5";
-        italics = await autoScanItalics({
-          rebuildText: !state.repairBookHasRun,
-          progressCallback: (current, total, pct) =>
-            setGuidedProgress("2/5 · Italics", pct, `page ${current}/${total}`)
-        });
+        setGuidedProgress("2/5 · Typography", 100, `${authoritativeTypography.size} marked pages protected`);
       }
 
       setGuidedProgress("Repair complete", 100);
@@ -8014,6 +8018,7 @@
       // temporarily replace page.text, so restore the durable edited-page
       // overlay before Dropcap Rescue inspects or modifies chapter openings.
       applyRepairOverlay();
+      authoritativeTypography.forEach((text,pageIndex)=>{ if(state.pages[pageIndex]) state.pages[pageIndex].text=text; });
 
       // v33: overlays/manual-safe stages can reintroduce an OCR-era blank-line split.
       // Whole-book mode intentionally uses null pageIndexes, so normalize it to
@@ -8049,6 +8054,7 @@
       // artifacts preserved inside a durable manual overlay (for example
       // `fi rst`, `dificult`, or `days.. .`) without rewriting prose.
       applyRepairOverlay();
+      authoritativeTypography.forEach((text,pageIndex)=>{ if(state.pages[pageIndex]) state.pages[pageIndex].text=text; });
       repairStage = "final deterministic QA sweep";
       const finalQaCleanup = applySafePolishToProject(pageIndexes) || { fixedCount:0 };
       const finalQaLigatures = runSplitLigaturePolish(pageIndexes) || { fixedCount:0, ambiguousCount:0 };
@@ -8080,7 +8086,7 @@
 
       setStatus(chapterMode
         ? `Chapter ${chapter.number} repaired: ${repairState.dropcapCount} dropcap and ${repairState.ligatureCount} split-ligature review item${repairReviewCount===1?"":"s"} remain in this chapter.`
-        : `Guided Repair complete: ${dropcapAudit.evaluated}/${dropcapAudit.expected} chapter starts evaluated, ${high.length} high-confidence dropcaps accepted, ${repairState.dropcapCount} dropcaps and ${repairState.ligatureCount} split-ligatures left for Review repairs. ${rebuiltCount} pages rebuilt; ${italics?.markedRuns || 0} italic runs; ${polishStats.fixedCount || 0} safe cleanup fixes.`);
+        : `Guided Repair complete: ${dropcapAudit.evaluated}/${dropcapAudit.expected} chapter starts evaluated, ${high.length} high-confidence dropcaps accepted, ${repairState.dropcapCount} dropcaps and ${repairState.ligatureCount} split-ligatures left for Review repairs. ${rebuiltCount} pages rebuilt; ${authoritativeTypography.size} typography-marked pages protected; ${polishStats.fixedCount || 0} safe cleanup fixes.`);
     } catch (err) {
       console.error("Guided Repair failed", { stage: repairStage, error: err });
       const message = err?.message || String(err);
