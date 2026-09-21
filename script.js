@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "209";
+  const BUILD_VERSION = "210";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -164,7 +164,8 @@
     visualItalicStatus: $("visualItalicStatus"),
     italicLineHuntBtn: $("italicLineHuntBtn"),
     italicValidationBtn: $("italicValidationBtn"),
-    italicCropExportBtn: $("italicCropExportBtn"),\n    neuralItalicN1Btn: $("neuralItalicN1Btn"), neuralItalicN1Input: $("neuralItalicN1Input"), neuralItalicN1Status: $("neuralItalicN1Status"),
+    italicCropExportBtn: $("italicCropExportBtn"),
+    neuralItalicN1Btn: $("neuralItalicN1Btn"), neuralItalicN1Input: $("neuralItalicN1Input"), neuralItalicN1Status: $("neuralItalicN1Status"),
     italicPixelStudyBtn: $("italicPixelStudyBtn"),
     italicReferenceAtlasBtn: $("italicReferenceAtlasBtn"),
     tesseractSidecarBtn: $("tesseractSidecarBtn"),
