@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "212";
+  const BUILD_VERSION = "213";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -125,6 +125,7 @@
     exportOcrBackupBtn: $("exportOcrBackupBtn"),
     importOcrBackupBtn: $("importOcrBackupBtn"),
     importOcrBackupFile: $("importOcrBackupFile"),
+    exportTypographyTestBtn: $("exportTypographyTestBtn"),
     progressWrap: $("progressWrap"),
     progressLabel: $("progressLabel"),
     progressPercent: $("progressPercent"),
@@ -391,6 +392,27 @@
     } catch (err) {
       console.warn("Could not save OCR checkpoint", err);
     }
+  }
+
+  async function exportTypographyTest() {
+    if (!state.files.length || !state.pages.length) { setStatus("Load and OCR pages before exporting a typography test."); return; }
+    const button=els.exportTypographyTestBtn; if(button) button.disabled=true;
+    try {
+      const pages=[];
+      for(let index=0;index<state.pages.length;index++){
+        const page=state.pages[index], file=page?.file||state.files[index]; if(!file) continue;
+        const imageDataUrl=await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(String(r.result||""));r.onerror=()=>reject(r.error);r.readAsDataURL(file);});
+        const layoutLines=(page.layoutLines||[]).map((line,lineIndex)=>{const clean={...line};["italicAuto","italicText","italicMeta","italicWordMeta","italicRunMeta"].forEach(k=>delete clean[k]);clean.lineId="p"+String(index+1).padStart(4,"0")+"-l"+String(lineIndex+1).padStart(4,"0");return clean;});
+        const rawOcrItems=(page.rawOcrItems||[]).map((item,wordIndex)=>({...item,wordId:"p"+String(index+1).padStart(4,"0")+"-w"+String(wordIndex+1).padStart(5,"0")}));
+        pages.push({pageIndex:index,pageId:"p"+String(index+1).padStart(4,"0"),fileName:file.name,imageType:file.type||"",imageDataUrl,crop:{top:Number(els.cropTop.value)||0,bottom:Number(els.cropBottom.value)||0,sides:Number(els.cropSides.value)||0},layoutMeta:page.layoutMeta||null,layoutLines,rawOcrItems});
+        setStatus("Building typography test: page "+(index+1)+" of "+state.pages.length+"…"); await new Promise(r=>setTimeout(r,0));
+      }
+      const payload={schema:"book-ocr-studio-typography-test-v1",build:BUILD_VERSION,exportedAt:new Date().toISOString(),blindTypographyTest:true,note:"Automatic italic guesses and labels are excluded. Returned annotations should reference stable IDs.",book:{title:els.bookTitle?.value||"",author:els.bookAuthor?.value||"",sourceProfile:state.sourceProfile||"cloud-iowan",pageCount:pages.length},pages};
+      const safeTitle=cleanFilename(els.bookTitle?.value||"book");
+      downloadBlob(new Blob([JSON.stringify(payload)],{type:"application/json"}),safeTitle+"-typography-test-build-"+BUILD_VERSION+".json");
+      setStatus("Typography test exported: "+pages.length+" pages with screenshots and Paddle geometry. Automatic italic guesses were excluded.");
+    } catch(err){console.error(err);setStatus("Could not export typography test: "+(err.message||err));}
+    finally{if(button)button.disabled=false;}
   }
 
   function exportOcrBackup() {
@@ -2608,27 +2630,13 @@
     rebuildParagraphsFromSavedGeometry({ confirmOverwrite: false });
     const detectedChapters = redetectAutomaticChapterStarts();
 
-    // v2.7.61 lifecycle fix: italics are formatting evidence from OCR geometry,
-    // not a side effect of Guided Repair. Commit them immediately once the full
-    // OCR batch and paragraph profile exist, so an EPUB exported before Repair
-    // contains the same detected emphasis as one exported afterward.
-    let initialItalics = null;
-    try {
-      initialItalics = await autoScanItalics({ rebuildText: false });
-    } catch (err) {
-      console.warn("Initial italic scan after OCR failed", err);
-    }
-
     state.currentPageIndex = 0;
     state.reviewMode = "chapters";
     saveCheckpoint();
     renderReview();
     refreshParagraphRebuildUi();
     const chapters = state.pages.filter(page => page.chapterStart).length;
-    const italicNote = initialItalics
-      ? ` Italics committed at OCR completion: ${initialItalics.markedRuns} run${initialItalics.markedRuns === 1 ? "" : "s"}.`
-      : "";
-    setStatus(`Batch OCR complete: ${state.pages.length} pages processed. Book-level paragraph profile applied automatically. Strict chapter detection found ${chapters} chapter start page${chapters === 1 ? "" : "s"} for review.${italicNote}`);
+    setStatus(`Batch OCR complete: ${state.pages.length} pages processed. Book-level paragraph profile applied automatically. Strict chapter detection found ${chapters} chapter start page${chapters === 1 ? "" : "s"} for review. Typography was left untouched.`);
   }
 
   async function goToPreviousPage() {
@@ -8713,6 +8721,7 @@ ${coverSpine}${spine.join("\n")}
 
   els.freshPaddleBtn.addEventListener("click", restartFreshWithPaddle);
   els.exportOcrBackupBtn?.addEventListener("click", exportOcrBackup);
+  els.exportTypographyTestBtn?.addEventListener("click", exportTypographyTest);
   els.importOcrBackupBtn?.addEventListener("click", () => els.importOcrBackupFile?.click());
   els.importOcrBackupFile?.addEventListener("change", async () => {
     const file = els.importOcrBackupFile.files?.[0];
