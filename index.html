@@ -128,9 +128,12 @@
 <button class="button secondary" id="exportOcrBackupBtn" type="button">Export OCR backup</button>
 <button class="button secondary" id="importOcrBackupBtn" type="button">Import OCR backup</button>
 <button class="button secondary" id="exportTypographyTestBtn" type="button">Export Typography Test</button>
+<button class="button secondary" id="importTypographyAnnotationsBtn" type="button">Import Typography Annotations</button>
+<input accept="application/json,.json" id="importTypographyAnnotationsFile" style="display:none" type="file">
 <input accept="application/json,.json" id="importOcrBackupFile" style="display:none" type="file">
 </div>
 <p class="hint">Export OCR backup saves the processed text, word/line geometry, chapter markers, repair state, and OCR items to a portable JSON file. To restore later, select the same screenshots and import the backup. No re-OCR is required.</p>
+<p class="hint">Typography workflow: Export Typography Test → have the screenshots visually annotated → Import Typography Annotations. Imported spans are written into the authoritative page text and export as semantic EPUB italics.</p>
 <p class="hint">The restart button removes saved OCR text from older versions but keeps your current screenshot selection and preserves saved chapter markers where possible.</p>
 <div class="progress-wrap hidden" id="progressWrap">
 <div class="progress-meta">
@@ -292,7 +295,7 @@
 </dialog>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="epub-polish.js?v=56"></script>
-<script src="script-loader.js?v=214"></script>
+<script src="script-loader.js?v=215"></script>
 <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
