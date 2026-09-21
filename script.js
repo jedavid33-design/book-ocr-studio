@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "195";
+  const BUILD_VERSION = "196";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -8961,8 +8961,17 @@ ${coverSpine}${spine.join("\n")}
   function visualItalicNextDiverseIndex(from){
     const q=state.visualItalicResults||[],cur=q[from];if(!cur)return Math.min(q.length-1,from+1);
     const band=state.visualItalicDiversityBand||visualItalicBandKey(cur),seen=state.visualItalicDiversitySeenTexts||new Set();
-    for(let j=from+1;j<q.length;j++){if(visualItalicBandKey(q[j])!==band)break;const t=visualItalicNormalizedText(q[j]);if(!t||!seen.has(t))return j;}
-    return Math.min(q.length-1,from+1);
+    const reviewedRanks=new Set((state.visualItalicLabels||[]).map(l=>Number(l.visualItalicRank)).filter(Number.isFinite));
+    for(let j=from+1;j<q.length;j++){
+      if(visualItalicBandKey(q[j])!==band)break;
+      if(reviewedRanks.has(Number(q[j].visualItalicRank)))continue;
+      const t=visualItalicNormalizedText(q[j]);
+      if(!t||!seen.has(t))return j;
+    }
+    // If this rounded score band is exhausted, continue forward to the next
+    // unreviewed specimen instead of falling back onto an already-labeled rank.
+    for(let j=from+1;j<q.length;j++)if(!reviewedRanks.has(Number(q[j].visualItalicRank)))return j;
+    return q.length;
   }
   async function renderVisualItalicReview(){
     const host=els.visualItalicReview;if(!host)return;
