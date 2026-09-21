@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "211";
+  const BUILD_VERSION = "212";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -122,6 +122,9 @@
     previewDims: $("previewDims"),
     processBtn: $("processBtn"),
     freshPaddleBtn: $("freshPaddleBtn"),
+    exportOcrBackupBtn: $("exportOcrBackupBtn"),
+    importOcrBackupBtn: $("importOcrBackupBtn"),
+    importOcrBackupFile: $("importOcrBackupFile"),
     progressWrap: $("progressWrap"),
     progressLabel: $("progressLabel"),
     progressPercent: $("progressPercent"),
@@ -387,6 +390,65 @@
       localStorage.setItem(CHECKPOINT_KEY, JSON.stringify(payload));
     } catch (err) {
       console.warn("Could not save OCR checkpoint", err);
+    }
+  }
+
+  function exportOcrBackup() {
+    if (!state.files.length || !state.pages.length) {
+      setStatus("No OCR project is loaded to back up.");
+      return;
+    }
+    saveCheckpoint();
+    try {
+      const raw = localStorage.getItem(CHECKPOINT_KEY);
+      if (!raw) throw new Error("The OCR checkpoint is not available.");
+      const checkpoint = JSON.parse(raw);
+      const payload = {
+        schema: "book-ocr-studio-ocr-backup-v1",
+        build: BUILD_VERSION,
+        exportedAt: new Date().toISOString(),
+        pageCount: Array.isArray(checkpoint.pages) ? checkpoint.pages.length : 0,
+        checkpoint
+      };
+      const safeTitle = cleanFilename(els.bookTitle?.value || "book");
+      downloadBlob(new Blob([JSON.stringify(payload)], { type: "application/json" }),
+        `${safeTitle}-ocr-backup-build-${BUILD_VERSION}.json`);
+      setStatus(`OCR backup exported: ${payload.pageCount} processed page${payload.pageCount === 1 ? "" : "s"}. Keep this file with the screenshots; it can restore the project without re-running OCR.`);
+    } catch (err) {
+      console.error(err);
+      setStatus(`Could not export OCR backup: ${err.message || err}`);
+    }
+  }
+
+  async function importOcrBackupFile(file) {
+    if (!file) return;
+    if (!state.files.length) {
+      setStatus("Choose the book screenshots first, then import the OCR backup. The screenshots are needed to reconnect saved OCR geometry to the source pages.");
+      return;
+    }
+    try {
+      const payload = JSON.parse(await file.text());
+      const saved = payload?.schema === "book-ocr-studio-ocr-backup-v1" ? payload.checkpoint : payload;
+      if (!saved || !Array.isArray(saved.pages) || !saved.pages.length) throw new Error("That file does not contain an OCR checkpoint.");
+      const score = checkpointMatchScore(saved);
+      if (!score) {
+        throw new Error(`Backup does not match the ${state.files.length} selected screenshots. Select the same book screenshots used for this OCR run.`);
+      }
+      applyCheckpoint(saved);
+      saveCheckpoint();
+      if (state.currentPageIndex < 0 && state.pages.length) state.currentPageIndex = state.pages.length - 1;
+      els.processBtn.disabled = !state.files.length || state.pages.length >= state.files.length;
+      els.freshPaddleBtn.disabled = !state.files.length;
+      setPostOcrSectionsVisible(state.pages.length > 0);
+      renderReview();
+      refreshParagraphRebuildUi();
+      syncCropPresetUi();
+      updateNavigationControls();
+      updateGuidedRepairModeUi();
+      setStatus(`OCR backup restored: ${state.pages.length} processed page${state.pages.length === 1 ? "" : "s"}. No OCR was run.`);
+    } catch (err) {
+      console.error(err);
+      setStatus(`Could not restore OCR backup: ${err.message || err}`);
     }
   }
 
@@ -8650,6 +8712,13 @@ ${coverSpine}${spine.join("\n")}
   });
 
   els.freshPaddleBtn.addEventListener("click", restartFreshWithPaddle);
+  els.exportOcrBackupBtn?.addEventListener("click", exportOcrBackup);
+  els.importOcrBackupBtn?.addEventListener("click", () => els.importOcrBackupFile?.click());
+  els.importOcrBackupFile?.addEventListener("change", async () => {
+    const file = els.importOcrBackupFile.files?.[0];
+    await importOcrBackupFile(file);
+    els.importOcrBackupFile.value = "";
+  });
 
   els.processBtn.addEventListener("click", async () => {
     setPostOcrSectionsVisible(true);
