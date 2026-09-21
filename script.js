@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "216";
+  const BUILD_VERSION = "217";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -54,6 +54,7 @@
     typographyReviewActive: false,
     typographyReviewPages: [],
     typographyReviewPosition: 0,
+    typographyReviewVerdicts: {},
   };
 
   let PaddleOCRClass = null;
@@ -139,6 +140,9 @@
     typographyReviewImage: $("typographyReviewImage"),
     typographyReviewText: $("typographyReviewText"),
     typographyReviewMeta: $("typographyReviewMeta"),
+    typographyReviewDetected: $("typographyReviewDetected"),
+    typographyReviewCorrectBtn: $("typographyReviewCorrectBtn"),
+    typographyReviewWrongBtn: $("typographyReviewWrongBtn"),
     progressWrap: $("progressWrap"),
     progressLabel: $("progressLabel"),
     progressPercent: $("progressPercent"),
@@ -500,7 +504,29 @@
       const url=pageImageUrl(page.file); els.typographyReviewImage.onload=()=>URL.revokeObjectURL(url); els.typographyReviewImage.src=url;
       els.typographyReviewImage.alt=`Original screenshot page ${index+1}`;
     }
-    if(els.typographyReviewText) els.typographyReviewText.textContent="OCR/book text intentionally hidden in spoiler-safe review. Compare the visible screenshot typography only.";
+    const parsed = parseItalicMarkedText(page.text || "");
+    const marked = parsed.ranges.map(r => parsed.plain.slice(r.start, r.end)).filter(Boolean);
+    if (els.typographyReviewDetected) {
+      els.typographyReviewDetected.innerHTML = "";
+      if (!marked.length) {
+        els.typographyReviewDetected.textContent = "No imported italic spans on this page.";
+      } else {
+        const intro=document.createElement("strong"); intro.textContent="Imported italic calls on this page:";
+        els.typographyReviewDetected.appendChild(intro);
+        const list=document.createElement("div"); list.className="typography-call-list";
+        marked.forEach((phrase,n)=>{
+          const row=document.createElement("div"); row.className="typography-call";
+          const num=document.createElement("span"); num.className="typography-call-number"; num.textContent=String(n+1);
+          const em=document.createElement("em"); em.textContent=phrase;
+          row.append(num,em); list.appendChild(row);
+        });
+        els.typographyReviewDetected.appendChild(list);
+      }
+    }
+    const verdict=state.typographyReviewVerdicts[index] || "";
+    if(els.typographyReviewCorrectBtn) els.typographyReviewCorrectBtn.classList.toggle("active",verdict==="correct");
+    if(els.typographyReviewWrongBtn) els.typographyReviewWrongBtn.classList.toggle("active",verdict==="wrong");
+    if(els.typographyReviewText) els.typographyReviewText.textContent="Only this page is shown. Compare each imported call above with the same wording in the screenshot. Also scan the screenshot for any italic text that is missing from the imported-call list.";
     if(els.typographyReviewPrevBtn) els.typographyReviewPrevBtn.disabled=state.typographyReviewPosition<=0;
     if(els.typographyReviewNextBtn) els.typographyReviewNextBtn.disabled=state.typographyReviewPosition>=state.typographyReviewPages.length-1;
   }
@@ -8869,6 +8895,16 @@ ${coverSpine}${spine.join("\n")}
   els.exportTypographyTestBtn?.addEventListener("click", exportTypographyTest);
   els.importTypographyAnnotationsBtn?.addEventListener("click", () => els.importTypographyAnnotationsFile?.click());
   els.typographyReviewBtn?.addEventListener("click", openTypographyReview);
+  els.typographyReviewCorrectBtn?.addEventListener("click", () => {
+    const entry=state.typographyReviewPages[state.typographyReviewPosition]; if(!entry)return;
+    state.typographyReviewVerdicts[entry.index]="correct"; renderTypographyReview();
+    setStatus(`Typography page ${entry.index+1} marked correct.`);
+  });
+  els.typographyReviewWrongBtn?.addEventListener("click", () => {
+    const entry=state.typographyReviewPages[state.typographyReviewPosition]; if(!entry)return;
+    state.typographyReviewVerdicts[entry.index]="wrong"; renderTypographyReview();
+    setStatus(`Typography page ${entry.index+1} marked needs correction.`);
+  });
   els.typographyReviewPrevBtn?.addEventListener("click", () => { if(state.typographyReviewPosition>0){state.typographyReviewPosition--;renderTypographyReview();} });
   els.typographyReviewNextBtn?.addEventListener("click", () => { if(state.typographyReviewPosition<state.typographyReviewPages.length-1){state.typographyReviewPosition++;renderTypographyReview();} });
   els.typographyReviewDoneBtn?.addEventListener("click", () => { state.typographyReviewActive=false; els.typographyReviewPanel?.classList.add("hidden"); setStatus("Typography review closed."); });
