@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "206";
+  const BUILD_VERSION = "207";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -164,7 +164,7 @@
     visualItalicStatus: $("visualItalicStatus"),
     italicLineHuntBtn: $("italicLineHuntBtn"),
     italicValidationBtn: $("italicValidationBtn"),
-    italicCropExportBtn: $("italicCropExportBtn"),
+    italicCropExportBtn: $("italicCropExportBtn"),\n    neuralItalicN1Btn: $("neuralItalicN1Btn"), neuralItalicN1Input: $("neuralItalicN1Input"), neuralItalicN1Status: $("neuralItalicN1Status"),
     italicPixelStudyBtn: $("italicPixelStudyBtn"),
     italicReferenceAtlasBtn: $("italicReferenceAtlasBtn"),
     tesseractSidecarBtn: $("tesseractSidecarBtn"),
@@ -8066,6 +8066,41 @@
     setTimeout(() => URL.revokeObjectURL(url), 1500);
   }
 
+  async function runNeuralItalicN1(file){
+    const status=els.neuralItalicN1Status||els.statusBox;
+    const say=t=>{if(status)status.textContent=t;};
+    if(!window.tf){say("TensorFlow.js did not load. Check the network connection and refresh.");return;}
+    let payload;try{payload=JSON.parse(await file.text());}catch{say("Could not read that crop JSON.");return;}
+    const rows=(payload.crops||[]).filter(r=>(r.label==="ITALIC"||r.label==="ROMAN")&&r.pngDataUrl&&Number.isFinite(Number(r.source?.pageIndex)));
+    if(rows.length<100){say("This file does not contain enough labeled PNG crops.");return;}
+    say(`N1 · decoding ${rows.length} crops…`);
+    const decode=src=>new Promise((resolve,reject)=>{const im=new Image();im.onload=()=>resolve(im);im.onerror=reject;im.src=src;});
+    const pages=[...new Set(rows.map(r=>Number(r.source.pageIndex)))].sort((a,b)=>a-b);
+    const hash=n=>{let x=(n+1)*2654435761>>>0;x^=x>>>16;return x>>>0;};
+    const shuffled=[...pages].sort((a,b)=>hash(a)-hash(b)),nTest=Math.max(1,Math.round(shuffled.length*.15)),nVal=Math.max(1,Math.round(shuffled.length*.15));
+    const testPages=new Set(shuffled.slice(0,nTest)),valPages=new Set(shuffled.slice(nTest,nTest+nVal)),splitFor=r=>testPages.has(Number(r.source.pageIndex))?"test":valPages.has(Number(r.source.pageIndex))?"validation":"train";
+    const tensors=[],labels=[],splits=[],meta=[];
+    for(let i=0;i<rows.length;i++){
+      const r=rows[i];try{const im=await decode(r.pngDataUrl),c=document.createElement("canvas");c.width=48;c.height=32;const cx=c.getContext("2d");cx.fillStyle="#fff";cx.fillRect(0,0,48,32);const scale=Math.min(44/im.width,28/im.height),w=Math.max(1,im.width*scale),h=Math.max(1,im.height*scale);cx.drawImage(im,(48-w)/2,(32-h)/2,w,h);const data=cx.getImageData(0,0,48,32).data,arr=new Float32Array(48*32);for(let j=0;j<arr.length;j++)arr[j]=(255-(data[j*4]+data[j*4+1]+data[j*4+2])/3)/255;tensors.push(arr);labels.push(r.label==="ITALIC"?1:0);splits.push(splitFor(r));meta.push(r);}catch{}
+      if(i%200===0){say(`N1 · decoding ${i}/${rows.length}…`);await new Promise(requestAnimationFrame);}
+    }
+    const idx=kind=>splits.map((x,i)=>x===kind?i:-1).filter(i=>i>=0),trainI=idx("train"),valI=idx("validation"),testI=idx("test");
+    const makeX=ids=>tf.tensor4d(ids.flatMap(i=>Array.from(tensors[i])),[ids.length,32,48,1]),makeY=ids=>tf.tensor2d(ids.map(i=>[labels[i]]),[ids.length,1]);
+    const tx=makeX(trainI),ty=makeY(trainI),vx=makeX(valI),vy=makeY(valI);
+    const pos=trainI.reduce((a,i)=>a+labels[i],0),neg=trainI.length-pos,classWeight={0:1,1:Math.max(1,neg/Math.max(1,pos))};
+    const model=tf.sequential();model.add(tf.layers.conv2d({inputShape:[32,48,1],filters:8,kernelSize:3,activation:"relu",padding:"same"}));model.add(tf.layers.maxPooling2d({poolSize:2}));model.add(tf.layers.conv2d({filters:16,kernelSize:3,activation:"relu",padding:"same"}));model.add(tf.layers.maxPooling2d({poolSize:2}));model.add(tf.layers.flatten());model.add(tf.layers.dense({units:24,activation:"relu"}));model.add(tf.layers.dropout({rate:.25}));model.add(tf.layers.dense({units:1,activation:"sigmoid"}));model.compile({optimizer:tf.train.adam(.001),loss:"binaryCrossentropy"});
+    say(`N1 · training on ${trainI.length} crops (${pos} Italic)…`);
+    const history=await model.fit(tx,ty,{epochs:12,batchSize:64,shuffle:true,classWeight,validationData:[vx,vy],callbacks:{onEpochEnd:async(e,l)=>{say(`N1 · epoch ${e+1}/12 · loss ${Number(l.loss).toFixed(4)} · val ${Number(l.val_loss).toFixed(4)}`);await tf.nextFrame();}}});
+    const sx=makeX(testI),pred=Array.from(model.predict(sx).dataSync()),truth=testI.map(i=>labels[i]);
+    const thresholds=[.2,.3,.4,.5,.6,.7,.8,.9],metrics=thresholds.map(t=>{let tp=0,fp=0,tn=0,fn=0;truth.forEach((y,i)=>{const p=pred[i]>=t;if(y&&p)tp++;else if(!y&&p)fp++;else if(!y&&!p)tn++;else fn++;});return{threshold:t,tp,fp,tn,fn,precision:tp/Math.max(1,tp+fp),recall:tp/Math.max(1,tp+fn),f1:2*tp/Math.max(1,2*tp+fp+fn)};});
+    const ranked=testI.map((ri,j)=>({score:pred[j],label:meta[ri].label,text:meta[ri].text,pageIndex:meta[ri].source?.pageIndex,lineIndex:meta[ri].source?.lineIndex,id:meta[ri].id})).sort((a,b)=>b.score-a.score);
+    const top=k=>{const q=ranked.slice(0,k),it=q.filter(x=>x.label==="ITALIC").length;return{k,italic:it,roman:q.length-it,precision:it/Math.max(1,q.length)};};
+    const result={experiment:"Neural Italic N1",buildVersion:BUILD_VERSION,sourceFormat:payload.format,createdAt:new Date().toISOString(),architecture:"48x32 grayscale padded crops; Conv8-MaxPool-Conv16-MaxPool-Dense24-Dropout-Dense1",split:{method:"deterministic page-grouped 70/15/15",train:trainI.length,validation:valI.length,test:testI.length,trainPages:pages.length-nTest-nVal,validationPages:nVal,testPages:nTest,trainItalics:pos,testItalics:truth.reduce((a,x)=>a+x,0)},classWeight,epochs:12,lossHistory:history.history.loss,valLossHistory:history.history.val_loss,thresholdMetrics:metrics,topRanks:[20,50,100,250].map(top),rankedTest:ranked};
+    downloadBlob(new Blob([JSON.stringify(result)],{type:"application/json"}),`neural-italic-n1-build-${BUILD_VERSION}.json`);
+    const best=[...metrics].sort((a,b)=>b.f1-a.f1)[0];say(`N1 complete · test ${testI.length} crops / ${result.split.testItalics} Italic · best tested threshold ${best.threshold}: precision ${(best.precision*100).toFixed(1)}%, recall ${(best.recall*100).toFixed(1)}%, F1 ${(best.f1*100).toFixed(1)}% · results downloaded.`);
+    tf.dispose([tx,ty,vx,vy,sx]);model.dispose();
+  }
+
   async function exportLabeledItalicCropDataset(){
     const examples=(currentItalicLearningProfile().examples||[]).filter(x=>(x.label==="ITALIC"||x.label==="ROMAN")&&italicExamplePhysicalKey(x));
     if(!examples.length){setStatus("No persisted Italic/Roman specimens with recoverable physical locations are available.");return;}
@@ -9080,6 +9115,8 @@ ${coverSpine}${spine.join("\n")}
     }
   });
   els.italicLineHuntBtn?.addEventListener("click",async()=>{els.italicLineHuntBtn.disabled=true;try{await launchItalicLineHunt();}finally{els.italicLineHuntBtn.disabled=false;}});
+  els.neuralItalicN1Btn?.addEventListener("click",()=>els.neuralItalicN1Input?.click());
+  els.neuralItalicN1Input?.addEventListener("change",async e=>{const f=e.target.files?.[0];if(f)await runNeuralItalicN1(f);e.target.value="";});
   els.italicCropExportBtn?.addEventListener("click", exportLabeledItalicCropDataset);
   els.italicValidationBtn?.addEventListener("click",async()=>{
     els.italicValidationBtn.disabled=true;
