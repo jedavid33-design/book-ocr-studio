@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "217";
+  const BUILD_VERSION = "218";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -143,6 +143,12 @@
     typographyReviewDetected: $("typographyReviewDetected"),
     typographyReviewCorrectBtn: $("typographyReviewCorrectBtn"),
     typographyReviewWrongBtn: $("typographyReviewWrongBtn"),
+    typographyCorrectionPanel: $("typographyCorrectionPanel"),
+    typographyCorrectionCalls: $("typographyCorrectionCalls"),
+    typographyCorrectionEditor: $("typographyCorrectionEditor"),
+    typographyCorrectionMarkBtn: $("typographyCorrectionMarkBtn"),
+    typographyCorrectionSaveBtn: $("typographyCorrectionSaveBtn"),
+    typographyCorrectionCancelBtn: $("typographyCorrectionCancelBtn"),
     progressWrap: $("progressWrap"),
     progressLabel: $("progressLabel"),
     progressPercent: $("progressPercent"),
@@ -529,6 +535,60 @@
     if(els.typographyReviewText) els.typographyReviewText.textContent="Only this page is shown. Compare each imported call above with the same wording in the screenshot. Also scan the screenshot for any italic text that is missing from the imported-call list.";
     if(els.typographyReviewPrevBtn) els.typographyReviewPrevBtn.disabled=state.typographyReviewPosition<=0;
     if(els.typographyReviewNextBtn) els.typographyReviewNextBtn.disabled=state.typographyReviewPosition>=state.typographyReviewPages.length-1;
+  }
+
+  function openTypographyCorrection() {
+    const entry=state.typographyReviewPages[state.typographyReviewPosition]; if(!entry)return;
+    const {page,index}=entry;
+    state.typographyReviewVerdicts[index]="wrong";
+    if(els.typographyCorrectionPanel) els.typographyCorrectionPanel.classList.remove("hidden");
+    if(els.typographyCorrectionEditor) els.typographyCorrectionEditor.value=page.text || "";
+    renderTypographyCorrectionCalls();
+    setStatus(`Correcting typography on page ${index+1}. Only this page's OCR text is exposed.`);
+  }
+
+  function renderTypographyCorrectionCalls() {
+    const entry=state.typographyReviewPages[state.typographyReviewPosition]; if(!entry||!els.typographyCorrectionCalls)return;
+    const {page,index}=entry, parsed=parseItalicMarkedText(page.text||"");
+    els.typographyCorrectionCalls.innerHTML="";
+    parsed.ranges.forEach((r,n)=>{
+      const phrase=parsed.plain.slice(r.start,r.end);
+      const row=document.createElement("div"); row.className="typography-call";
+      const em=document.createElement("em"); em.textContent=phrase;
+      const remove=document.createElement("button"); remove.type="button"; remove.className="button ghost"; remove.textContent="Remove italic";
+      remove.addEventListener("click",()=>{
+        const current=parseItalicMarkedText(page.text||"");
+        const target=current.ranges[n]; if(!target)return;
+        const remaining=current.ranges.filter((_,i)=>i!==n);
+        page.text=renderItalicRanges(current.plain,remaining); page.manualEdited=true;
+        saveRepairOverlayPage(index,{manualEdited:true}); saveCheckpoint();
+        if(els.typographyCorrectionEditor) els.typographyCorrectionEditor.value=page.text;
+        renderTypographyCorrectionCalls(); renderTypographyReview();
+        setStatus(`Removed one italic call from page ${index+1}.`);
+      });
+      row.append(em,remove); els.typographyCorrectionCalls.appendChild(row);
+    });
+    if(!parsed.ranges.length) els.typographyCorrectionCalls.textContent="No italic spans remain on this page.";
+  }
+
+  function markCorrectionSelectionItalic() {
+    const editor=els.typographyCorrectionEditor; if(!editor)return;
+    const start=editor.selectionStart,end=editor.selectionEnd;
+    if(!Number.isFinite(start)||!Number.isFinite(end)||end<=start){setStatus("Select the missed italic text in the current-page editor first.");return;}
+    const selected=editor.value.slice(start,end); if(!selected.trim())return;
+    editor.setRangeText(`[[i]]${selected}[[/i]]`,start,end,"select");
+  }
+
+  function saveTypographyCorrection() {
+    const entry=state.typographyReviewPages[state.typographyReviewPosition]; if(!entry)return;
+    const {page,index}=entry;
+    if(els.typographyCorrectionEditor) page.text=els.typographyCorrectionEditor.value;
+    page.manualEdited=true; page.chapterCandidate=chapterHeuristic(page.text);
+    saveRepairOverlayPage(index,{manualEdited:true}); saveCheckpoint();
+    state.typographyReviewVerdicts[index]="corrected";
+    if(els.typographyCorrectionPanel) els.typographyCorrectionPanel.classList.add("hidden");
+    renderTypographyReview();
+    setStatus(`Typography corrections saved on page ${index+1} and will flow to EPUB export.`);
   }
 
   async function importTypographyAnnotationsFile(file) {
@@ -8900,11 +8960,10 @@ ${coverSpine}${spine.join("\n")}
     state.typographyReviewVerdicts[entry.index]="correct"; renderTypographyReview();
     setStatus(`Typography page ${entry.index+1} marked correct.`);
   });
-  els.typographyReviewWrongBtn?.addEventListener("click", () => {
-    const entry=state.typographyReviewPages[state.typographyReviewPosition]; if(!entry)return;
-    state.typographyReviewVerdicts[entry.index]="wrong"; renderTypographyReview();
-    setStatus(`Typography page ${entry.index+1} marked needs correction.`);
-  });
+  els.typographyReviewWrongBtn?.addEventListener("click", openTypographyCorrection);
+  els.typographyCorrectionMarkBtn?.addEventListener("click", markCorrectionSelectionItalic);
+  els.typographyCorrectionSaveBtn?.addEventListener("click", saveTypographyCorrection);
+  els.typographyCorrectionCancelBtn?.addEventListener("click", () => { els.typographyCorrectionPanel?.classList.add("hidden"); renderTypographyReview(); });
   els.typographyReviewPrevBtn?.addEventListener("click", () => { if(state.typographyReviewPosition>0){state.typographyReviewPosition--;renderTypographyReview();} });
   els.typographyReviewNextBtn?.addEventListener("click", () => { if(state.typographyReviewPosition<state.typographyReviewPages.length-1){state.typographyReviewPosition++;renderTypographyReview();} });
   els.typographyReviewDoneBtn?.addEventListener("click", () => { state.typographyReviewActive=false; els.typographyReviewPanel?.classList.add("hidden"); setStatus("Typography review closed."); });
