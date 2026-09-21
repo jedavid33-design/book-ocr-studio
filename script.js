@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "220";
+  const BUILD_VERSION = "221";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -10049,12 +10049,18 @@ ${coverSpine}${spine.join("\n")}
   }
   async function runTesseractSidecar(){
     if(!state.files.length){setStatus("Add the book screenshots first.");return;}
-    const T=await ensureTesseractSidecar(),sample=[0,Math.floor(state.files.length/2),state.files.length-1].filter((v,i,a)=>v>=0&&a.indexOf(v)===i);
-    const worker=await T.createWorker("eng",1,{logger:m=>{if(m?.status)setStatus("Tesseract sidecar: "+m.status+(Number.isFinite(m.progress)?" "+Math.round(m.progress*100)+"%":""));}});
+    const T=await ensureTesseractSidecar();
+    const sample=state.files.map((_,i)=>i);
+    const worker=await T.createWorker("eng",1,{logger:m=>{
+      if(m?.status)setStatus("Tesseract sidecar: "+m.status+(Number.isFinite(m.progress)?" "+Math.round(m.progress*100)+"%":""));
+    }});
     try{
       const rows=[];
-      for(const index of sample){
-        const img=await loadImageFromFile(state.files[index]),canvas=makeCroppedCanvas(img),r=await worker.recognize(canvas,{}, {text:true,blocks:true,hocr:true,tsv:true});
+      for(let pos=0;pos<sample.length;pos++){
+        const index=sample[pos];
+        setStatus(`Tesseract sidecar full-book diagnostic: page ${pos+1} of ${sample.length}…`);
+        const img=await loadImageFromFile(state.files[index]),canvas=makeCroppedCanvas(img);
+        const r=await worker.recognize(canvas,{}, {text:true,blocks:true,hocr:true,tsv:true});
         const data=r?.data||{},words=data.words||[],layout=tesseractWordsToLayout(words);
         const bookProfile=layout.length?buildBookLayoutProfile([{layoutLines:layout}]):null;
         const rebuilt=layout.length?reconstructParagraphsFromLayout(layout,{bookProfile}):{text:data.text||""};
@@ -10062,15 +10068,39 @@ ${coverSpine}${spine.join("\n")}
         const safe=globalThis.BookOcrEpubPolish?.safePolishText,repaired1=typeof safe==="function"?safe(repaired0).text:repaired0,repaired=applyProfileKnownOcrCleanup(repaired1).text;
         const paddle=state.pages?.[index]?.text||"";
         const italicWords=words.filter(w=>w?.font_name&&/italic|oblique/i.test(String(w.font_name)));
-        rows.push({pageIndex:index,fileName:state.files[index].name,rawText:raw,repairedText:repaired,paddleText:paddle,rawVsPaddleSimilarity:paddle?textSimilarity(raw,paddle):null,repairedVsPaddleSimilarity:paddle?textSimilarity(repaired,paddle):null,wordCount:words.length,italicStyleWordCount:italicWords.length,italicStyleWords:italicWords.slice(0,100).map(w=>({text:w.text,font_name:w.font_name,confidence:w.confidence,bbox:w.bbox})),tesseractMetadata:{hasWords:!!words.length,hasBlocks:!!data.blocks?.length,hasHocr:!!data.hocr,hasTsv:!!data.tsv}});
+        const rawParas=raw.split(/\n\s*\n/).map(x=>x.trim()).filter(Boolean);
+        const repairedParas=repaired.split(/\n\s*\n/).map(x=>x.trim()).filter(Boolean);
+        const paddleParas=String(paddle).split(/\n\s*\n/).map(x=>x.trim()).filter(Boolean);
+        rows.push({
+          pageIndex:index,fileName:state.files[index].name,
+          rawText:raw,repairedText:repaired,paddleText:paddle,
+          rawVsPaddleSimilarity:paddle?textSimilarity(raw,paddle):null,
+          repairedVsPaddleSimilarity:paddle?textSimilarity(repaired,paddle):null,
+          paragraphCounts:{tesseractRaw:rawParas.length,tesseractRepaired:repairedParas.length,paddle:paddleParas.length},
+          reconstructionChangedParagraphCount:rawParas.length!==repairedParas.length,
+          paddleDisagreesWithRawParagraphCount:paddleParas.length!==rawParas.length,
+          wordCount:words.length,italicStyleWordCount:italicWords.length,
+          italicStyleWords:italicWords.slice(0,100).map(w=>({text:w.text,font_name:w.font_name,confidence:w.confidence,bbox:w.bbox})),
+          tesseractMetadata:{hasWords:!!words.length,hasBlocks:!!data.blocks?.length,hasHocr:!!data.hocr,hasTsv:!!data.tsv}
+        });
         canvas.width=1;canvas.height=1;
+        if((pos+1)%5===0) await new Promise(resolve=>setTimeout(resolve,30));
       }
-      const payload={build:BUILD_VERSION,diagnosticOnly:true,engine:"Tesseract.js v5 sidecar",samplePages:sample.map(i=>i+1),rows,note:"Tesseract sidecar diagnostic only. Tesseract does not replace Paddle or modify saved OCR/learning. Tesseract text is passed through current paragraph reconstruction where geometry is available, safe polish, and profile-known cleanup; output is compared with existing Paddle text."};
-      downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),"tesseract-sidecar-v"+BUILD_VERSION+".json");
-      setStatus("Tesseract sidecar complete on "+rows.length+" pages. Diagnostic JSON downloaded; Paddle OCR and learning were untouched.");
+      const changed=rows.filter(r=>r.reconstructionChangedParagraphCount).length;
+      const rawDisagree=rows.filter(r=>r.paddleDisagreesWithRawParagraphCount).length;
+      const avg=(key)=>rows.length?rows.reduce((a,r)=>a+(Number(r[key])||0),0)/rows.length:null;
+      const payload={
+        build:BUILD_VERSION,diagnosticOnly:true,engine:"Tesseract.js v5 sidecar",
+        scope:"full-book",samplePages:sample.map(i=>i+1),
+        summary:{pages:rows.length,reconstructionChangedParagraphCountPages:changed,paddleVsTesseractRawParagraphCountDisagreementPages:rawDisagree,averageRawVsPaddleSimilarity:avg("rawVsPaddleSimilarity"),averageRepairedVsPaddleSimilarity:avg("repairedVsPaddleSimilarity")},
+        rows,
+        note:"Full-book Tesseract sidecar diagnostic only. Tesseract does not replace Paddle or modify saved OCR, typography, repair state, or learning. Raw Tesseract paragraph structure is retained alongside current reconstruction output so paragraph-boundary evidence can be audited independently."
+      };
+      downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),"tesseract-sidecar-full-v"+BUILD_VERSION+".json");
+      setStatus(`Tesseract full-book sidecar complete: ${rows.length} pages · reconstruction changed paragraph counts on ${changed} · raw Tesseract/Paddle paragraph counts disagreed on ${rawDisagree}. Diagnostic JSON downloaded; book state untouched.`);
     }finally{await worker.terminate();}
   }
-  els.tesseractSidecarBtn?.addEventListener("click",async()=>{const b=els.tesseractSidecarBtn,old=b.textContent;b.disabled=true;b.textContent="Testing Tesseract…";try{await runTesseractSidecar();}catch(err){console.error(err);setStatus("Tesseract sidecar failed: "+(err?.message||err));}finally{b.disabled=false;b.textContent=old;}});
+  els.tesseractSidecarBtn?.addEventListener("click",async()=>{const b=els.tesseractSidecarBtn,old=b.textContent;b.disabled=true;b.textContent="Scanning full book…";try{await runTesseractSidecar();}catch(err){console.error(err);setStatus("Tesseract sidecar failed: "+(err?.message||err));}finally{b.disabled=false;b.textContent=old;}});
 
   els.italicReferenceAtlasBtn?.addEventListener("click",async()=>{
     const btn=els.italicReferenceAtlasBtn,old=btn.textContent;btn.disabled=true;btn.textContent="Reference atlas…";setStatus("Reference atlas: loading bundled Iowan Roman/Italic glyph atlas…");
