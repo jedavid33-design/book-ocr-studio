@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "205";
+  const BUILD_VERSION = "206";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -8082,6 +8082,8 @@
     const liveByPhysical=new Map();for(const run of (state.italicCalibrationReviewSet||[])){const key=(Number.isFinite(Number(run.pageIndex))&&Number.isFinite(Number(run.lineIndex))&&Number.isFinite(Number(run.startWordIndex)))?`${Number(run.pageIndex)}:${Number(run.lineIndex)}:${Number(run.startWordIndex)}`:null;if(key&&run.reviewBox&&!liveByPhysical.has(key))liveByPhysical.set(key,run.reviewBox);}
     const byPage=new Map();for(const x of examples){const key=italicExamplePhysicalKey(x),pi=Number(key?.split(":")[0]);if(!Number.isFinite(pi))continue;if(!byPage.has(pi))byPage.set(pi,[]);byPage.get(pi).push(x);}
     const rows=[];let done=0,failed=0,exactGeometry=0,approxGeometry=0;
+    const audit={sampleSize:0,italic:[],roman:[],geometryCounts:{},warnings:[]};
+    const auditPick=(arr,n)=>{if(arr.length<=n)return [...arr];const out=[];for(let i=0;i<n;i++)out.push(arr[Math.round(i*(arr.length-1)/(n-1))]);return out;};
     setStatus(`Preparing neural crop dataset · 0/${examples.length} specimens…`);
     for(const [pi,list] of byPage){
       const file=state.pages?.[pi]?.file||state.files?.[pi];if(!file){failed+=list.length;continue;}
@@ -8104,8 +8106,13 @@
         pageCanvas.width=1;pageCanvas.height=1;
       }catch(err){console.warn("Could not export neural crops for page",pi,err);failed+=list.length;}
     }
-    const payload={format:"book-ocr-studio-neural-italic-crops-v2",buildVersion:BUILD_VERSION,exportedAt:new Date().toISOString(),sourceProfile:state.sourceProfile||"default",counts:{requested:examples.length,exported:rows.length,failed,italic:rows.filter(x=>x.label==="ITALIC").length,roman:rows.filter(x=>x.label==="ROMAN").length,exactGeometry,approxGeometry},geometryNote:"Exact review boxes are preferred. When unavailable after reload, Build 205 reconstructs a conservative word crop from the persisted OCR line box and word position; geometry is explicitly tagged so neural experiments can compare/exclude approximations.",splitGuardrails:{recommended:"group by page for primary held-out split; token grouping as secondary leakage stress test",warning:"Do not randomly split individual crops. Repeated words and neighboring typography can create visual near-duplicate leakage."},crops:rows};
-    const title=cleanFilename(els.bookTitle?.value||"book"),blob=new Blob([JSON.stringify(payload)],{type:"application/json"});downloadBlob(blob,`${title}-neural-italic-crops-build-${BUILD_VERSION}.json`);setStatus(`Neural crop dataset exported · ${rows.length} crops (${payload.counts.italic} italic · ${payload.counts.roman} Roman) · ${exactGeometry} exact / ${approxGeometry} recovered geometry${failed?` · ${failed} failed`:""}.`);
+    const italicRows=rows.filter(x=>x.label==="ITALIC"),romanRows=rows.filter(x=>x.label==="ROMAN");
+    const auditRows=[...auditPick(italicRows,24),...auditPick(romanRows,24)];
+    audit.sampleSize=auditRows.length;
+    for(const row of auditRows){const entry={id:row.id,label:row.label,text:row.text,source:row.source,width:row.width,height:row.height,pngDataUrl:row.pngDataUrl};(row.label==="ITALIC"?audit.italic:audit.roman).push(entry);audit.geometryCounts[row.source.geometry]=(audit.geometryCounts[row.source.geometry]||0)+1;}
+    if(!exactGeometry)audit.warnings.push("No exact persisted review boxes were available; every audited crop uses reconstructed layout-line-proportional geometry.");
+    const payload={format:"book-ocr-studio-neural-italic-crops-v3",buildVersion:BUILD_VERSION,exportedAt:new Date().toISOString(),sourceProfile:state.sourceProfile||"default",counts:{requested:examples.length,exported:rows.length,failed,italic:rows.filter(x=>x.label==="ITALIC").length,roman:rows.filter(x=>x.label==="ROMAN").length,exactGeometry,approxGeometry},cropAudit:audit,geometryNote:"Build 206 embeds a deterministic 48-crop visual audit sample (up to 24 Italic + 24 Roman) so reconstructed geometry can be inspected before neural training. Exact review boxes are preferred. When unavailable after reload, Build 205 reconstructs a conservative word crop from the persisted OCR line box and word position; geometry is explicitly tagged so neural experiments can compare/exclude approximations.",splitGuardrails:{recommended:"group by page for primary held-out split; token grouping as secondary leakage stress test",warning:"Do not randomly split individual crops. Repeated words and neighboring typography can create visual near-duplicate leakage."},crops:rows};
+    const title=cleanFilename(els.bookTitle?.value||"book"),blob=new Blob([JSON.stringify(payload)],{type:"application/json"});downloadBlob(blob,`${title}-neural-italic-crops-build-${BUILD_VERSION}.json`);setStatus(`Neural crop dataset + ${audit.sampleSize}-crop visual audit exported · ${rows.length} crops (${payload.counts.italic} italic · ${payload.counts.roman} Roman) · ${exactGeometry} exact / ${approxGeometry} recovered geometry${failed?` · ${failed} failed`:""}.`);
   }
 
 
