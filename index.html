@@ -14,7 +14,7 @@
 <link href="apple-touch-icon.png" rel="apple-touch-icon"/>
 <link href="icon-192.png" rel="icon" sizes="192x192" type="image/png"/>
 <link href="styles.css?v=56" rel="stylesheet"/>
-</head>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>\n</head>
 <body>
 <header class="topbar">
 <div>
@@ -35,6 +35,10 @@
 <details class="compact-epub-repair"><summary class="compact-epub-repair-summary">OCR experiment tools</summary><div class="compact-epub-repair-body">
 <p class="hint">Analyze a previously exported Roman Residual report without loading screenshots or an OCR project.</p>
 <div class="actions"><button class="button secondary" id="italicRomanResidualOfflineBtn" type="button">Analyze Roman Residual Export</button></div>
+<p class="hint">Neural Italic N1 · import a Build 206+ labeled crop dataset and run a page-grouped held-out image-classification experiment. Diagnostic only.</p>
+<div class="actions"><button class="button secondary" id="neuralItalicN1Btn" type="button">Run Neural Italic N1</button></div>
+<input accept="application/json,.json" id="neuralItalicN1Input" style="display:none" type="file">
+<div class="status-box subtle" id="neuralItalicN1Status">No neural crop dataset loaded.</div>
 <input accept="application/json,.json" id="italicRomanResidualImport" style="display:none" type="file">
 </div></details></section>
 <section class="card">
