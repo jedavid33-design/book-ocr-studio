@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "200";
+  const BUILD_VERSION = "201";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -8744,7 +8744,7 @@ ${coverSpine}${spine.join("\n")}
       const pageHeldOut=buildGroupedHeldOutItalicValidation("page");
       setStatus("Held-out validation: checking token-grouped folds…");
       const tokenHeldOut=buildGroupedHeldOutItalicValidation("token");
-      state.italicHeldOutValidation={label:"HELD-OUT VALIDATION",pageGrouped:pageHeldOut,tokenGrouped:tokenHeldOut,pixelAssist,foldDiagnostics:{pageGrouped:italicHeldOutFoldDiagnostics("page"),tokenGrouped:italicHeldOutFoldDiagnostics("token")}};
+      state.italicHeldOutValidation={label:"HELD-OUT VALIDATION",pageGrouped:pageHeldOut,tokenGrouped:tokenHeldOut,pixelAssist,foldDiagnostics:{pageGrouped:italicHeldOutFoldDiagnostics("page"),tokenGrouped:italicHeldOutFoldDiagnostics("token")},scoreAblation:{pageGrouped:italicHeldOutScoreAblation("page"),tokenGrouped:italicHeldOutScoreAblation("token")}};
       state.italicValidationLiveHuntTiming=liveHuntTiming;
       state.italicHuntTiming=replay.huntTiming;
       state.italicReviewTiming={mode,startedAt:new Date().toISOString(),measurementPrepMs,livePopulationMs,populationBuildRankMs:livePopulationMs,renderMs:0,totalMs:Math.round(now()-t0),queueSize:(state.italicCalibrationReviewSet||[]).length,replayDiagnostic:true,heldOut:true,pixelAssist};
@@ -9115,6 +9115,44 @@ ${coverSpine}${spine.join("\n")}
       reports.push({fold:fold.index+1,groupKind,groupCount:fold.groups.length,heldOutPositives:ital.length,heldOutRomans:rom.length,metrics:italicRankMetrics(ranked),classSummary:{italic:summarize(ranked,"ITALIC"),roman:summarize(ranked,"ROMAN"),italicMinusRoman:gaps},top250:{italic:top.filter(x=>x.validationLabel==="ITALIC").length,roman:top.filter(x=>x.validationLabel==="ROMAN").length},positivePages:[...new Set(ital.map(x=>x.pageIndex).filter(Number.isFinite))].length,positiveTokens:[...new Set(ital.map(x=>italicNormalizedSpecimenText(x)).filter(Boolean))].length});
     }
     return{available:true,diagnosticOnly:true,groupKind,foldCount:reports.length,reports,note:"Build 200: out-of-fold component diagnostics. Every test specimen is scored only from the corresponding training fold. Compare strong and weak folds without changing production scoring."};
+  }
+
+  function italicHeldOutScoreAblation(groupKind="page"){
+    const examples=(currentItalicLearningProfile().examples||[]).filter(x=>(x.label==="ITALIC"||x.label==="ROMAN")&&Array.isArray(x.vector)&&x.vector.length===ITALIC_FEATURE_NAMES.length),plan=italicGroupedFolds(examples,groupKind);
+    if(!plan.available)return{...plan,totalExamples:examples.length};
+    const recipes=[
+      {id:"control-v200",label:"Build 200 control",weights:{learned:.62,structural:.30,envelope:.08,context:1}},
+      {id:"pixel-structural-balanced",label:"Pixel/structural balanced",weights:{learned:.42,structural:.50,envelope:.08,context:.50}},
+      {id:"structural-forward",label:"Structural forward",weights:{learned:.32,structural:.60,envelope:.08,context:.35}},
+      {id:"low-envelope-context",label:"Low envelope/context",weights:{learned:.48,structural:.50,envelope:.02,context:.20}},
+      {id:"learned-structural-only",label:"Learned + structural only",weights:{learned:.45,structural:.55,envelope:0,context:0}}
+    ];
+    const perRecipe=new Map(recipes.map(r=>[r.id,[]]));
+    const foldReports=[];
+    const scoreWith=(run,recipe)=>{
+      const c=run.finalRankComponents||{},w=recipe.weights;
+      return w.learned*Number(c.blendedLearnedProbability||0)+w.structural*Number(c.structuralProbability||0)+w.envelope*Number(c.positiveEnvelopeScore||0)+w.context*Number(c.hiddenContextBonus||0);
+    };
+    const diversify=(rows,scoreField)=>{
+      const sorted=[...rows].sort((a,b)=>Number(b[scoreField])-Number(a[scoreField])||Number(b.supervisedScore||0)-Number(a.supervisedScore||0)),rounds=[],counts=new Map();
+      for(const row of sorted){const key=italicNormalizedSpecimenText(row)||row.validationExampleId,round=counts.get(key)||0;counts.set(key,round+1);if(!rounds[round])rounds[round]=[];rounds[round].push(row);}
+      return rounds.flat();
+    };
+    for(const fold of plan.folds){
+      const testIndices=new Set(fold.rows.map(x=>x.index)),train=examples.filter((_,i)=>!testIndices.has(i)),pixelModel=italicPixelModelForExamples(train);
+      const runs=fold.rows.map(({example,index})=>{const run=italicRunFromPersistedExample(example);run.validationLabel=example.label;run.validationExampleId=example.id||`index:${index}`;run.validationExampleIndex=index;run.pixelItalicProbability=italicPixelProbabilityFromModel(run.pixelFeatures,pixelModel);return run;});
+      const canonical=rankCanonicalItalicCandidates(runs,{trainingExamples:train});
+      const foldResult={fold:fold.index+1,heldOutPositives:canonical.filter(x=>x.validationLabel==="ITALIC").length,heldOutRomans:canonical.filter(x=>x.validationLabel==="ROMAN").length,recipes:{}};
+      for(const recipe of recipes){
+        const rows=canonical.map((row,i)=>({...row,ablationScore:scoreWith(row,recipe),ablationIdentity:i})),ranked=diversify(rows,"ablationScore");
+        perRecipe.get(recipe.id).push(...ranked);
+        foldResult.recipes[recipe.id]=italicRankMetrics(ranked);
+      }
+      foldReports.push(foldResult);
+    }
+    const pooled={};
+    for(const recipe of recipes){const ranked=diversify(perRecipe.get(recipe.id),"ablationScore");pooled[recipe.id]={label:recipe.label,weights:recipe.weights,metrics:italicRankMetrics(ranked)};}
+    return{available:true,diagnosticOnly:true,groupKind,recipes,perFold:foldReports,pooled,note:"Build 201 score-ablation laboratory. Uses the same honest grouped held-out folds and fold-trained Pixel Assist as the control. Production Hunt scoring is unchanged."};
   }
 
   function buildGroupedHeldOutItalicValidation(groupKind="page"){
