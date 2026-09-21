@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "218";
+  const BUILD_VERSION = "219";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -55,6 +55,8 @@
     typographyReviewPages: [],
     typographyReviewPosition: 0,
     typographyReviewVerdicts: {},
+    typographyUncertain: [],
+    typographyUncertainPosition: 0,
   };
 
   let PaddleOCRClass = null;
@@ -149,6 +151,12 @@
     typographyCorrectionMarkBtn: $("typographyCorrectionMarkBtn"),
     typographyCorrectionSaveBtn: $("typographyCorrectionSaveBtn"),
     typographyCorrectionCancelBtn: $("typographyCorrectionCancelBtn"),
+    typographyFirstReadBtn: $("typographyFirstReadBtn"),
+    typographyUncertainPanel: $("typographyUncertainPanel"),
+    typographyUncertainMeta: $("typographyUncertainMeta"),
+    typographyUncertainCanvas: $("typographyUncertainCanvas"),
+    typographyUncertainItalicBtn: $("typographyUncertainItalicBtn"),
+    typographyUncertainRomanBtn: $("typographyUncertainRomanBtn"),
     progressWrap: $("progressWrap"),
     progressLabel: $("progressLabel"),
     progressPercent: $("progressPercent"),
@@ -591,6 +599,40 @@
     setStatus(`Typography corrections saved on page ${index+1} and will flow to EPUB export.`);
   }
 
+  async function renderUncertainCrop() {
+    const item=state.typographyUncertain[state.typographyUncertainPosition];
+    if(!item||!els.typographyUncertainCanvas)return;
+    const page=state.pages[item.pageIndex], file=page?.file; if(!file)return;
+    if(els.typographyUncertainMeta) els.typographyUncertainMeta.textContent=`Uncertain specimen ${state.typographyUncertainPosition+1} of ${state.typographyUncertain.length}`;
+    const bmp=await createImageBitmap(file);
+    const box=item.box;
+    const pad=Math.max(4,Math.round((box?.height||24)*0.18));
+    const sx=Math.max(0,Math.floor((box?.x||0)-pad)), sy=Math.max(0,Math.floor((box?.y||0)-pad));
+    const sw=Math.min(bmp.width-sx,Math.ceil((box?.width||bmp.width)+pad*2)), sh=Math.min(bmp.height-sy,Math.ceil((box?.height||40)+pad*2));
+    const canvas=els.typographyUncertainCanvas, scale=Math.min(4,Math.max(1,500/Math.max(1,sw)));
+    canvas.width=Math.max(1,Math.round(sw*scale)); canvas.height=Math.max(1,Math.round(sh*scale));
+    const ctx=canvas.getContext("2d"); ctx.imageSmoothingEnabled=true; ctx.drawImage(bmp,sx,sy,sw,sh,0,0,canvas.width,canvas.height); bmp.close?.();
+  }
+
+  function startFirstReadUncertainReview() {
+    if(!state.typographyUncertain.length){setStatus("No uncertain typography specimens are waiting. Confident italics can go straight to EPUB.");return;}
+    state.typographyUncertainPosition=0; els.typographyUncertainPanel?.classList.remove("hidden"); renderUncertainCrop();
+    setStatus("First-read typography review opened. Only isolated uncertain crops are shown; uncertain text remains Roman unless you approve it.");
+  }
+
+  function resolveUncertain(asItalic) {
+    const item=state.typographyUncertain[state.typographyUncertainPosition]; if(!item)return;
+    if(asItalic){
+      const page=state.pages[item.pageIndex], parsed=parseItalicMarkedText(page.text||"");
+      let hit=flexiblePhraseMatch(parsed.plain,item.text,0)||typographyFuzzyMatch(parsed.plain,item.text,0);
+      if(hit){page.text=renderItalicRanges(parsed.plain,[...parsed.ranges,{start:hit.start,end:hit.end}]);saveRepairOverlayPage(item.pageIndex);saveCheckpoint();}
+    }
+    item.resolution=asItalic?"italic":"roman";
+    const next=state.typographyUncertain.findIndex((x,i)=>i>state.typographyUncertainPosition&&!x.resolution);
+    if(next>=0){state.typographyUncertainPosition=next;renderUncertainCrop();}
+    else {els.typographyUncertainPanel?.classList.add("hidden");setStatus("Uncertain typography review complete. Approved specimens were applied; Roman decisions remain unformatted.");}
+  }
+
   async function importTypographyAnnotationsFile(file) {
     if (!file) return;
     if (!state.pages.length) { setStatus("Load the OCR project before importing typography annotations."); return; }
@@ -602,13 +644,25 @@
       }
       let requested = 0, applied = 0, alreadyPresent = 0;
       const misses = [];
+      state.typographyUncertain = [];
       for (const annotatedPage of payload.pages) {
         const match = String(annotatedPage?.pageId || "").match(/^p(\d{4})$/);
         if (!match) continue;
         const pageIndex = Number(match[1]) - 1;
         const page = state.pages[pageIndex];
         if (!page) { misses.push({pageId:annotatedPage.pageId,reason:"page-not-loaded"}); continue; }
-        const current = parseItalicMarkedText(page.text || "");
+        for (const span of (annotatedPage.uncertainSpans || [])) {
+          const itemId=String(span?.itemId||"");
+          const wordMatch=itemId.match(/-w(\d{5})$/);
+          const rawIndex=wordMatch?Number(wordMatch[1])-1:-1;
+          const raw=rawIndex>=0?page.rawOcrItems?.[rawIndex]:null;
+          const b=raw?.bbox || raw?.box || raw?.rect || null;
+          let box=null;
+          if(Array.isArray(b)&&b.length>=4) box={x:Number(b[0]),y:Number(b[1]),width:Number(b[2])-Number(b[0]),height:Number(b[3])-Number(b[1])};
+          else if(b&&typeof b==="object") box={x:Number(b.x??b.left??0),y:Number(b.y??b.top??0),width:Number(b.width??((b.right??0)-(b.left??0))),height:Number(b.height??((b.bottom??0)-(b.top??0)))};
+          state.typographyUncertain.push({pageIndex,itemId,text:String(span?.text||""),box,resolution:null});
+        }
+                const current = parseItalicMarkedText(page.text || "");
         const plain = current.plain;
         const ranges = [...current.ranges];
         let searchFrom = 0;
@@ -638,7 +692,7 @@
       updateNavigationControls();
       const missCount = misses.length;
       state.lastTypographyImportReport = {build:BUILD_VERSION,importedAt:new Date().toISOString(),requested,applied,alreadyPresent,misses};
-      setStatus(`Typography annotations imported: ${applied} new italic span${applied===1?"":"s"} applied, ${alreadyPresent} already present, ${missCount} unmatched. Imported italics are now authoritative page text and will export as <em>.`);
+      setStatus(`Typography annotations imported: ${applied} confident italic span${applied===1?"":"s"} applied, ${state.typographyUncertain.length} uncertain left Roman for isolated-crop review, ${alreadyPresent} already present, ${missCount} unmatched.`);
       if (missCount) console.warn("Typography annotation import misses", misses);
     } catch (err) {
       console.error(err);
@@ -8955,6 +9009,9 @@ ${coverSpine}${spine.join("\n")}
   els.exportTypographyTestBtn?.addEventListener("click", exportTypographyTest);
   els.importTypographyAnnotationsBtn?.addEventListener("click", () => els.importTypographyAnnotationsFile?.click());
   els.typographyReviewBtn?.addEventListener("click", openTypographyReview);
+  els.typographyFirstReadBtn?.addEventListener("click", startFirstReadUncertainReview);
+  els.typographyUncertainItalicBtn?.addEventListener("click", () => resolveUncertain(true));
+  els.typographyUncertainRomanBtn?.addEventListener("click", () => resolveUncertain(false));
   els.typographyReviewCorrectBtn?.addEventListener("click", () => {
     const entry=state.typographyReviewPages[state.typographyReviewPosition]; if(!entry)return;
     state.typographyReviewVerdicts[entry.index]="correct"; renderTypographyReview();
