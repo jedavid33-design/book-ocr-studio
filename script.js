@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "194";
+  const BUILD_VERSION = "195";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -8880,11 +8880,12 @@ ${coverSpine}${spine.join("\n")}
   function setVisualItalicStatus(message){ if(els.visualItalicStatus) els.visualItalicStatus.textContent=message; setStatus(message); }
   function setVisualItalicStatus(message){ if(els.visualItalicStatus) els.visualItalicStatus.textContent=message; setStatus(message); }
   function visualItalicCacheKey(){ return "visualItalic:schema1:"+italicMeasurementCacheSignature(); }
+  function visualItalicLabelsKey(){return visualItalicCacheKey()+":labels";}
   async function cacheVisualItalicResults(){
-    try{const db=await openItalicLearningDb(),key=visualItalicCacheKey(),payload={cacheSchema:1,savedAt:new Date().toISOString(),results:state.visualItalicResults||[],labels:state.visualItalicLabels||[]};await new Promise((resolve,reject)=>{const tx=db.transaction(ITALIC_LEARNING_DB_STORE,"readwrite");tx.objectStore(ITALIC_LEARNING_DB_STORE).put(payload,key);tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);});return true;}catch(err){console.warn("Could not cache Visual Italic results",err);return false;}
+    try{const db=await openItalicLearningDb(),key=visualItalicCacheKey(),labelsKey=visualItalicLabelsKey(),payload={cacheSchema:1,savedAt:new Date().toISOString(),results:state.visualItalicResults||[],labels:state.visualItalicLabels||[]},labelPayload={cacheSchema:1,savedAt:payload.savedAt,labels:state.visualItalicLabels||[]};await new Promise((resolve,reject)=>{const tx=db.transaction(ITALIC_LEARNING_DB_STORE,"readwrite"),store=tx.objectStore(ITALIC_LEARNING_DB_STORE);store.put(payload,key);store.put(labelPayload,labelsKey);tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);});return true;}catch(err){console.warn("Could not cache Visual Italic results",err);return false;}
   }
   async function restoreCachedVisualItalicResults(){
-    try{const db=await openItalicLearningDb(),key=visualItalicCacheKey();const cached=await new Promise((resolve,reject)=>{const tx=db.transaction(ITALIC_LEARNING_DB_STORE,"readonly"),req=tx.objectStore(ITALIC_LEARNING_DB_STORE).get(key);req.onsuccess=()=>resolve(req.result||null);req.onerror=()=>reject(req.error);});if(!cached||!Array.isArray(cached.results)||!cached.results.length)return false;state.visualItalicResults=cached.results;state.visualItalicLabels=normalizeVisualItalicLabels(Array.isArray(cached.labels)?cached.labels:[],true);state.visualItalicReviewIndex=0;setVisualItalicStatus(`Visual Italic restored · ${state.visualItalicResults.length} cached specimens ranked · diagnostic only.`);await renderVisualItalicReview();return true;}catch(err){console.warn("Could not restore cached Visual Italic results",err);return false;}
+    try{const db=await openItalicLearningDb(),key=visualItalicCacheKey(),labelsKey=visualItalicLabelsKey();const [cached,labelCache]=await Promise.all([new Promise((resolve,reject)=>{const tx=db.transaction(ITALIC_LEARNING_DB_STORE,"readonly"),req=tx.objectStore(ITALIC_LEARNING_DB_STORE).get(key);req.onsuccess=()=>resolve(req.result||null);req.onerror=()=>reject(req.error);}),new Promise((resolve,reject)=>{const tx=db.transaction(ITALIC_LEARNING_DB_STORE,"readonly"),req=tx.objectStore(ITALIC_LEARNING_DB_STORE).get(labelsKey);req.onsuccess=()=>resolve(req.result||null);req.onerror=()=>reject(req.error);})]);if(!cached||!Array.isArray(cached.results)||!cached.results.length)return false;state.visualItalicResults=cached.results;const embedded=Array.isArray(cached.labels)?cached.labels:[],separate=Array.isArray(labelCache?.labels)?labelCache.labels:[];state.visualItalicLabels=normalizeVisualItalicLabels(separate.length>=embedded.length?separate:embedded,false);state.visualItalicReviewIndex=0;setVisualItalicStatus(`Visual Italic restored · ${state.visualItalicResults.length} cached specimens ranked · ${state.visualItalicLabels.length} review labels restored · diagnostic only.`);await renderVisualItalicReview();return true;}catch(err){console.warn("Could not restore cached Visual Italic results",err);return false;}
   }
   async function runVisualItalicExperiment(){
     if(!state.files.length||!state.pages.length) throw new Error("Load an OCR project with screenshots first.");
