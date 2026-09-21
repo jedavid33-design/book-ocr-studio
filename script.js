@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "213";
+  const BUILD_VERSION = "214";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -396,23 +396,52 @@
 
   async function exportTypographyTest() {
     if (!state.files.length || !state.pages.length) { setStatus("Load and OCR pages before exporting a typography test."); return; }
-    const button=els.exportTypographyTestBtn; if(button) button.disabled=true;
+    const button = els.exportTypographyTestBtn; if (button) button.disabled = true;
     try {
-      const pages=[];
-      for(let index=0;index<state.pages.length;index++){
-        const page=state.pages[index], file=page?.file||state.files[index]; if(!file) continue;
-        const imageDataUrl=await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(String(r.result||""));r.onerror=()=>reject(r.error);r.readAsDataURL(file);});
-        const layoutLines=(page.layoutLines||[]).map((line,lineIndex)=>{const clean={...line};["italicAuto","italicText","italicMeta","italicWordMeta","italicRunMeta"].forEach(k=>delete clean[k]);clean.lineId="p"+String(index+1).padStart(4,"0")+"-l"+String(lineIndex+1).padStart(4,"0");return clean;});
-        const rawOcrItems=(page.rawOcrItems||[]).map((item,wordIndex)=>({...item,wordId:"p"+String(index+1).padStart(4,"0")+"-w"+String(wordIndex+1).padStart(5,"0")}));
-        pages.push({pageIndex:index,pageId:"p"+String(index+1).padStart(4,"0"),fileName:file.name,imageType:file.type||"",imageDataUrl,crop:{top:Number(els.cropTop.value)||0,bottom:Number(els.cropBottom.value)||0,sides:Number(els.cropSides.value)||0},layoutMeta:page.layoutMeta||null,layoutLines,rawOcrItems});
-        setStatus("Building typography test: page "+(index+1)+" of "+state.pages.length+"…"); await new Promise(r=>setTimeout(r,0));
+      if (typeof JSZip === "undefined") throw new Error("ZIP support did not load. Refresh and try again.");
+      const zip = new JSZip();
+      const pages = [];
+      for (let index = 0; index < state.pages.length; index++) {
+        const page = state.pages[index], file = page?.file || state.files[index]; if (!file) continue;
+        const pageId = "p" + String(index + 1).padStart(4, "0");
+        const extMatch = String(file.name || "").match(/\.([a-zA-Z0-9]+)$/);
+        const ext = (extMatch?.[1] || (file.type === "image/jpeg" ? "jpg" : "png")).toLowerCase();
+        const imageName = pageId + "." + ext;
+        zip.file("images/" + imageName, file);
+        const layoutLines = (page.layoutLines || []).map((line, lineIndex) => {
+          const clean = { ...line };
+          ["italicAuto","italicText","italicMeta","italicWordMeta","italicRunMeta"].forEach(k => delete clean[k]);
+          clean.lineId = pageId + "-l" + String(lineIndex + 1).padStart(4, "0");
+          return clean;
+        });
+        const rawOcrItems = (page.rawOcrItems || []).map((item, wordIndex) => ({
+          ...item, wordId: pageId + "-w" + String(wordIndex + 1).padStart(5, "0")
+        }));
+        pages.push({
+          pageIndex:index, pageId, fileName:file.name, imagePath:"images/" + imageName,
+          imageType:file.type || "", crop:{top:Number(els.cropTop.value)||0,bottom:Number(els.cropBottom.value)||0,sides:Number(els.cropSides.value)||0},
+          layoutMeta:page.layoutMeta || null, layoutLines, rawOcrItems
+        });
+        setStatus("Building typography ZIP: page " + (index + 1) + " of " + state.pages.length + "…");
+        await new Promise(r => setTimeout(r, 0));
       }
-      const payload={schema:"book-ocr-studio-typography-test-v1",build:BUILD_VERSION,exportedAt:new Date().toISOString(),blindTypographyTest:true,note:"Automatic italic guesses and labels are excluded. Returned annotations should reference stable IDs.",book:{title:els.bookTitle?.value||"",author:els.bookAuthor?.value||"",sourceProfile:state.sourceProfile||"cloud-iowan",pageCount:pages.length},pages};
-      const safeTitle=cleanFilename(els.bookTitle?.value||"book");
-      downloadBlob(new Blob([JSON.stringify(payload)],{type:"application/json"}),safeTitle+"-typography-test-build-"+BUILD_VERSION+".json");
-      setStatus("Typography test exported: "+pages.length+" pages with screenshots and Paddle geometry. Automatic italic guesses were excluded.");
-    } catch(err){console.error(err);setStatus("Could not export typography test: "+(err.message||err));}
-    finally{if(button)button.disabled=false;}
+      const payload = {
+        schema:"book-ocr-studio-typography-test-v2", build:BUILD_VERSION, exportedAt:new Date().toISOString(),
+        blindTypographyTest:true,
+        note:"Original screenshots are in images/. Automatic italic guesses and labels are excluded. Returned annotations should reference stable page/line/word IDs.",
+        book:{title:els.bookTitle?.value||"",author:els.bookAuthor?.value||"",sourceProfile:state.sourceProfile||"cloud-iowan",pageCount:pages.length},
+        pages
+      };
+      zip.file("typography-map.json", JSON.stringify(payload, null, 2));
+      zip.file("README.txt", "Book OCR Studio blind typography package\n\nOpen typography-map.json for OCR geometry and stable IDs. Original screenshots are in images/. No Auto Italics Scan guesses or training labels are included.\n");
+      setStatus("Compressing typography ZIP…");
+      const blob = await zip.generateAsync({type:"blob",compression:"DEFLATE",compressionOptions:{level:6}});
+      const safeTitle = cleanFilename(els.bookTitle?.value || "book");
+      downloadBlob(blob, safeTitle + "-typography-test-build-" + BUILD_VERSION + ".zip");
+      setStatus("Typography test exported: " + pages.length + " screenshots + typography-map.json in one ZIP. No re-OCR and no automatic italic guesses.");
+    } catch (err) {
+      console.error(err); setStatus("Could not export typography test: " + (err.message || err));
+    } finally { if (button) button.disabled = false; }
   }
 
   function exportOcrBackup() {
