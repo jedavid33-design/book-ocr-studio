@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "202";
+  const BUILD_VERSION = "203";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -164,6 +164,7 @@
     visualItalicStatus: $("visualItalicStatus"),
     italicLineHuntBtn: $("italicLineHuntBtn"),
     italicValidationBtn: $("italicValidationBtn"),
+    italicCropExportBtn: $("italicCropExportBtn"),
     italicPixelStudyBtn: $("italicPixelStudyBtn"),
     italicReferenceAtlasBtn: $("italicReferenceAtlasBtn"),
     tesseractSidecarBtn: $("tesseractSidecarBtn"),
@@ -8065,6 +8066,32 @@
     setTimeout(() => URL.revokeObjectURL(url), 1500);
   }
 
+  async function exportLabeledItalicCropDataset(){
+    const examples=(currentItalicLearningProfile().examples||[]).filter(x=>(x.label==="ITALIC"||x.label==="ROMAN")&&x.reviewBox&&Number.isFinite(Number(x.sourcePage)));
+    if(!examples.length){setStatus("No labeled Italic/Roman specimens with saved crop geometry are available.");return;}
+    const byPage=new Map();for(const x of examples){const pi=Number(x.sourcePage);if(!byPage.has(pi))byPage.set(pi,[]);byPage.get(pi).push(x);}
+    const rows=[];let done=0,failed=0;
+    setStatus(`Preparing neural crop dataset · 0/${examples.length} specimens…`);
+    for(const [pi,list] of byPage){
+      const file=state.pages?.[pi]?.file||state.files?.[pi];if(!file){failed+=list.length;continue;}
+      try{
+        const img=await loadImageFromFile(file),pageCanvas=makeCroppedCanvas(img),ctx=pageCanvas.getContext("2d");
+        for(const x of list){
+          const b=x.reviewBox||{},sx=Math.max(0,Math.floor(Number(b.x)||0)),sy=Math.max(0,Math.floor(Number(b.y)||0)),sw=Math.max(1,Math.ceil(Number(b.w)||0)),sh=Math.max(1,Math.ceil(Number(b.h)||0));
+          const w=Math.max(1,Math.min(sw,pageCanvas.width-sx)),h=Math.max(1,Math.min(sh,pageCanvas.height-sy));if(w<=0||h<=0){failed++;continue;}
+          const crop=document.createElement("canvas");crop.width=w;crop.height=h;crop.getContext("2d").drawImage(pageCanvas,sx,sy,w,h,0,0,w,h);
+          rows.push({id:x.id,label:x.label,group:{page:pi,token:String(x.normalizedText||x.specimenText||"").toLocaleLowerCase()},source:{pageIndex:pi,lineIndex:x.sourceLine,startWordIndex:x.startWordIndex,endWordIndex:x.endWordIndex,reviewBox:{x:sx,y:sy,w,h}},text:String(x.normalizedText||x.specimenText||""),width:w,height:h,pngDataUrl:crop.toDataURL("image/png")});
+          crop.width=1;crop.height=1;done++;if(done%100===0){setStatus(`Preparing neural crop dataset · ${done}/${examples.length} specimens…`);await new Promise(requestAnimationFrame);}
+        }
+        pageCanvas.width=1;pageCanvas.height=1;
+      }catch(err){console.warn("Could not export neural crops for page",pi,err);failed+=list.length;}
+    }
+    const payload={format:"book-ocr-studio-neural-italic-crops-v1",buildVersion:BUILD_VERSION,exportedAt:new Date().toISOString(),sourceProfile:state.sourceProfile||"default",counts:{requested:examples.length,exported:rows.length,failed,italic:rows.filter(x=>x.label==="ITALIC").length,roman:rows.filter(x=>x.label==="ROMAN").length},splitGuardrails:{recommended:"group by page for primary held-out split; token grouping as secondary leakage stress test",warning:"Do not randomly split individual crops. Repeated words and neighboring typography can create visual near-duplicate leakage."},crops:rows};
+    const title=cleanFilename(els.bookTitle?.value||"book"),blob=new Blob([JSON.stringify(payload)],{type:"application/json"});
+    downloadBlob(blob,`${title}-neural-italic-crops-build-${BUILD_VERSION}.json`);
+    setStatus(`Neural crop dataset exported · ${rows.length} crops (${payload.counts.italic} italic · ${payload.counts.roman} Roman)${failed?` · ${failed} failed`:""}.`);
+  }
+
   function downloadTxt() {
     syncCurrentEditor();
     const paragraphs = state.pages
@@ -9029,7 +9056,7 @@ ${coverSpine}${spine.join("\n")}
     }
   });
   els.italicLineHuntBtn?.addEventListener("click",async()=>{els.italicLineHuntBtn.disabled=true;try{await launchItalicLineHunt();}finally{els.italicLineHuntBtn.disabled=false;}});
-  els.italicValidationBtn?.addEventListener("click",async()=>{
+  els.italicCropExportBtn?.addEventListener("click", exportLabeledItalicCropDataset);\n  els.italicValidationBtn?.addEventListener("click",async()=>{
     els.italicValidationBtn.disabled=true;
     try {
       // v93: Validation is intentionally rerunnable. Never reuse a replay built
