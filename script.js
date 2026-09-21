@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "215";
+  const BUILD_VERSION = "216";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -51,6 +51,9 @@
     visualItalicLabels: [],
     visualItalicDiversityBand: null,
     visualItalicDiversitySeenTexts: new Set(),
+    typographyReviewActive: false,
+    typographyReviewPages: [],
+    typographyReviewPosition: 0,
   };
 
   let PaddleOCRClass = null;
@@ -128,6 +131,14 @@
     exportTypographyTestBtn: $("exportTypographyTestBtn"),
     importTypographyAnnotationsBtn: $("importTypographyAnnotationsBtn"),
     importTypographyAnnotationsFile: $("importTypographyAnnotationsFile"),
+    typographyReviewBtn: $("typographyReviewBtn"),
+    typographyReviewPrevBtn: $("typographyReviewPrevBtn"),
+    typographyReviewNextBtn: $("typographyReviewNextBtn"),
+    typographyReviewDoneBtn: $("typographyReviewDoneBtn"),
+    typographyReviewPanel: $("typographyReviewPanel"),
+    typographyReviewImage: $("typographyReviewImage"),
+    typographyReviewText: $("typographyReviewText"),
+    typographyReviewMeta: $("typographyReviewMeta"),
     progressWrap: $("progressWrap"),
     progressLabel: $("progressLabel"),
     progressPercent: $("progressPercent"),
@@ -446,6 +457,54 @@
     } finally { if (button) button.disabled = false; }
   }
 
+  function typographyFuzzyMatch(haystack, needle, fromIndex = 0) {
+    const words = String(needle || "").trim().split(/\s+/).filter(Boolean);
+    if (!words.length) return null;
+    const normalize = value => String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+    const target = normalize(words.join(" "));
+    if (!target) return null;
+    const source = String(haystack || "");
+    const candidates = [];
+    const tokenRe = /\S+/g;
+    let m; while ((m = tokenRe.exec(source))) candidates.push({start:m.index,end:m.index+m[0].length,text:m[0]});
+    const expected = words.length;
+    let best = null;
+    for (let i=0;i<candidates.length;i++) {
+      if (candidates[i].start < fromIndex) continue;
+      for (let count=Math.max(1,expected-2);count<=expected+2 && i+count<=candidates.length;count++) {
+        const start=candidates[i].start,end=candidates[i+count-1].end,actual=normalize(source.slice(start,end));
+        const maxLen=Math.max(target.length,actual.length); if(!maxLen) continue;
+        let prev=Array(actual.length+1).fill(0).map((_,j)=>j);
+        for(let a=1;a<=target.length;a++){const cur=[a];for(let b=1;b<=actual.length;b++)cur[b]=Math.min(cur[b-1]+1,prev[b]+1,prev[b-1]+(target[a-1]===actual[b-1]?0:1));prev=cur;}
+        const similarity=1-prev[actual.length]/maxLen;
+        if(!best||similarity>best.similarity) best={start,end,text:source.slice(start,end),similarity};
+      }
+    }
+    return best && best.similarity >= 0.90 ? best : null;
+  }
+
+  function openTypographyReview() {
+    const pages=state.pages.map((page,index)=>({page,index,ranges:parseItalicMarkedText(page.text||"").ranges}))
+      .filter(x=>x.ranges.length);
+    if(!pages.length){setStatus("No imported or manually marked italics are available to review.");return;}
+    state.typographyReviewPages=pages; state.typographyReviewPosition=0; state.typographyReviewActive=true;
+    els.typographyReviewPanel?.classList.remove("hidden"); renderTypographyReview();
+    setStatus("Spoiler-safe typography review opened. Only the current screenshot and its typography are shown; OCR prose is hidden.");
+  }
+
+  function renderTypographyReview() {
+    const entry=state.typographyReviewPages[state.typographyReviewPosition]; if(!entry)return;
+    const {page,index}=entry;
+    if(els.typographyReviewMeta) els.typographyReviewMeta.textContent=`Page ${index+1} · ${state.typographyReviewPosition+1} of ${state.typographyReviewPages.length} pages with marked italics`;
+    if(els.typographyReviewImage){
+      const url=pageImageUrl(page.file); els.typographyReviewImage.onload=()=>URL.revokeObjectURL(url); els.typographyReviewImage.src=url;
+      els.typographyReviewImage.alt=`Original screenshot page ${index+1}`;
+    }
+    if(els.typographyReviewText) els.typographyReviewText.textContent="OCR/book text intentionally hidden in spoiler-safe review. Compare the visible screenshot typography only.";
+    if(els.typographyReviewPrevBtn) els.typographyReviewPrevBtn.disabled=state.typographyReviewPosition<=0;
+    if(els.typographyReviewNextBtn) els.typographyReviewNextBtn.disabled=state.typographyReviewPosition>=state.typographyReviewPages.length-1;
+  }
+
   async function importTypographyAnnotationsFile(file) {
     if (!file) return;
     if (!state.pages.length) { setStatus("Load the OCR project before importing typography annotations."); return; }
@@ -473,6 +532,8 @@
           if (!phrase) { misses.push({pageId:annotatedPage.pageId,itemId:span?.itemId||"",reason:"empty-text"}); continue; }
           let hit = flexiblePhraseMatch(plain, phrase, searchFrom);
           if (!hit) hit = flexiblePhraseMatch(plain, phrase, 0);
+          if (!hit) hit = typographyFuzzyMatch(plain, phrase, searchFrom);
+          if (!hit) hit = typographyFuzzyMatch(plain, phrase, 0);
           if (!hit) {
             misses.push({pageId:annotatedPage.pageId,itemId:span?.itemId||"",text:phrase,reason:"text-not-found"});
             continue;
@@ -8807,6 +8868,10 @@ ${coverSpine}${spine.join("\n")}
   els.exportOcrBackupBtn?.addEventListener("click", exportOcrBackup);
   els.exportTypographyTestBtn?.addEventListener("click", exportTypographyTest);
   els.importTypographyAnnotationsBtn?.addEventListener("click", () => els.importTypographyAnnotationsFile?.click());
+  els.typographyReviewBtn?.addEventListener("click", openTypographyReview);
+  els.typographyReviewPrevBtn?.addEventListener("click", () => { if(state.typographyReviewPosition>0){state.typographyReviewPosition--;renderTypographyReview();} });
+  els.typographyReviewNextBtn?.addEventListener("click", () => { if(state.typographyReviewPosition<state.typographyReviewPages.length-1){state.typographyReviewPosition++;renderTypographyReview();} });
+  els.typographyReviewDoneBtn?.addEventListener("click", () => { state.typographyReviewActive=false; els.typographyReviewPanel?.classList.add("hidden"); setStatus("Typography review closed."); });
   els.importTypographyAnnotationsFile?.addEventListener("change", async () => {
     const file = els.importTypographyAnnotationsFile.files?.[0];
     await importTypographyAnnotationsFile(file);
