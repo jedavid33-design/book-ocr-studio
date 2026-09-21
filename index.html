@@ -129,7 +129,21 @@
 <button class="button secondary" id="importOcrBackupBtn" type="button">Import OCR backup</button>
 <button class="button secondary" id="exportTypographyTestBtn" type="button">Export Typography Test</button>
 <button class="button secondary" id="importTypographyAnnotationsBtn" type="button">Import Typography Annotations</button>
+<button class="button secondary" id="typographyReviewBtn" type="button">Review Imported Typography</button>
 <input accept="application/json,.json" id="importTypographyAnnotationsFile" style="display:none" type="file">
+<div class="hidden" id="typographyReviewPanel" style="margin-top:16px">
+  <div class="status-box"><strong>Spoiler-safe typography review</strong><div id="typographyReviewMeta"></div></div>
+  <p class="hint">This mode deliberately hides OCR/book text and shows one original screenshot at a time. It never previews later pages, extracted passages, or chapter summaries.</p>
+  <div style="display:grid;gap:12px">
+    <img id="typographyReviewImage" alt="Typography review screenshot" style="max-width:100%;max-height:72vh;object-fit:contain;margin:auto">
+    <div class="hint" id="typographyReviewText"></div>
+  </div>
+  <div class="actions">
+    <button class="button ghost" id="typographyReviewPrevBtn" type="button">Previous marked page</button>
+    <button class="button ghost" id="typographyReviewNextBtn" type="button">Next marked page</button>
+    <button class="button secondary" id="typographyReviewDoneBtn" type="button">Done reviewing</button>
+  </div>
+</div>
 <input accept="application/json,.json" id="importOcrBackupFile" style="display:none" type="file">
 </div>
 <p class="hint">Export OCR backup saves the processed text, word/line geometry, chapter markers, repair state, and OCR items to a portable JSON file. To restore later, select the same screenshots and import the backup. No re-OCR is required.</p>
@@ -295,7 +309,7 @@
 </dialog>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="epub-polish.js?v=56"></script>
-<script src="script-loader.js?v=215"></script>
+<script src="script-loader.js?v=216"></script>
 <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
