@@ -142,6 +142,18 @@
       <button class="button ghost" id="typographyReviewWrongBtn" type="button">✗ Needs correction</button>
     </div>
     <div class="hint" id="typographyReviewText"></div>
+    <div class="hidden" id="typographyCorrectionPanel">
+      <div class="status-box"><strong>Correct this page</strong><div>Remove false italic calls below. To add something missed, select its exact wording in the current-page editor and tap Mark selection italic.</div></div>
+      <div id="typographyCorrectionCalls"></div>
+      <label class="chapter-title-input"><span>Current page OCR text only</span>
+        <textarea id="typographyCorrectionEditor" rows="12" aria-label="Current page OCR text for typography correction"></textarea>
+      </label>
+      <div class="actions">
+        <button class="button secondary" id="typographyCorrectionMarkBtn" type="button">Mark selection italic</button>
+        <button class="button secondary" id="typographyCorrectionSaveBtn" type="button">Save corrections</button>
+        <button class="button ghost" id="typographyCorrectionCancelBtn" type="button">Cancel</button>
+      </div>
+    </div>
   </div>
   <div class="actions">
     <button class="button ghost" id="typographyReviewPrevBtn" type="button">Previous marked page</button>
@@ -314,7 +326,7 @@
 </dialog>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="epub-polish.js?v=56"></script>
-<script src="script-loader.js?v=217"></script>
+<script src="script-loader.js?v=218"></script>
 <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
