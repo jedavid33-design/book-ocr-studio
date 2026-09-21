@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "221";
+  const BUILD_VERSION = "222";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -57,6 +57,7 @@
     typographyReviewVerdicts: {},
     typographyUncertain: [],
     typographyUncertainPosition: 0,
+    tesseractWorker: null,
   };
 
   let PaddleOCRClass = null;
@@ -417,6 +418,7 @@
           layoutLines: Array.isArray(p.layoutLines) ? p.layoutLines : [],
           rawOcrItems: Array.isArray(p.rawOcrItems) ? p.rawOcrItems : [],
           layoutMeta: p.layoutMeta || null,
+          tesseractEvidence: p.tesseractEvidence || null,
         })),
       };
       localStorage.setItem(CHECKPOINT_KEY, JSON.stringify(payload));
@@ -711,7 +713,7 @@
       if (!raw) throw new Error("The OCR checkpoint is not available.");
       const checkpoint = JSON.parse(raw);
       const payload = {
-        schema: "book-ocr-studio-ocr-backup-v1",
+        schema: "book-ocr-studio-ocr-backup-v2",
         build: BUILD_VERSION,
         exportedAt: new Date().toISOString(),
         pageCount: Array.isArray(checkpoint.pages) ? checkpoint.pages.length : 0,
@@ -735,7 +737,7 @@
     }
     try {
       const payload = JSON.parse(await file.text());
-      const saved = payload?.schema === "book-ocr-studio-ocr-backup-v1" ? payload.checkpoint : payload;
+      const saved = /^book-ocr-studio-ocr-backup-v[12]$/.test(payload?.schema || "") ? payload.checkpoint : payload;
       if (!saved || !Array.isArray(saved.pages) || !saved.pages.length) throw new Error("That file does not contain an OCR checkpoint.");
       const score = checkpointMatchScore(saved);
       if (!score) {
@@ -907,6 +909,7 @@
         layoutLines: Array.isArray(page.layoutLines) ? page.layoutLines : [],
         rawOcrItems: Array.isArray(page.rawOcrItems) ? page.rawOcrItems : [],
         layoutMeta: page.layoutMeta || null,
+        tesseractEvidence: page.tesseractEvidence || null,
       };
     }).filter(Boolean);
 
@@ -2701,6 +2704,40 @@
     canvas.height = 1;
   }
 
+  async function getTesseractOcrWorker(){
+    if(state.tesseractWorker) return state.tesseractWorker;
+    const T=await ensureTesseractSidecar();
+    state.tesseractWorker=await T.createWorker("eng",1);
+    return state.tesseractWorker;
+  }
+
+  async function captureTesseractEvidence(canvas,index){
+    try{
+      const worker=await getTesseractOcrWorker();
+      setStatus(`Tesseract companion OCR page ${index+1} of ${state.files.length}…`);
+      const r=await worker.recognize(canvas,{}, {text:true,blocks:true,hocr:true,tsv:true});
+      const data=r?.data||{}, words=Array.isArray(data.words)?data.words:[], layout=tesseractWordsToLayout(words);
+      return {engine:"Tesseract.js v5",rawText:cleanBodyText(data.text||""),layoutLines:layout,wordCount:words.length,capturedAt:new Date().toISOString()};
+    }catch(err){
+      console.warn("Tesseract companion OCR failed on page "+(index+1),err);
+      return {engine:"Tesseract.js v5",error:String(err?.message||err),rawText:"",layoutLines:[],wordCount:0};
+    }
+  }
+
+  function paragraphCount(text){return String(text||"").split(/\n\s*\n/).map(x=>x.trim()).filter(Boolean).length;}
+  function applyDualOcrStructuralGuard(page){
+    const ev=page?.tesseractEvidence;
+    if(!ev?.rawText||!Array.isArray(page?.layoutLines)||!page.layoutLines.length)return null;
+    const paddleRaw=cleanBodyText(page.text||"");
+    const candidate=cleanBodyText(reconstructParagraphsFromLayout(page.layoutLines,{messageMode:false,bookProfile:state.bookLayoutProfile})?.text||paddleRaw);
+    const pc=paragraphCount(paddleRaw),tc=paragraphCount(ev.rawText),cc=paragraphCount(candidate);
+    if(pc===tc&&cc!==pc){
+      page.layoutMeta={...(page.layoutMeta||{}),dualOcrGuard:{enginesAgree:true,paddleParagraphs:pc,tesseractParagraphs:tc,reconstructionParagraphs:cc,preserved:"paddle"}};
+      return paddleRaw;
+    }
+    return candidate;
+  }
+
   async function processSinglePage(index, { batch = false } = {}) {
     if (!state.files.length) return;
     if (index < 0 || index >= state.files.length) return;
@@ -2726,6 +2763,7 @@
       const canvas = makeCroppedCanvas(img);
       const paddleResult = await paddleRecognizeCanvas(canvas, { messageMode: false });
       const text = cleanBodyText(paddleResult.text || "");
+      const tesseractEvidence = await captureTesseractEvidence(canvas,index);
       const isChapter = chapterHeuristic(text);
       const rememberedChapter = rememberedChapterFor(file, index);
       const pageData = {
@@ -2739,6 +2777,7 @@
         layoutLines: paddleResult.layoutLines || [],
         rawOcrItems: normalizePaddleItems(paddleResult.result?.items),
         layoutMeta: paddleResult.layoutMeta || null,
+        tesseractEvidence,
       };
 
       if (index < state.pages.length) state.pages[index] = pageData;
@@ -2912,7 +2951,14 @@
     // feed that exact object through rebuild, diagnostics, status, and export.
     // This prevents helper/profile drift between code paths.
     state.bookLayoutProfile = buildBookLayoutProfile(state.pages);
-    rebuildParagraphsFromSavedGeometry({ confirmOverwrite: false });
+    let dualGuarded=0, rebuilt=0;
+    state.pages.forEach(page=>{
+      if(page.manualEdited||!Array.isArray(page.layoutLines)||!page.layoutLines.length)return;
+      const next=applyDualOcrStructuralGuard(page);
+      if(!next)return;
+      if(page.layoutMeta?.dualOcrGuard?.preserved==="paddle")dualGuarded++; else rebuilt++;
+      page.text=next; page.chapterCandidate=chapterHeuristic(page.text);
+    });
     const detectedChapters = redetectAutomaticChapterStarts();
 
     state.currentPageIndex = 0;
@@ -2921,7 +2967,8 @@
     renderReview();
     refreshParagraphRebuildUi();
     const chapters = state.pages.filter(page => page.chapterStart).length;
-    setStatus(`Batch OCR complete: ${state.pages.length} pages processed. Book-level paragraph profile applied automatically. Strict chapter detection found ${chapters} chapter start page${chapters === 1 ? "" : "s"} for review. Typography was left untouched.`);
+    setStatus(`Batch OCR complete: ${state.pages.length} pages processed with Paddle + cached Tesseract evidence. Dual-OCR structural guard preserved ${dualGuarded} page${dualGuarded===1?"":"s"} where both engines agreed but reconstruction disagreed; ${rebuilt} page${rebuilt===1?"":"s"} used geometry reconstruction. Strict chapter detection found ${chapters} chapter start page${chapters===1?"":"s"} for review. Typography was left untouched.`);
+    if(state.tesseractWorker){try{await state.tesseractWorker.terminate();}catch(_){} state.tesseractWorker=null;}
   }
 
   async function goToPreviousPage() {
