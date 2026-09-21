@@ -133,9 +133,14 @@
 <input accept="application/json,.json" id="importTypographyAnnotationsFile" style="display:none" type="file">
 <div class="hidden" id="typographyReviewPanel" style="margin-top:16px">
   <div class="status-box"><strong>Spoiler-safe typography review</strong><div id="typographyReviewMeta"></div></div>
-  <p class="hint">This mode deliberately hides OCR/book text and shows one original screenshot at a time. It never previews later pages, extracted passages, or chapter summaries.</p>
+  <p class="hint">This mode shows one original screenshot at a time plus only the italic phrases already imported for that same page. It never previews later pages, chapter summaries, or text from another page.</p>
   <div style="display:grid;gap:12px">
     <img id="typographyReviewImage" alt="Typography review screenshot" style="max-width:100%;max-height:72vh;object-fit:contain;margin:auto">
+    <div class="typography-detected" id="typographyReviewDetected"></div>
+    <div class="actions">
+      <button class="button secondary" id="typographyReviewCorrectBtn" type="button">✓ All calls correct + nothing missed</button>
+      <button class="button ghost" id="typographyReviewWrongBtn" type="button">✗ Needs correction</button>
+    </div>
     <div class="hint" id="typographyReviewText"></div>
   </div>
   <div class="actions">
@@ -309,7 +314,7 @@
 </dialog>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="epub-polish.js?v=56"></script>
-<script src="script-loader.js?v=216"></script>
+<script src="script-loader.js?v=217"></script>
 <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
