@@ -9056,7 +9056,8 @@ ${coverSpine}${spine.join("\n")}
     }
   });
   els.italicLineHuntBtn?.addEventListener("click",async()=>{els.italicLineHuntBtn.disabled=true;try{await launchItalicLineHunt();}finally{els.italicLineHuntBtn.disabled=false;}});
-  els.italicCropExportBtn?.addEventListener("click", exportLabeledItalicCropDataset);\n  els.italicValidationBtn?.addEventListener("click",async()=>{
+  els.italicCropExportBtn?.addEventListener("click", exportLabeledItalicCropDataset);
+  els.italicValidationBtn?.addEventListener("click",async()=>{
     els.italicValidationBtn.disabled=true;
     try {
       // v93: Validation is intentionally rerunnable. Never reuse a replay built
