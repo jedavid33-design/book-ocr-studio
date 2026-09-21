@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "204";
+  const BUILD_VERSION = "205";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -8068,32 +8068,46 @@
 
   async function exportLabeledItalicCropDataset(){
     const examples=(currentItalicLearningProfile().examples||[]).filter(x=>(x.label==="ITALIC"||x.label==="ROMAN")&&italicExamplePhysicalKey(x));
-    const liveByPhysical=new Map();
-    for(const run of (state.italicCalibrationReviewSet||[])){const key=(Number.isFinite(Number(run.pageIndex))&&Number.isFinite(Number(run.lineIndex))&&Number.isFinite(Number(run.startWordIndex)))?`${Number(run.pageIndex)}:${Number(run.lineIndex)}:${Number(run.startWordIndex)}`:null;if(key&&run.reviewBox&&!liveByPhysical.has(key))liveByPhysical.set(key,run.reviewBox);}
-    const boxFor=ex=>ex.reviewBox||state.italicValidationEvidenceByPhysical?.get(italicExamplePhysicalKey(ex))?.reviewBox||liveByPhysical.get(italicExamplePhysicalKey(ex))||null;
     if(!examples.length){setStatus("No persisted Italic/Roman specimens with recoverable physical locations are available.");return;}
+    const wordBoxesForPage=pi=>{
+      const page=state.pages?.[pi],out=new Map();if(!page)return out;
+      const lines=Array.isArray(page.layoutLines)?page.layoutLines:[];
+      lines.forEach((line,li)=>{
+        const text=String(line?.text||"").trim(),box=line?.box;if(!text||!box)return;
+        const tokens=text.split(/\s+/).filter(Boolean),total=tokens.reduce((a,t)=>a+Math.max(1,t.length),0),gap=Math.max(0,Number(box.w||0)*.015),usable=Math.max(1,Number(box.w||0)-gap*Math.max(0,tokens.length-1));let x=Number(box.x||0);
+        tokens.forEach((tok,wi)=>{const w=usable*Math.max(1,tok.length)/Math.max(1,total);out.set(`${li}:${wi}`,{x,y:Number(box.y||0),w,h:Number(box.h||0),approximate:true});x+=w+gap;});
+      });
+      return out;
+    };
+    const liveByPhysical=new Map();for(const run of (state.italicCalibrationReviewSet||[])){const key=(Number.isFinite(Number(run.pageIndex))&&Number.isFinite(Number(run.lineIndex))&&Number.isFinite(Number(run.startWordIndex)))?`${Number(run.pageIndex)}:${Number(run.lineIndex)}:${Number(run.startWordIndex)}`:null;if(key&&run.reviewBox&&!liveByPhysical.has(key))liveByPhysical.set(key,run.reviewBox);}
     const byPage=new Map();for(const x of examples){const key=italicExamplePhysicalKey(x),pi=Number(key?.split(":")[0]);if(!Number.isFinite(pi))continue;if(!byPage.has(pi))byPage.set(pi,[]);byPage.get(pi).push(x);}
-    const rows=[];let done=0,failed=0;
+    const rows=[];let done=0,failed=0,exactGeometry=0,approxGeometry=0;
     setStatus(`Preparing neural crop dataset · 0/${examples.length} specimens…`);
     for(const [pi,list] of byPage){
       const file=state.pages?.[pi]?.file||state.files?.[pi];if(!file){failed+=list.length;continue;}
+      const approx=wordBoxesForPage(pi);
       try{
-        const img=await loadImageFromFile(file),pageCanvas=makeCroppedCanvas(img),ctx=pageCanvas.getContext("2d");
+        const img=await loadImageFromFile(file),pageCanvas=makeCroppedCanvas(img);
         for(const x of list){
-          const b=boxFor(x)||{};if(!(Number(b.w??b.width)>0&&Number(b.h??b.height)>0)){failed++;continue;}const sx=Math.max(0,Math.floor(Number(b.x)||0)),sy=Math.max(0,Math.floor(Number(b.y)||0)),sw=Math.max(1,Math.ceil(Number(b.w)||0)),sh=Math.max(1,Math.ceil(Number(b.h)||0));
-          const w=Math.max(1,Math.min(sw,pageCanvas.width-sx)),h=Math.max(1,Math.min(sh,pageCanvas.height-sy));if(w<=0||h<=0){failed++;continue;}
+          const physical=italicExamplePhysicalKey(x),parts=physical.split(":").map(Number),line=parts[1],startWord=parts[2],endWord=Number.isFinite(Number(x.endWordIndex))?Number(x.endWordIndex):startWord;
+          let b=x.reviewBox||state.italicValidationEvidenceByPhysical?.get(physical)?.reviewBox||liveByPhysical.get(physical)||null,geometry="exact";
+          if(!(Number(b?.w??b?.width)>0&&Number(b?.h??b?.height)>0)){
+            const boxes=[];for(let wi=startWord;wi<=endWord;wi++){const q=approx.get(`${line}:${wi}`);if(q)boxes.push(q);}
+            if(boxes.length){const left=Math.min(...boxes.map(q=>q.x)),top=Math.min(...boxes.map(q=>q.y)),right=Math.max(...boxes.map(q=>q.x+q.w)),bottom=Math.max(...boxes.map(q=>q.y+q.h));b={x:left,y:top,w:right-left,h:bottom-top};geometry="layout-line-proportional";}
+          }
+          if(!(Number(b?.w)>0&&Number(b?.h)>0)){failed++;continue;}
+          const padX=Math.max(2,Number(b.h)*.18),padY=Math.max(2,Number(b.h)*.12),sx=Math.max(0,Math.floor(Number(b.x)-padX)),sy=Math.max(0,Math.floor(Number(b.y)-padY)),sw=Math.ceil(Number(b.w)+padX*2),sh=Math.ceil(Number(b.h)+padY*2),w=Math.max(1,Math.min(sw,pageCanvas.width-sx)),h=Math.max(1,Math.min(sh,pageCanvas.height-sy));if(w<=0||h<=0){failed++;continue;}
           const crop=document.createElement("canvas");crop.width=w;crop.height=h;crop.getContext("2d").drawImage(pageCanvas,sx,sy,w,h,0,0,w,h);
-          rows.push({id:x.id,label:x.label,group:{page:pi,token:String(x.normalizedText||x.specimenText||"").toLocaleLowerCase()},source:{pageIndex:pi,lineIndex:x.sourceLine,startWordIndex:x.startWordIndex,endWordIndex:x.endWordIndex,reviewBox:{x:sx,y:sy,w,h}},text:String(x.normalizedText||x.specimenText||""),width:w,height:h,pngDataUrl:crop.toDataURL("image/png")});
-          crop.width=1;crop.height=1;done++;if(done%100===0){setStatus(`Preparing neural crop dataset · ${done}/${examples.length} specimens…`);await new Promise(requestAnimationFrame);}
+          rows.push({id:x.id,label:x.label,group:{page:pi,token:String(x.normalizedText||x.specimenText||"").toLocaleLowerCase()},source:{pageIndex:pi,lineIndex:line,startWordIndex:startWord,endWordIndex:endWord,geometry,reviewBox:{x:sx,y:sy,w,h}},text:String(x.normalizedText||x.specimenText||""),width:w,height:h,pngDataUrl:crop.toDataURL("image/png")});
+          if(geometry==="exact")exactGeometry++;else approxGeometry++;crop.width=1;crop.height=1;done++;if(done%100===0){setStatus(`Preparing neural crop dataset · ${done}/${examples.length} specimens…`);await new Promise(requestAnimationFrame);}
         }
         pageCanvas.width=1;pageCanvas.height=1;
       }catch(err){console.warn("Could not export neural crops for page",pi,err);failed+=list.length;}
     }
-    const payload={format:"book-ocr-studio-neural-italic-crops-v1",buildVersion:BUILD_VERSION,exportedAt:new Date().toISOString(),sourceProfile:state.sourceProfile||"default",counts:{requested:examples.length,exported:rows.length,failed,italic:rows.filter(x=>x.label==="ITALIC").length,roman:rows.filter(x=>x.label==="ROMAN").length},splitGuardrails:{recommended:"group by page for primary held-out split; token grouping as secondary leakage stress test",warning:"Do not randomly split individual crops. Repeated words and neighboring typography can create visual near-duplicate leakage."},crops:rows};
-    const title=cleanFilename(els.bookTitle?.value||"book"),blob=new Blob([JSON.stringify(payload)],{type:"application/json"});
-    downloadBlob(blob,`${title}-neural-italic-crops-build-${BUILD_VERSION}.json`);
-    setStatus(`Neural crop dataset exported · ${rows.length} crops (${payload.counts.italic} italic · ${payload.counts.roman} Roman)${failed?` · ${failed} failed`:""}.`);
+    const payload={format:"book-ocr-studio-neural-italic-crops-v2",buildVersion:BUILD_VERSION,exportedAt:new Date().toISOString(),sourceProfile:state.sourceProfile||"default",counts:{requested:examples.length,exported:rows.length,failed,italic:rows.filter(x=>x.label==="ITALIC").length,roman:rows.filter(x=>x.label==="ROMAN").length,exactGeometry,approxGeometry},geometryNote:"Exact review boxes are preferred. When unavailable after reload, Build 205 reconstructs a conservative word crop from the persisted OCR line box and word position; geometry is explicitly tagged so neural experiments can compare/exclude approximations.",splitGuardrails:{recommended:"group by page for primary held-out split; token grouping as secondary leakage stress test",warning:"Do not randomly split individual crops. Repeated words and neighboring typography can create visual near-duplicate leakage."},crops:rows};
+    const title=cleanFilename(els.bookTitle?.value||"book"),blob=new Blob([JSON.stringify(payload)],{type:"application/json"});downloadBlob(blob,`${title}-neural-italic-crops-build-${BUILD_VERSION}.json`);setStatus(`Neural crop dataset exported · ${rows.length} crops (${payload.counts.italic} italic · ${payload.counts.roman} Roman) · ${exactGeometry} exact / ${approxGeometry} recovered geometry${failed?` · ${failed} failed`:""}.`);
   }
+
 
   function downloadTxt() {
     syncCurrentEditor();
