@@ -434,3 +434,11 @@ Surgical follow-up to v2.7.62.
 - Deletions, shortenings, unrelated occurrences, and unanchored page-wide matches do not use this shortcut; transactional import behavior remains unchanged.
 - Treats Unicode ellipsis (`…`) as a valid character in uppercase structural headings, so source-faithful headings such as `ADRIAN … AGAIN` stay out of prose-only terminal-punctuation and short-paragraph audits.
 - Visible chapter heading text and `chapterPov` metadata remain source-faithful.
+
+
+## Build 235 — Anchored additive self-heal + shared structural audit
+- Detects a previously over-applied additive QA correction only when the authoritative full replacement and the duplicated punctuation suffix resolve at the same stable OCR-item anchor.
+- Repairs that anchored over-application back to the exact QA replacement instead of treating the shorter valid replacement substring as an already-correct no-op.
+- Keeps the repair deliberately narrow to short punctuation-only additive suffixes; it is not a general page-wide quote or punctuation deduper.
+- Paragraph-fragment auditing now calls the shared `isStructuralBlock()` classifier instead of maintaining a second uppercase-heading regex.
+- As a result, Unicode-ellipsis headings such as `ADRIAN … AGAIN` are excluded consistently from both terminal-punctuation and short-paragraph audits without rewriting their visible text or POV metadata.
