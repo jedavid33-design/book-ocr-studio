@@ -419,3 +419,10 @@ Surgical follow-up to v2.7.62.
 - Baseline matching is page- and issue-type-specific, quote/dash/ellipsis tolerant, and survives paragraph continuation merges without storing a second full copy of the book text.
 - The baseline is saved in OCR checkpoints/backups and cleared on a fresh OCR restart.
 - Final Polish reports a green Visual QA authority row showing how many source-approved conditions were suppressed.
+
+
+## Build 233 — QA re-import through italic markers
+- Fixes cumulative QA re-import after a post-QA backup has already stored authoritative italic markers.
+- Structural replacements that are already present but interrupted by internal `[[i]]…[[/i]]` markers are now recognized as verified no-ops instead of false conflicts.
+- The fallback is intentionally read-only: it can only prove a replacement is already present and cannot apply a correction using marker-stripped offsets.
+- This unblocks Build 232's visual-QA baseline capture without weakening transactional QA import safety.
