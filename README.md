@@ -368,3 +368,11 @@ Surgical follow-up to v2.7.62.
 - Honors typography-segment `finalText` after structural text repair, with original `matchText` as a fallback.
 - Combined QA import now runs transactionally on a working copy. Any structural or italic conflict blocks the entire import and leaves the live OCR project unchanged.
 - Validates the QA source page count before applying corrections.
+
+
+## Build 226 — Stable-item anchored QA matching
+- Resolves cumulative QA text corrections against the stable raw OCR item IDs first, rather than relying on page-wide literal text.
+- Treats smart/straight quote variants, OCR/JSON quote-escape artifacts, and whitespace/line-wrap differences as equivalent for targeting while preserving exact replacement intent.
+- Recognizes corrections already present in reconstructed page text as verified no-ops instead of import conflicts.
+- Uses full raw OCR line context to disambiguate repeated fragments such as `fi re` on the same page.
+- Import remains transactional: any unresolved correction still blocks the entire combined QA import.
