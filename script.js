@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "234";
+  const BUILD_VERSION = "235";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -1018,6 +1018,39 @@
     const anchoredSource = qaPickAnchoredCandidate(sourceCandidates, anchor, expected);
     const anchoredReplacement = qaPickAnchoredCandidate(replacementCandidates, anchor, expected);
 
+    const matchCanonical = qaCanonicalText(matchText);
+    const replacementCanonical = qaCanonicalText(replacementText);
+    const additiveSuffix = matchCanonical &&
+      replacementCanonical.length > matchCanonical.length &&
+      replacementCanonical.startsWith(matchCanonical)
+        ? replacementCanonical.slice(matchCanonical.length)
+        : "";
+    const narrowAdditiveSuffix = additiveSuffix && additiveSuffix.length <= 4 &&
+      /^[\s"'.,;:!?()[\]{}-]+$/.test(additiveSuffix)
+        ? additiveSuffix
+        : "";
+
+    // Build 235: heal the one over-application shape that Build 234 can now
+    // identify but previously treated as merely "already present". If an
+    // additive punctuation suffix was duplicated at the SAME stable item
+    // anchor, replace the over-applied range with the authoritative replacement.
+    // This is intentionally not a page-wide dedupe rule.
+    if (anchoredReplacement && narrowAdditiveSuffix) {
+      const overAppliedCandidates = qaCandidateSet(source, replacementText + narrowAdditiveSuffix);
+      const anchoredOverApplied = qaPickAnchoredCandidate(overAppliedCandidates, anchor, expected);
+      const sameAnchoredReplacement = anchoredOverApplied &&
+        anchoredOverApplied.start <= anchoredReplacement.start &&
+        anchoredOverApplied.end > anchoredReplacement.end;
+      if (sameAnchoredReplacement) {
+        return {
+          ...anchoredOverApplied,
+          mode:"overapplied-additive-replacement",
+          anchorMode:anchor?.mode || "",
+          alreadyPresent:false
+        };
+      }
+    }
+
     // Build 234: additive corrections can leave the original matchText visible
     // inside the already-correct replacement (for example, adding a closing
     // dialogue quote). When BOTH forms resolve to the same stable anchor, the
@@ -1025,8 +1058,6 @@
     // replacement range to contain the source range keeps deletions/shortenings
     // and unrelated page-wide occurrences out of this shortcut.
     if (anchoredSource && anchoredReplacement) {
-      const matchCanonical = qaCanonicalText(matchText);
-      const replacementCanonical = qaCanonicalText(replacementText);
       const additiveReplacement = !!matchCanonical &&
         replacementCanonical.length > matchCanonical.length &&
         replacementCanonical.includes(matchCanonical);
@@ -8467,10 +8498,9 @@
       paras.forEach((para, paraIndex) => {
         const plain = stripItalicMarkers(para).trim();
         const messageSpeakerLabel = /^(?:ME|YOU|SABRINA|TUCKER)$/i.test(plain);
-        if (plain && plain !== "* * *" && plain.length <= 24 &&
+        if (plain && plain.length <= 24 &&
             !messageSpeakerLabel &&
-            !/^(?:CHAPTER\b|PROLOGUE\b|EPILOGUE\b)/i.test(plain) &&
-            !/^[A-Z][A-Z .'-]{2,}$/.test(plain) &&
+            !isStructuralBlock(plain) &&
             !/[.!?…"”']$/.test(plain)) {
           // Likewise, the second visual line of a message bubble is not a tiny
           // paragraph fragment. Suppress the audit card without changing text.
