@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "231";
+  const BUILD_VERSION = "232";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -27,6 +27,7 @@
     lastRegressionReport: null,
     ignoredLigatureCandidates: new Set(),
     ignoredFinalPolishIssues: new Set(),
+    qaApprovedPolishEvidence: [],
     lastFinalPolishCounts: null,
     repairBookHasRun: false,
     guidedRepairMode: "whole",
@@ -417,6 +418,7 @@
         guidedRepairChapterIndex: Number(state.guidedRepairChapterIndex) || 0,
         ignoredLigatureCandidates: Array.from(state.ignoredLigatureCandidates || []),
         ignoredFinalPolishIssues: Array.from(state.ignoredFinalPolishIssues || []),
+        qaApprovedPolishEvidence: Array.isArray(state.qaApprovedPolishEvidence) ? state.qaApprovedPolishEvidence : [],
         pages: state.pages.map(p => ({
           fileName: p.file.name,
           text: p.text || "",
@@ -1203,9 +1205,10 @@
       }
 
       let requested = 0, applied = 0, alreadyPresent = 0;
-      let structuralApplied = 0, structuralAlreadyPresent = 0, boundariesApplied = 0, povApplied = 0;
+      let structuralApplied = 0, structuralAlreadyPresent = 0, boundariesApplied = 0, povApplied = 0, qaBaselineCount = 0;
       const misses = [], structuralMisses = [];
       const touchedPages = new Set();
+      const reviewedPageIndexes = new Set();
       const pendingUncertain = [];
       const workingPages = isCumulative
         ? state.pages.map(page => ({ ...page, layoutMeta:{ ...(page.layoutMeta || {}) } }))
@@ -1221,6 +1224,7 @@
             continue;
           }
           for (let index = startIndex; index <= endIndex; index++) {
+            reviewedPageIndexes.add(index);
             workingPages[index].chapterStart = false;
             workingPages[index].chapterTitle = "";
             workingPages[index].chapterPov = "";
@@ -1455,6 +1459,11 @@
 
         state.pages = workingPages;
         state.typographyUncertain = pendingUncertain;
+        state.repairBookHasRun = false;
+        state.finalPolishHasRun = false;
+        state.ignoredFinalPolishIssues = new Set();
+        qaBaselineCount = captureQaApprovedPolishEvidence(reviewedPageIndexes);
+        console.info(`Captured ${qaBaselineCount} source-approved Final Polish condition${qaBaselineCount===1?"":"s"} from cumulative visual QA.`);
       } else {
         state.typographyUncertain = [];
         for (const annotatedPage of payload.pages) {
@@ -1510,7 +1519,7 @@
       };
       const issueCount = missCount + structuralMisses.length;
       setStatus(isCumulative
-        ? "QA corrections imported: " + (structuralApplied + structuralAlreadyPresent) + " structural fixes verified (" + structuralApplied + " changed, " + structuralAlreadyPresent + " already correct), " + boundariesApplied + " authoritative page-boundary decision" + (boundariesApplied===1?"":"s") + ", " + applied + " italic segment" + (applied===1?"":"s") + ", " + povApplied + " chapter POV tag" + (povApplied===1?"":"s") + ", " + state.typographyUncertain.length + " uncertain typography item" + (state.typographyUncertain.length===1?"":"s") + ". " + (issueCount ? issueCount + " item(s) need review; see console." : "Preflight passed; import committed with no conflicts.")
+        ? "QA corrections imported: " + (structuralApplied + structuralAlreadyPresent) + " structural fixes verified (" + structuralApplied + " changed, " + structuralAlreadyPresent + " already correct), " + boundariesApplied + " authoritative page-boundary decision" + (boundariesApplied===1?"":"s") + ", " + applied + " italic segment" + (applied===1?"":"s") + ", " + povApplied + " chapter POV tag" + (povApplied===1?"":"s") + ", " + state.typographyUncertain.length + " uncertain typography item" + (state.typographyUncertain.length===1?"":"s") + ". Visual-QA baseline saved (" + qaBaselineCount + " source-approved polish condition" + (qaBaselineCount===1?"":"s") + "). " + (issueCount ? issueCount + " item(s) need review; see console." : "Preflight passed; import committed with no conflicts.")
         : "Typography annotations imported: " + applied + " confident italic span" + (applied===1?"":"s") + " applied, " + state.typographyUncertain.length + " uncertain left Roman for isolated-crop review, " + alreadyPresent + " already present, " + missCount + " unmatched.");
       if (misses.length) console.warn("Typography annotation import misses", misses);
       if (structuralMisses.length) console.warn("Structural QA import misses", structuralMisses);
@@ -1651,6 +1660,8 @@
     state.pages = [];
     state.bookLayoutProfile = null;
     state.repairBookHasRun = false;
+    state.finalPolishHasRun = false;
+    state.qaApprovedPolishEvidence = [];
     state.currentPageIndex = -1;
 
     els.progressWrap.classList.add("hidden");
@@ -1720,6 +1731,7 @@
     state.guidedRepairChapterIndex = Number.isFinite(Number(saved.guidedRepairChapterIndex)) ? Number(saved.guidedRepairChapterIndex) : 0;
     state.ignoredLigatureCandidates = new Set(Array.isArray(saved.ignoredLigatureCandidates) ? saved.ignoredLigatureCandidates : []);
     state.ignoredFinalPolishIssues = new Set(Array.isArray(saved.ignoredFinalPolishIssues) ? saved.ignoredFinalPolishIssues : []);
+    state.qaApprovedPolishEvidence = Array.isArray(saved.qaApprovedPolishEvidence) ? saved.qaApprovedPolishEvidence : [];
 
     state.pages = savedPages.map((page, index) => {
       const file = byName.get(page.fileName)
@@ -7692,6 +7704,63 @@
     ].join("|");
   }
 
+  // Build 232: cumulative visual QA is authoritative negative evidence too.
+  // Final Polish should not ask the reader to reconfirm an odd-but-source-correct
+  // condition that was already inspected against the screenshot during QA.
+  function normalizePolishEvidenceText(value) {
+    return qaCanonicalText(stripItalicMarkers(String(value || "")))
+      .toLowerCase()
+      .replace(/\s*-\s*/g, "-")
+      .replace(/\s+([,.;:!?])/g, "$1")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 1400);
+  }
+
+  function polishEvidenceRecord(issue) {
+    const page = state.pages[issue?.pageIndex];
+    const file = page?.file?.name || page?.fileName || issue?.fileName || "";
+    const rawEvidence = issue?.fullText || issue?.current ||
+      [issue?.beforeText, issue?.afterText].filter(Boolean).join(" ⟂ ");
+    return {
+      type: String(issue?.type || "issue"),
+      pageIndex: Number.isFinite(Number(issue?.pageIndex)) ? Number(issue.pageIndex) : -1,
+      fileStem: normalizedStem(file),
+      text: normalizePolishEvidenceText(rawEvidence)
+    };
+  }
+
+  function qaApprovedPolishIssue(issue) {
+    const candidate = polishEvidenceRecord(issue);
+    if (!candidate.text || !Array.isArray(state.qaApprovedPolishEvidence)) return false;
+    return state.qaApprovedPolishEvidence.some(base => {
+      if (!base || base.type !== candidate.type || Number(base.pageIndex) !== candidate.pageIndex) return false;
+      if (base.fileStem && candidate.fileStem && base.fileStem !== candidate.fileStem) return false;
+      const a = String(base.text || "");
+      const b = candidate.text;
+      if (!a || !b) return false;
+      if (a === b) return true;
+      const minLength = Math.min(a.length, b.length);
+      return minLength >= 24 && (a.includes(b) || b.includes(a));
+    });
+  }
+
+  function captureQaApprovedPolishEvidence(reviewedPageIndexes = null) {
+    const report = finalPolishAudit({ suppressQaApproved:false, respectIgnored:false });
+    const allowed = reviewedPageIndexes instanceof Set ? reviewedPageIndexes : null;
+    const records = (report?.issues || [])
+      .filter(issue => !allowed || allowed.has(Number(issue?.pageIndex)))
+      .map(polishEvidenceRecord)
+      .filter(record => record.text);
+    const deduped = new Map();
+    records.forEach(record => {
+      const key = [record.type, record.pageIndex, record.fileStem, record.text].join("|");
+      deduped.set(key, record);
+    });
+    state.qaApprovedPolishEvidence = [...deduped.values()];
+    return state.qaApprovedPolishEvidence.length;
+  }
+
   function jumpToPage(pageIndex) {
     if (!Number.isInteger(pageIndex) || !state.pages[pageIndex]) return;
     state.reviewMode = "all";
@@ -7927,13 +7996,20 @@
     return rawSpeakerCount >= 1 || offLaneCount >= 4 || speakerLabels.length >= 2;
   }
 
-  function finalPolishAudit() {
+  function finalPolishAudit({ suppressQaApproved = true, respectIgnored = true } = {}) {
     const issues = [];
     const checks = [];
+    let qaSuppressed = 0;
     const addCheck = (name, status, detail) => checks.push({ name, status, detail });
     const addIssue = (issue) => {
       issue.key = finalIssueKey(issue);
-      if (!state.ignoredFinalPolishIssues.has(issue.key)) issues.push(issue);
+      if (respectIgnored && state.ignoredFinalPolishIssues.has(issue.key)) return false;
+      if (suppressQaApproved && qaApprovedPolishIssue(issue)) {
+        qaSuppressed++;
+        return false;
+      }
+      issues.push(issue);
+      return true;
     };
 
     let wrapHyphens = 0;
@@ -7998,11 +8074,7 @@
           sourceEnd: sourceMatch.index + sourceMatch[0].length,
           detail: "The repaired book text still contains this geometry-supported line-wrap candidate. Join word changes only this occurrence."
         };
-        issue.key = finalIssueKey(issue);
-        if (!state.ignoredFinalPolishIssues.has(issue.key)) {
-          wrapHyphens++;
-          issues.push(issue);
-        }
+        if (addIssue(issue)) wrapHyphens++;
       }
     });
     addCheck("Wrap-hyphen audit", wrapHyphens ? "warn" : "pass",
@@ -8155,11 +8227,7 @@
         fullText: entry.text,
         detail: `This paragraph has an unmatched dialogue quotation mark after normalizing straight and curly double quotes and checking adjacent page boundaries. Edit only this paragraph or mark it correct.`
       };
-      issue.key = finalIssueKey(issue);
-      if (!state.ignoredFinalPolishIssues.has(issue.key)) {
-        quoteFlags++;
-        issues.push(issue);
-      }
+      if (addIssue(issue)) quoteFlags++;
     });
 
     addCheck("Quote audit", quoteFlags ? "warn" : "pass",
@@ -8197,11 +8265,7 @@
             evidence: "balanced-prefix boundary",
             detail: `An opening dialogue quote appears attached to the end of the preceding sentence (for example: action sentence.\" Dialogue). Studio has not changed it automatically. Confirm against the screenshot, then move the opening quote if needed.`
           };
-          issue.key = finalIssueKey(issue);
-          if (!state.ignoredFinalPolishIssues.has(issue.key)) {
-            quoteBoundaryDrift++;
-            issues.push(issue);
-          }
+          if (addIssue(issue)) quoteBoundaryDrift++;
           return;
         }
 
@@ -8251,11 +8315,7 @@
           evidence: geometryEvidence ? "source geometry" : "narrative-action heuristic",
           detail: `The paragraph has balanced quotes, but its opening quote may have drifted ahead of an action sentence. Evidence: ${geometryEvidence ? "saved OCR line geometry places the quote later" : "the first sentence matches a conservative narrative-action pattern"}. Confirm against the screenshot before moving it.`
         };
-        issue.key = finalIssueKey(issue);
-        if (!state.ignoredFinalPolishIssues.has(issue.key)) {
-          quoteBoundaryDrift++;
-          issues.push(issue);
-        }
+        if (addIssue(issue)) quoteBoundaryDrift++;
       });
     });
 
@@ -8280,7 +8340,7 @@
           // A visual line ending inside a CloudLibrary text bubble is not a
           // paragraph ending, so it must never become a punctuation review card.
           if (messageBubbleWrapEvidence(page, para, "next")) return;
-          addIssue({
+          if (addIssue({
             type: "Terminal punctuation",
             pageIndex,
             paraIndex,
@@ -8289,8 +8349,7 @@
             fullText: para,
             suggestion: `${para}.`,
             detail: "This prose paragraph ends without terminal punctuation. Full-book QA found Paddle systematically dropping final periods. Confirm against the screenshot, then add the period or keep as-is."
-          });
-          terminalPunctuation++;
+          })) terminalPunctuation++;
         }
       });
     });
@@ -8309,7 +8368,7 @@
         const match = /\b([A-Za-z]{2,})\.\s+([a-z]{2,})\b/.exec(plain);
         if (!match) return;
         const joined = `${match[1]}${match[2]}`;
-        addIssue({
+        if (addIssue({
           type: "False word boundary",
           pageIndex,
           paraIndex,
@@ -8320,8 +8379,7 @@
           right: match[2],
           suggestion: joined,
           detail: "Possible OCR-created sentence boundary inside one word. Regression QA found examples such as resent. ment, expres. sion, and assist. ant. Confirm against the screenshot before joining."
-        });
-        falseWordBoundaries++;
+        })) falseWordBoundaries++;
       });
     });
     addCheck("False-word-boundary audit", falseWordBoundaries ? "warn" : "pass",
@@ -8349,7 +8407,7 @@
         if (!best || gap > best.gap) best = { gap, aText, bText };
       }
       if (!best) return;
-      addIssue({
+      if (addIssue({
         type: "Possible scene break",
         pageIndex,
         paraIndex: -1,
@@ -8358,8 +8416,7 @@
         beforeText: best.aText,
         afterText: best.bText,
         detail: `A ${Math.round(best.gap / typical * 10) / 10}× line-height vertical gap appears between prose lines, but no semantic scene break is stored. Baseball/ornament scene dividers were lost on multiple IHOL pages. Confirm visually.`
-      });
-      possibleSceneBreaks++;
+      })) possibleSceneBreaks++;
     });
     addCheck("Scene-break geometry audit", possibleSceneBreaks ? "warn" : "pass",
       possibleSceneBreaks
@@ -8388,16 +8445,19 @@
             current: plain,
             detail: `Paragraph ${paraIndex + 1} is only ${plain.length} characters and has no terminal punctuation.`
           };
-          issue.key = finalIssueKey(issue);
-          if (!state.ignoredFinalPolishIssues.has(issue.key)) {
-            fragments++;
-            issues.push(issue);
-          }
+          if (addIssue(issue)) fragments++;
         }
       });
     });
     addCheck("Paragraph-fragment audit", fragments ? "warn" : "pass",
       fragments ? `${fragments} short fragment${fragments===1?"":"s"} left for review.` : "No unresolved suspicious tiny paragraph fragments found.");
+
+    if (Array.isArray(state.qaApprovedPolishEvidence) && state.qaApprovedPolishEvidence.length) {
+      addCheck("Visual QA authority", "pass",
+        qaSuppressed
+          ? `${qaSuppressed} source-approved polish condition${qaSuppressed===1?" was":"s were"} suppressed; only post-QA changes remain reviewable.`
+          : "Visual-QA baseline is active; no source-approved conditions needed suppression in this pass.");
+    }
 
     const chapters = state.pages.filter(p => p.chapterStart).length;
     addCheck("Chapter structure", chapters ? "pass" : "warn",
@@ -9882,6 +9942,7 @@ ${coverSpine}${spine.join("\n")}
     state.repairBookHasRun = false;
     state.ignoredLigatureCandidates = new Set();
     state.ignoredFinalPolishIssues = new Set();
+    state.qaApprovedPolishEvidence = [];
     clearCheckpoint();
     els.fileCount.textContent = "0 pages loaded";
     els.processBtn.disabled = true;
