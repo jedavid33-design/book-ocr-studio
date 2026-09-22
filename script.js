@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "224";
+  const BUILD_VERSION = "225";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -660,10 +660,18 @@
     return match ? Number(match[1]) - 1 : -1;
   }
 
-  function qaRawItemFor(page, itemId) {
+  function qaRawItemIndex(itemId) {
     const match = String(itemId || "").match(/-w(\d{5})$/);
-    const index = match ? Number(match[1]) - 1 : -1;
+    return match ? Number(match[1]) - 1 : -1;
+  }
+
+  function qaRawItemFor(page, itemId) {
+    const index = qaRawItemIndex(itemId);
     return index >= 0 ? page?.rawOcrItems?.[index] || null : null;
+  }
+
+  function qaPageId(index) {
+    return "p" + String(Number(index) + 1).padStart(4, "0");
   }
 
   function qaExactOccurrences(text, needle) {
@@ -674,52 +682,133 @@
     while (from <= source.length) {
       const at = source.indexOf(target, from);
       if (at < 0) break;
-      hits.push(at);
+      hits.push({ start:at, end:at + target.length, text:target });
       from = at + Math.max(1, target.length);
     }
     return hits;
+  }
+
+  function qaFlexibleOccurrences(text, needle) {
+    const source = String(text || "");
+    const hits = [];
+    let from = 0;
+    while (from <= source.length) {
+      const hit = flexiblePhraseMatch(source, needle, from);
+      if (!hit) break;
+      hits.push(hit);
+      const next = hit.end > from ? hit.end : from + 1;
+      from = next;
+    }
+    return hits;
+  }
+
+  function qaTargetItemIds(op) {
+    if (Array.isArray(op?.itemIds) && op.itemIds.length) return op.itemIds.map(String);
+    return op?.itemId ? [String(op.itemId)] : [];
+  }
+
+  function qaRawOccurrenceOrdinal(page, op, matchText) {
+    const rawItems = Array.isArray(page?.rawOcrItems) ? page.rawOcrItems : [];
+    const targetIds = qaTargetItemIds(op);
+    const targetIndices = targetIds.map(qaRawItemIndex).filter(index => index >= 0 && index < rawItems.length);
+    if (!targetIndices.length) return -1;
+
+    let stream = "";
+    const ranges = [];
+    rawItems.forEach((item, index) => {
+      if (index) stream += "\n";
+      const start = stream.length;
+      stream += String(item?.text || item?.value || item?.label || "");
+      ranges[index] = { start, end:stream.length };
+    });
+
+    const matches = qaFlexibleOccurrences(stream, matchText);
+    if (!matches.length) return -1;
+    const targetStart = Math.min(...targetIndices.map(index => ranges[index]?.start ?? Infinity));
+    const targetEnd = Math.max(...targetIndices.map(index => ranges[index]?.end ?? -Infinity));
+    if (!Number.isFinite(targetStart) || !Number.isFinite(targetEnd)) return -1;
+
+    let bestIndex = -1;
+    let bestOverlap = -1;
+    matches.forEach((match, index) => {
+      const overlap = Math.max(0, Math.min(match.end, targetEnd) - Math.max(match.start, targetStart));
+      if (overlap > bestOverlap) {
+        bestOverlap = overlap;
+        bestIndex = index;
+      }
+    });
+    return bestOverlap > 0 ? bestIndex : -1;
+  }
+
+  function qaLocateReplacement(page, op) {
+    const matchText = String(op?.matchText || "");
+    const source = String(page?.text || "");
+    const exact = qaExactOccurrences(source, matchText);
+    if (exact.length === 1) return { ...exact[0], mode:"exact" };
+
+    const flexible = qaFlexibleOccurrences(source, matchText);
+    if (flexible.length === 1) return { ...flexible[0], mode:"flexible" };
+
+    const ordinal = qaRawOccurrenceOrdinal(page, op, matchText);
+    if (ordinal >= 0 && ordinal < flexible.length) {
+      return { ...flexible[ordinal], mode:"item-ordinal" };
+    }
+
+    if (exact.length > 1 || flexible.length > 1) {
+      return { error:"ambiguous-match", count:Math.max(exact.length, flexible.length) };
+    }
+    return { error:"text-not-found" };
   }
 
   function qaReplaceText(page, op) {
     const matchText = String(op?.matchText || "");
     const replacementText = String(op?.replacementText ?? "");
     if (!matchText) return { ok:false, reason:"empty-match" };
+    const located = qaLocateReplacement(page, op);
+    if (located.error) return { ok:false, reason:located.error, count:located.count };
     const source = String(page?.text || "");
-    const exact = qaExactOccurrences(source, matchText);
-    if (exact.length === 1) {
-      const at = exact[0];
-      page.text = source.slice(0, at) + replacementText + source.slice(at + matchText.length);
-      return { ok:true, mode:"exact" };
-    }
-    if (exact.length > 1) {
-      const raw = qaRawItemFor(page, op?.itemId);
-      const rawText = String(raw?.text || raw?.value || raw?.label || "");
-      if (rawText) {
-        const rawHits = qaExactOccurrences(source, rawText);
-        const local = rawText.indexOf(matchText);
-        if (rawHits.length === 1 && local >= 0) {
-          const at = rawHits[0] + local;
-          page.text = source.slice(0, at) + replacementText + source.slice(at + matchText.length);
-          return { ok:true, mode:"item-context" };
-        }
-      }
-      return { ok:false, reason:"ambiguous-match", count:exact.length };
-    }
-    const flexible = flexiblePhraseMatch(source, matchText, 0) || typographyFuzzyMatch(source, matchText, 0);
-    if (flexible && flexible.end > flexible.start) {
-      page.text = source.slice(0, flexible.start) + replacementText + source.slice(flexible.end);
-      return { ok:true, mode:"fuzzy" };
-    }
-    return { ok:false, reason:"text-not-found" };
+    page.text = source.slice(0, located.start) + replacementText + source.slice(located.end);
+    return { ok:true, mode:located.mode };
   }
 
-  function qaBoundaryAction(fromPageId, toPageId, action) {
+  function qaBoundaryAction(fromPageId, toPageId, action, pages = state.pages) {
     const fromIndex = qaPageIndex(fromPageId), toIndex = qaPageIndex(toPageId);
-    const fromPage = state.pages[fromIndex], toPage = state.pages[toIndex];
+    const fromPage = pages[fromIndex], toPage = pages[toIndex];
     if (!fromPage || !toPage || toIndex !== fromIndex + 1) return false;
-    fromPage.layoutMeta = { ...(fromPage.layoutMeta || {}), qaBoundaryToNext:String(action || "") };
-    toPage.layoutMeta = { ...(toPage.layoutMeta || {}), qaBoundaryFromPrevious:String(action || "") };
+    fromPage.layoutMeta = { ...(fromPage.layoutMeta || {}), qaBoundaryToNext:String(action || ""), qaBoundaryAuthoritative:true };
+    toPage.layoutMeta = { ...(toPage.layoutMeta || {}), qaBoundaryFromPrevious:String(action || ""), qaBoundaryAuthoritative:true };
     return true;
+  }
+
+  function qaCollectBoundaryDecisions(chapters) {
+    const decisions = new Map();
+    const put = (fromPageId, toPageId, action, source) => {
+      if (!fromPageId || !toPageId || !action) return;
+      decisions.set(String(fromPageId) + ">" + String(toPageId), { fromPageId, toPageId, action, source });
+    };
+
+    for (const chapterEntry of (chapters || [])) {
+      const chapter = chapterEntry?.chapter || {};
+      const startIndex = qaPageIndex(chapter?.reviewedPageRange?.startPageId);
+      const endIndex = qaPageIndex(chapter?.reviewedPageRange?.endPageId);
+      if (startIndex >= 0 && endIndex >= startIndex) {
+        for (let index = startIndex; index < endIndex; index++) {
+          put(qaPageId(index), qaPageId(index + 1), "keep_separate", "reviewed-chapter-default");
+        }
+        const nextPageId = chapter?.boundaryCheck?.nextPageId || "";
+        if (nextPageId) put(qaPageId(endIndex), nextPageId, "chapter_boundary", "chapter-boundary");
+      }
+
+      for (const audit of (chapterEntry?.structural?.boundaryAudit || [])) {
+        put(audit?.from, audit?.to, audit?.action, "boundary-audit");
+      }
+
+      for (const op of (chapterEntry?.structural?.operations || [])) {
+        if (op?.type !== "merge_across_pages") continue;
+        put(op?.from?.pageId || op?.fromPageId, op?.to?.pageId || op?.toPageId, "merge_across_pages", op?.opId || "merge-operation");
+      }
+    }
+    return [...decisions.values()];
   }
 
   async function importTypographyAnnotationsFile(file) {
@@ -732,44 +821,69 @@
       const isCumulative = payload?.schema === "book-ocr-studio-cumulative-chapter-qa-checkpoint-v1" && Array.isArray(payload.chapters);
       if (!isLegacy && !isCumulative) throw new Error("That is not a supported Book OCR Studio QA corrections file.");
 
+      const expectedPageCount = Number(payload?.sourceMap?.pageCount || 0);
+      if (isCumulative && expectedPageCount && state.pages.length !== expectedPageCount) {
+        throw new Error("QA file expects " + expectedPageCount + " OCR pages, but this project currently has " + state.pages.length + ". No changes were applied.");
+      }
+
       let requested = 0, applied = 0, alreadyPresent = 0;
       let structuralApplied = 0, boundariesApplied = 0, povApplied = 0;
       const misses = [], structuralMisses = [];
       const touchedPages = new Set();
-      state.typographyUncertain = [];
+      const pendingUncertain = [];
+      const workingPages = isCumulative
+        ? state.pages.map(page => ({ ...page, layoutMeta:{ ...(page.layoutMeta || {}) } }))
+        : state.pages;
 
       if (isCumulative) {
         for (const chapterEntry of payload.chapters) {
           const chapter = chapterEntry?.chapter || {};
-          const startPageId = chapter?.reviewedPageRange?.startPageId || "";
-          const startIndex = qaPageIndex(startPageId);
-          const startPage = state.pages[startIndex];
-          if (startPage) {
-            if (chapter.heading) startPage.chapterTitle = String(chapter.heading);
-            startPage.chapterStart = true;
-            startPage.chapterCandidate = true;
-            if (chapter.pov) {
-              startPage.chapterPov = String(chapter.pov).trim();
-              povApplied++;
-            }
-            touchedPages.add(startIndex);
+          const startIndex = qaPageIndex(chapter?.reviewedPageRange?.startPageId);
+          const endIndex = qaPageIndex(chapter?.reviewedPageRange?.endPageId);
+          if (startIndex < 0 || endIndex < startIndex || !workingPages[startIndex] || !workingPages[endIndex]) {
+            structuralMisses.push({type:"chapter-range",chapter:chapter?.number,reason:"reviewed-range-not-loaded"});
+            continue;
           }
-
-          for (const audit of (chapterEntry?.structural?.boundaryAudit || [])) {
-            if (qaBoundaryAction(audit?.from, audit?.to, audit?.action)) {
-              boundariesApplied++;
-              touchedPages.add(qaPageIndex(audit?.from));
-              touchedPages.add(qaPageIndex(audit?.to));
-            } else {
-              structuralMisses.push({type:"boundary",from:audit?.from,to:audit?.to,reason:"boundary-page-mismatch"});
-            }
+          for (let index = startIndex; index <= endIndex; index++) {
+            workingPages[index].chapterStart = false;
+            workingPages[index].chapterTitle = "";
+            workingPages[index].chapterPov = "";
+            touchedPages.add(index);
           }
+          const startPage = workingPages[startIndex];
+          startPage.chapterStart = true;
+          startPage.chapterCandidate = true;
+          startPage.chapterTitle = String(chapter.heading || startPage.chapterTitle || "");
+          if (chapter.pov) {
+            startPage.chapterPov = String(chapter.pov).trim();
+            povApplied++;
+          }
+        }
 
+        const boundaryDecisions = qaCollectBoundaryDecisions(payload.chapters);
+        for (const decision of boundaryDecisions) {
+          if (qaBoundaryAction(decision.fromPageId, decision.toPageId, decision.action, workingPages)) {
+            boundariesApplied++;
+            touchedPages.add(qaPageIndex(decision.fromPageId));
+            touchedPages.add(qaPageIndex(decision.toPageId));
+          } else {
+            structuralMisses.push({
+              type:"boundary",
+              from:decision.fromPageId,
+              to:decision.toPageId,
+              action:decision.action,
+              source:decision.source,
+              reason:"boundary-page-mismatch"
+            });
+          }
+        }
+
+        for (const chapterEntry of payload.chapters) {
           for (const op of (chapterEntry?.structural?.operations || [])) {
             if (op?.type === "merge_across_pages") {
               const fromPageId = op?.from?.pageId || op?.fromPageId;
               const toPageId = op?.to?.pageId || op?.toPageId;
-              if (qaBoundaryAction(fromPageId, toPageId, "merge_across_pages")) {
+              if (qaBoundaryAction(fromPageId, toPageId, "merge_across_pages", workingPages)) {
                 structuralApplied++;
                 touchedPages.add(qaPageIndex(fromPageId));
                 touchedPages.add(qaPageIndex(toPageId));
@@ -778,24 +892,30 @@
               }
               continue;
             }
+
             const pageIndex = qaPageIndex(op?.pageId);
-            const page = state.pages[pageIndex];
+            const page = workingPages[pageIndex];
             if (!page) {
               structuralMisses.push({opId:op?.opId,type:op?.type,pageId:op?.pageId,reason:"page-not-loaded"});
               continue;
             }
-            if (typeof op?.matchText === "string" && op.matchText && typeof op?.replacementText === "string") {
-              const result = qaReplaceText(page, op);
-              if (result.ok) {
-                structuralApplied++;
-                page.manualEdited = true;
-                page.chapterCandidate = chapterHeuristic(page.text);
-                touchedPages.add(pageIndex);
-              } else {
-                structuralMisses.push({opId:op?.opId,type:op?.type,pageId:op?.pageId,itemId:op?.itemId,matchText:op?.matchText,reason:result.reason,count:result.count});
-              }
-            } else {
+            if (op?.type !== "replace_text" || typeof op?.matchText !== "string" || !op.matchText || typeof op?.replacementText !== "string") {
               structuralMisses.push({opId:op?.opId,type:op?.type,pageId:op?.pageId,reason:"unsupported-operation-shape"});
+              continue;
+            }
+
+            const result = qaReplaceText(page, op);
+            if (result.ok) {
+              structuralApplied++;
+              page.manualEdited = true;
+              page.chapterCandidate = chapterHeuristic(page.text);
+              touchedPages.add(pageIndex);
+            } else {
+              structuralMisses.push({
+                opId:op?.opId,type:op?.type,pageId:op?.pageId,
+                itemId:op?.itemId,itemIds:op?.itemIds,matchText:op?.matchText,
+                reason:result.reason,count:result.count
+              });
             }
           }
         }
@@ -814,24 +934,27 @@
             const segments = Array.isArray(uncertain?.segments) ? uncertain.segments : [uncertain];
             for (const segment of segments) {
               const pageIndex = qaPageIndex(segment?.pageId);
-              const page = state.pages[pageIndex];
+              const page = workingPages[pageIndex];
               if (!page) continue;
               const raw = qaRawItemFor(page, segment?.itemId);
               const b = raw?.bbox || raw?.box || raw?.rect || null;
               let box = null;
               if (Array.isArray(b) && b.length >= 4) box = {x:Number(b[0]),y:Number(b[1]),width:Number(b[2])-Number(b[0]),height:Number(b[3])-Number(b[1])};
               else if (b && typeof b === "object") box = {x:Number(b.x??b.left??0),y:Number(b.y??b.top??0),width:Number(b.width??((b.right??0)-(b.left??0))),height:Number(b.height??((b.bottom??0)-(b.top??0)))};
-              state.typographyUncertain.push({pageIndex,itemId:String(segment?.itemId||""),text:String(segment?.matchText||segment?.text||""),box,resolution:null});
+              pendingUncertain.push({pageIndex,itemId:String(segment?.itemId||""),text:String(segment?.finalText||segment?.matchText||segment?.text||""),box,resolution:null});
             }
           }
         }
 
         for (const [pageIndex, segments] of segmentsByPage) {
-          const page = state.pages[pageIndex];
-          if (!page) continue;
+          const page = workingPages[pageIndex];
+          if (!page) {
+            misses.push({pageId:qaPageId(pageIndex),reason:"page-not-loaded"});
+            continue;
+          }
           segments.sort((a,b)=>{
-            const ai=Number(String(a.itemId||"").match(/-w(\d{5})$/)?.[1]||0);
-            const bi=Number(String(b.itemId||"").match(/-w(\d{5})$/)?.[1]||0);
+            const ai=qaRawItemIndex(a.itemId);
+            const bi=qaRawItemIndex(b.itemId);
             return ai-bi || Number(a.startChar||0)-Number(b.startChar||0);
           });
           const current = parseItalicMarkedText(page.text || "");
@@ -840,13 +963,22 @@
           let searchFrom = 0;
           for (const segment of segments) {
             requested++;
-            const phrase = String(segment?.matchText || "").trim();
-            if (!phrase) { misses.push({pageId:segment?.pageId,itemId:segment?.itemId,spanId:segment?.spanId,reason:"empty-text"}); continue; }
-            let hit = flexiblePhraseMatch(plain, phrase, searchFrom);
-            if (!hit) hit = flexiblePhraseMatch(plain, phrase, 0);
-            if (!hit) hit = typographyFuzzyMatch(plain, phrase, searchFrom);
-            if (!hit) hit = typographyFuzzyMatch(plain, phrase, 0);
-            if (!hit) { misses.push({pageId:segment?.pageId,itemId:segment?.itemId,spanId:segment?.spanId,text:phrase,reason:"text-not-found"}); continue; }
+            const finalPhrase = String(segment?.finalText || "").trim();
+            const sourcePhrase = String(segment?.matchText || "").trim();
+            const phrases = finalPhrase && finalPhrase !== sourcePhrase ? [finalPhrase, sourcePhrase] : [finalPhrase || sourcePhrase];
+            let hit = null;
+            for (const phrase of phrases) {
+              if (!phrase) continue;
+              hit = flexiblePhraseMatch(plain, phrase, searchFrom)
+                || flexiblePhraseMatch(plain, phrase, 0)
+                || typographyFuzzyMatch(plain, phrase, searchFrom)
+                || typographyFuzzyMatch(plain, phrase, 0);
+              if (hit) break;
+            }
+            if (!hit) {
+              misses.push({pageId:segment?.pageId,itemId:segment?.itemId,spanId:segment?.spanId,text:finalPhrase||sourcePhrase,reason:"text-not-found"});
+              continue;
+            }
             const covered = ranges.some(r => hit.start >= r.start && hit.end <= r.end);
             if (covered) alreadyPresent++;
             else { ranges.push({start:hit.start,end:hit.end}); applied++; }
@@ -856,7 +988,21 @@
           page.chapterCandidate = chapterHeuristic(page.text);
           touchedPages.add(pageIndex);
         }
+
+        if (structuralMisses.length || misses.length) {
+          state.lastTypographyImportReport = {
+            build:BUILD_VERSION, importedAt:new Date().toISOString(), requested, applied, alreadyPresent, misses,
+            structuralApplied, boundariesApplied, povApplied, structuralMisses, committed:false
+          };
+          console.warn("QA import preflight blocked; no changes applied", state.lastTypographyImportReport);
+          setStatus("QA import blocked safely: " + structuralMisses.length + " structural conflict" + (structuralMisses.length===1?"":"s") + " and " + misses.length + " italic conflict" + (misses.length===1?"":"s") + ". No project text or structure was changed. See console for details.");
+          return;
+        }
+
+        state.pages = workingPages;
+        state.typographyUncertain = pendingUncertain;
       } else {
+        state.typographyUncertain = [];
         for (const annotatedPage of payload.pages) {
           const pageIndex = qaPageIndex(annotatedPage?.pageId);
           const page = state.pages[pageIndex];
@@ -906,17 +1052,17 @@
       const missCount = misses.length;
       state.lastTypographyImportReport = {
         build:BUILD_VERSION, importedAt:new Date().toISOString(), requested, applied, alreadyPresent, misses,
-        structuralApplied, boundariesApplied, povApplied, structuralMisses
+        structuralApplied, boundariesApplied, povApplied, structuralMisses, committed:true
       };
       const issueCount = missCount + structuralMisses.length;
       setStatus(isCumulative
-        ? `QA corrections imported: ${structuralApplied} structural fix${structuralApplied===1?"":"es"}, ${boundariesApplied} boundary decision${boundariesApplied===1?"":"s"}, ${applied} italic segment${applied===1?"":"s"}, ${povApplied} chapter POV tag${povApplied===1?"":"s"}, ${state.typographyUncertain.length} uncertain typography item${state.typographyUncertain.length===1?"":"s"}. ${issueCount ? issueCount + " item(s) need review; see console." : "No import conflicts."}`
-        : `Typography annotations imported: ${applied} confident italic span${applied===1?"":"s"} applied, ${state.typographyUncertain.length} uncertain left Roman for isolated-crop review, ${alreadyPresent} already present, ${missCount} unmatched.`);
+        ? "QA corrections imported: " + structuralApplied + " structural fix" + (structuralApplied===1?"":"es") + ", " + boundariesApplied + " authoritative page-boundary decision" + (boundariesApplied===1?"":"s") + ", " + applied + " italic segment" + (applied===1?"":"s") + ", " + povApplied + " chapter POV tag" + (povApplied===1?"":"s") + ", " + state.typographyUncertain.length + " uncertain typography item" + (state.typographyUncertain.length===1?"":"s") + ". " + (issueCount ? issueCount + " item(s) need review; see console." : "Preflight passed; import committed with no conflicts.")
+        : "Typography annotations imported: " + applied + " confident italic span" + (applied===1?"":"s") + " applied, " + state.typographyUncertain.length + " uncertain left Roman for isolated-crop review, " + alreadyPresent + " already present, " + missCount + " unmatched.");
       if (misses.length) console.warn("Typography annotation import misses", misses);
       if (structuralMisses.length) console.warn("Structural QA import misses", structuralMisses);
     } catch (err) {
       console.error(err);
-      setStatus(`Could not import QA corrections: ${err.message || err}`);
+      setStatus("Could not import QA corrections: " + (err.message || err));
     }
   }
 
