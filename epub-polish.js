@@ -133,8 +133,16 @@ traffic waffle waffled waffles waffling
     };
 
     // Paddle sometimes reads a closing double quote as apostrophe + double
-    // quote:  okay.'"  ->  okay."  This shape cannot be a valid contraction.
-    text = text.replace(/([.!?…])['’](["”])/g, (m, punct, quote) => {
+    // quote:  okay.'"  ->  okay."  But the same punctuation is legitimate
+    // when dialogue contains a nested single-quoted title/emphasis, for example
+    // “'She Blinded Me With Science.'” or “Emphasis on 'help.'”
+    // Preserve the candidate whenever the current paragraph contains a plausible
+    // opening single quote before it; otherwise keep the proven OCR cleanup.
+    text = text.replace(/([.!?…])['’](["”])/g, (m, punct, quote, offset, source) => {
+      const paragraphStart = source.lastIndexOf("\n\n", offset);
+      const before = source.slice(paragraphStart >= 0 ? paragraphStart + 2 : 0, offset);
+      const hasNestedSingleQuoteOpener = /(^|[\s“"([{—–])['‘](?=[^\s'’])/mu.test(before);
+      if (hasNestedSingleQuoteOpener) return m;
       counts.strayQuoteApostrophes += 1;
       return punct + quote;
     });
