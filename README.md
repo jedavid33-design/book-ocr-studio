@@ -382,3 +382,10 @@ Surgical follow-up to v2.7.62.
 - Normalizes smart/straight quote variants, dash glyph variants, spaced ellipses, layout-only spaces around punctuation, hyphenated line-wrap spacing, and common split-fi OCR artifacts during QA targeting.
 - Keeps stable OCR item anchoring and transactional all-or-nothing import behavior.
 - On a blocked QA import, prints the structural conflict table and includes the conflict operation IDs directly in the visible status message.
+
+
+## Build 228 — Authoritative backup restore
+- Explicit OCR backup import now bypasses the durable repair overlay while loading the selected backup.
+- After a successful backup match, stale local checkpoint and repair-overlay data are cleared before the restored backup becomes the live project.
+- Automatic browser recovery still reapplies the repair overlay for ordinary sessions; only deliberate backup import is treated as sovereign.
+- This fixes cases where a 204-page backup appeared fully restored while older browser edits silently overwrote text on a subset of those pages.
