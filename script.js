@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "226";
+  const BUILD_VERSION = "227";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -705,6 +705,7 @@
   function qaCanonicalChar(ch) {
     if (ch === "“" || ch === "”" || ch === "„" || ch === "‟") return '"';
     if (ch === "‘" || ch === "’" || ch === "‚" || ch === "‛" || ch === "′") return "'";
+    if ("‐‑‒–—―−".includes(ch) || ch === "_") return "-";
     if (ch === "\u00a0") return " ";
     return ch;
   }
@@ -715,24 +716,59 @@
     const map = [];
     let previousWasSpace = false;
 
+    const nextCanonicalNonSpace = (start) => {
+      for (let j = start; j < source.length; j++) {
+        let next = source[j];
+        if (next === "\\" && j + 1 < source.length) {
+          const afterSlash = qaCanonicalChar(source[j + 1]);
+          if (afterSlash === "'" || afterSlash === '"') next = source[++j];
+        }
+        next = qaCanonicalChar(next);
+        if (!/\s/u.test(next)) return next;
+      }
+      return "";
+    };
+
     for (let index = 0; index < source.length; index++) {
       let ch = source[index];
 
-      // Some QA checkpoint strings retain a literal backslash before a quote
-      // from an OCR/JSON transcription. It is not part of the printed book.
       if (ch === "\\" && index + 1 < source.length) {
         const next = qaCanonicalChar(source[index + 1]);
         if (next === "'" || next === '"') continue;
       }
 
+      if (ch === "…") {
+        for (let n = 0; n < 3; n++) {
+          normalized += ".";
+          map.push(index);
+        }
+        previousWasSpace = false;
+        continue;
+      }
+
       ch = qaCanonicalChar(ch);
       if (/\s/u.test(ch)) {
-        if (previousWasSpace) continue;
+        const prev = normalized.at(-1) || "";
+        const prev2 = normalized.length >= 2 ? normalized.slice(-2) : "";
+        const next = nextCanonicalNonSpace(index + 1);
+        const beforeQuote = normalized.length >= 2 ? normalized.at(-2) || "" : "";
+        const nextIsPunctuation = ['"', "'", ",", ".", ";", ":", "?", "!", ")"].includes(next);
+
+        const skipSpace =
+          prev === "-" ||
+          (prev === "." && next === ".") ||
+          nextIsPunctuation ||
+          (prev === '"' && ",.;:?!".includes(beforeQuote)) ||
+          (prev === "'" && ",.;:?!".includes(beforeQuote)) ||
+          (prev2 === "fi" && /[A-Za-z]/u.test(next));
+
+        if (skipSpace || previousWasSpace) continue;
         normalized += " ";
         map.push(index);
         previousWasSpace = true;
         continue;
       }
+
       normalized += ch;
       map.push(index);
       previousWasSpace = false;
@@ -1117,7 +1153,14 @@
             structuralApplied, structuralAlreadyPresent, boundariesApplied, povApplied, structuralMisses, committed:false
           };
           console.warn("QA import preflight blocked; no changes applied", state.lastTypographyImportReport);
-          setStatus("QA import blocked safely: " + structuralMisses.length + " structural conflict" + (structuralMisses.length===1?"":"s") + " and " + misses.length + " italic conflict" + (misses.length===1?"":"s") + ". No project text or structure was changed. See console for details.");
+          if (structuralMisses.length) console.table(structuralMisses);
+          if (misses.length) console.table(misses);
+          const conflictIds = structuralMisses
+            .map(item => item?.opId || (item?.from && item?.to ? item.from + ">" + item.to : item?.type || "unknown"))
+            .filter(Boolean)
+            .slice(0, 20)
+            .join(", ");
+          setStatus("QA import blocked safely: " + structuralMisses.length + " structural conflict" + (structuralMisses.length===1?"":"s") + " and " + misses.length + " italic conflict" + (misses.length===1?"":"s") + ". No project text or structure was changed." + (conflictIds ? " Conflicts: " + conflictIds : ""));
           return;
         }
 
