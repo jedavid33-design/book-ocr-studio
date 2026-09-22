@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "228";
+  const BUILD_VERSION = "229";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -811,6 +811,62 @@
     return String(text || "").slice(0, hit.start) + String(replacementText ?? "") + String(text || "").slice(hit.end);
   }
 
+  function qaExpectedCharPosition(page, op) {
+    const rawItems = Array.isArray(page?.rawOcrItems) ? page.rawOcrItems : [];
+    const indices = qaTargetItemIds(op)
+      .map(qaRawItemIndex)
+      .filter(index => index >= 0 && index < rawItems.length);
+    if (!indices.length || !rawItems.length) return null;
+    const midpoint = (Math.min(...indices) + Math.max(...indices) + 1) / 2;
+    return (midpoint / rawItems.length) * String(page?.text || "").length;
+  }
+
+  function qaUniqueRawItemHit(page, rawIndex) {
+    const rawItems = Array.isArray(page?.rawOcrItems) ? page.rawOcrItems : [];
+    if (rawIndex < 0 || rawIndex >= rawItems.length) return null;
+    const rawText = String(rawItems[rawIndex]?.text || rawItems[rawIndex]?.value || rawItems[rawIndex]?.label || "");
+    if (!rawText.trim()) return null;
+    const hits = qaCanonicalOccurrences(page?.text || "", rawText);
+    return hits.length === 1 ? hits[0] : null;
+  }
+
+  function qaNeighborItemAnchor(page, firstIndex, lastIndex) {
+    const rawItems = Array.isArray(page?.rawOcrItems) ? page.rawOcrItems : [];
+    const sourceLength = String(page?.text || "").length;
+    if (!rawItems.length || !sourceLength) return null;
+
+    let left = null;
+    let right = null;
+    for (let distance = 1; distance <= 8 && (!left || !right); distance++) {
+      if (!left) left = qaUniqueRawItemHit(page, firstIndex - distance);
+      if (!right) right = qaUniqueRawItemHit(page, lastIndex + distance);
+    }
+
+    const expected = ((firstIndex + lastIndex + 1) / 2 / rawItems.length) * sourceLength;
+    const averageItemChars = Math.max(40, sourceLength / rawItems.length);
+
+    if (left && right && left.end <= right.start) {
+      return { start:left.end, end:right.start, expected, mode:"neighbor-item-anchor" };
+    }
+    if (left) {
+      return {
+        start:left.end,
+        end:Math.min(sourceLength, Math.max(left.end + averageItemChars * 4, expected + averageItemChars * 2)),
+        expected,
+        mode:"left-neighbor-anchor"
+      };
+    }
+    if (right) {
+      return {
+        start:Math.max(0, Math.min(right.start - averageItemChars * 4, expected - averageItemChars * 2)),
+        end:right.start,
+        expected,
+        mode:"right-neighbor-anchor"
+      };
+    }
+    return null;
+  }
+
   function qaItemAnchorRange(page, op) {
     const rawItems = Array.isArray(page?.rawOcrItems) ? page.rawOcrItems : [];
     const targetIndices = qaTargetItemIds(op)
@@ -836,18 +892,18 @@
       }
     }
 
-    if (!candidates.length) return null;
-    if (candidates.length === 1) return candidates[0];
+    const expected = qaExpectedCharPosition(page, op);
+    if (candidates.length) {
+      if (candidates.length === 1) return {...candidates[0], expected};
+      candidates.sort((left, right) => {
+        const lm = (left.start + left.end) / 2;
+        const rm = (right.start + right.end) / 2;
+        return Math.abs(lm - expected) - Math.abs(rm - expected);
+      });
+      return {...candidates[0], expected};
+    }
 
-    const expected = rawItems.length
-      ? ((firstIndex + lastIndex + 1) / 2 / rawItems.length) * String(page?.text || "").length
-      : 0;
-    candidates.sort((left, right) => {
-      const lm = (left.start + left.end) / 2;
-      const rm = (right.start + right.end) / 2;
-      return Math.abs(lm - expected) - Math.abs(rm - expected);
-    });
-    return candidates[0];
+    return qaNeighborItemAnchor(page, firstIndex, lastIndex);
   }
 
   function qaCandidateSet(text, needle) {
@@ -858,18 +914,41 @@
     return qaCanonicalOccurrences(text, needle).map(hit => ({...hit, mode:"canonical"}));
   }
 
-  function qaPickAnchoredCandidate(candidates, anchor) {
+  function qaPickAnchoredCandidate(candidates, anchor, expected = null) {
     if (!anchor || !candidates.length) return null;
-    let best = null;
-    let bestOverlap = -1;
-    for (const candidate of candidates) {
-      const overlap = Math.max(0, Math.min(candidate.end, anchor.end) - Math.max(candidate.start, anchor.start));
-      if (overlap > bestOverlap) {
-        bestOverlap = overlap;
-        best = candidate;
-      }
-    }
-    return bestOverlap > 0 ? best : null;
+    const overlapping = candidates
+      .map(candidate => ({
+        candidate,
+        overlap:Math.max(0, Math.min(candidate.end, anchor.end) - Math.max(candidate.start, anchor.start))
+      }))
+      .filter(entry => entry.overlap > 0);
+    if (!overlapping.length) return null;
+
+    overlapping.sort((left, right) => {
+      if (right.overlap !== left.overlap) return right.overlap - left.overlap;
+      if (!Number.isFinite(expected)) return left.candidate.start - right.candidate.start;
+      const lm = (left.candidate.start + left.candidate.end) / 2;
+      const rm = (right.candidate.start + right.candidate.end) / 2;
+      return Math.abs(lm - expected) - Math.abs(rm - expected);
+    });
+    return overlapping[0].candidate;
+  }
+
+  function qaPickPositionCandidate(candidates, page, op) {
+    if (!candidates.length) return null;
+    const expected = qaExpectedCharPosition(page, op);
+    if (!Number.isFinite(expected)) return null;
+    const rawCount = Math.max(1, Array.isArray(page?.rawOcrItems) ? page.rawOcrItems.length : 1);
+    const radius = Math.max(90, String(page?.text || "").length / rawCount * 2.5);
+    const ranked = candidates
+      .map(candidate => ({
+        candidate,
+        distance:Math.abs((candidate.start + candidate.end) / 2 - expected)
+      }))
+      .sort((left, right) => left.distance - right.distance);
+    if (!ranked.length || ranked[0].distance > radius) return null;
+    if (ranked.length > 1 && ranked[1].distance - ranked[0].distance < Math.min(35, radius * 0.35)) return null;
+    return ranked[0].candidate;
   }
 
   function qaLocateReplacement(page, op) {
@@ -877,18 +956,25 @@
     const matchText = String(op?.matchText || "");
     const replacementText = String(op?.replacementText ?? "");
     const anchor = qaItemAnchorRange(page, op);
+    const expected = qaExpectedCharPosition(page, op);
 
     const sourceCandidates = qaCandidateSet(source, matchText);
     const replacementCandidates = qaCandidateSet(source, replacementText);
 
-    const anchoredSource = qaPickAnchoredCandidate(sourceCandidates, anchor);
+    const anchoredSource = qaPickAnchoredCandidate(sourceCandidates, anchor, expected);
     if (anchoredSource) return { ...anchoredSource, anchorMode:anchor?.mode || "", alreadyPresent:false };
 
-    const anchoredReplacement = qaPickAnchoredCandidate(replacementCandidates, anchor);
+    const anchoredReplacement = qaPickAnchoredCandidate(replacementCandidates, anchor, expected);
     if (anchoredReplacement) return { ...anchoredReplacement, anchorMode:anchor?.mode || "", alreadyPresent:true };
 
     if (sourceCandidates.length === 1) return { ...sourceCandidates[0], alreadyPresent:false };
     if (replacementCandidates.length === 1) return { ...replacementCandidates[0], alreadyPresent:true };
+
+    const positionedSource = qaPickPositionCandidate(sourceCandidates, page, op);
+    if (positionedSource) return { ...positionedSource, anchorMode:"stable-item-position", alreadyPresent:false };
+
+    const positionedReplacement = qaPickPositionCandidate(replacementCandidates, page, op);
+    if (positionedReplacement) return { ...positionedReplacement, anchorMode:"stable-item-position", alreadyPresent:true };
 
     if (sourceCandidates.length > 1 || replacementCandidates.length > 1) {
       return {
@@ -901,9 +987,60 @@
     return { error:"text-not-found", sourceCount:0, replacementCount:0, anchorFound:!!anchor };
   }
 
+  function qaQuoteKind(ch) {
+    if (ch === '"' || ch === "“" || ch === "”" || ch === "„" || ch === "‟") return '"';
+    if (ch === "'" || ch === "‘" || ch === "’" || ch === "‚" || ch === "‛" || ch === "′") return "'";
+    return "";
+  }
+
+  function qaPreserveQuoteStyle(currentText, matchText, replacementText) {
+    const current = String(currentText || "");
+    const before = String(matchText || "");
+    const after = String(replacementText ?? "");
+
+    const beforeQuotes = [];
+    const currentQuotes = [];
+    const afterQuotes = [];
+    [...before].forEach((ch, index) => { const kind = qaQuoteKind(ch); if (kind) beforeQuotes.push({kind,index,ch}); });
+    [...current].forEach((ch, index) => { const kind = qaQuoteKind(ch); if (kind) currentQuotes.push({kind,index,ch}); });
+    [...after].forEach((ch, index) => { const kind = qaQuoteKind(ch); if (kind) afterQuotes.push({kind,index,ch}); });
+
+    if (beforeQuotes.length !== currentQuotes.length) return after;
+    if (beforeQuotes.some((quote, index) => quote.kind !== currentQuotes[index]?.kind)) return after;
+
+    const rows = beforeQuotes.length + 1;
+    const cols = afterQuotes.length + 1;
+    const dp = Array.from({length:rows}, () => Array(cols).fill(0));
+    for (let i = beforeQuotes.length - 1; i >= 0; i--) {
+      for (let j = afterQuotes.length - 1; j >= 0; j--) {
+        dp[i][j] = beforeQuotes[i].kind === afterQuotes[j].kind
+          ? 1 + dp[i + 1][j + 1]
+          : Math.max(dp[i + 1][j], dp[i][j + 1]);
+      }
+    }
+
+    const chars = [...after];
+    let i = 0, j = 0;
+    while (i < beforeQuotes.length && j < afterQuotes.length) {
+      if (beforeQuotes[i].kind === afterQuotes[j].kind && dp[i][j] === 1 + dp[i + 1][j + 1]) {
+        chars[afterQuotes[j].index] = currentQuotes[i].ch;
+        i++;
+        j++;
+      } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+        i++;
+      } else {
+        j++;
+      }
+    }
+    return chars.join("");
+  }
+
+  function qaStyledReplacement(currentText, op) {
+    return qaPreserveQuoteStyle(currentText, op?.matchText, op?.replacementText);
+  }
+
   function qaReplaceText(page, op) {
     const matchText = String(op?.matchText || "");
-    const replacementText = String(op?.replacementText ?? "");
     if (!matchText) return { ok:false, reason:"empty-match" };
 
     const located = qaLocateReplacement(page, op);
@@ -922,7 +1059,13 @@
     }
 
     const source = String(page?.text || "");
-    page.text = source.slice(0, located.start) + replacementText + source.slice(located.end);
+    const currentText = source.slice(located.start, located.end);
+    const replacementText = qaStyledReplacement(currentText, op);
+    const nextText = source.slice(0, located.start) + replacementText + source.slice(located.end);
+    if (nextText === source) {
+      return { ok:true, alreadyPresent:true, mode:located.mode, anchorMode:located.anchorMode || "" };
+    }
+    page.text = nextText;
     return { ok:true, alreadyPresent:false, mode:located.mode, anchorMode:located.anchorMode || "" };
   }
 
@@ -1033,6 +1176,7 @@
           }
         }
 
+        const replacementOpsByPage = new Map();
         for (const chapterEntry of payload.chapters) {
           for (const op of (chapterEntry?.structural?.operations || [])) {
             if (op?.type === "merge_across_pages") {
@@ -1058,24 +1202,78 @@
               structuralMisses.push({opId:op?.opId,type:op?.type,pageId:op?.pageId,reason:"unsupported-operation-shape"});
               continue;
             }
+            if (!replacementOpsByPage.has(pageIndex)) replacementOpsByPage.set(pageIndex, []);
+            replacementOpsByPage.get(pageIndex).push(op);
+          }
+        }
 
-            const result = qaReplaceText(page, op);
-            if (result.ok) {
-              if (result.alreadyPresent) structuralAlreadyPresent++;
-              else {
-                structuralApplied++;
-                page.manualEdited = true;
-                page.chapterCandidate = chapterHeuristic(page.text);
-              }
-              touchedPages.add(pageIndex);
-            } else {
+        for (const [pageIndex, operations] of replacementOpsByPage) {
+          const page = workingPages[pageIndex];
+          const snapshot = { ...page, text:String(page?.text || "") };
+          const planned = [];
+
+          for (const op of operations) {
+            const located = qaLocateReplacement(snapshot, op);
+            if (located.error) {
               structuralMisses.push({
                 opId:op?.opId,type:op?.type,pageId:op?.pageId,
                 itemId:op?.itemId,itemIds:op?.itemIds,matchText:op?.matchText,
-                reason:result.reason,sourceCount:result.sourceCount,replacementCount:result.replacementCount,anchorFound:result.anchorFound
+                reason:located.error,sourceCount:located.sourceCount,replacementCount:located.replacementCount,anchorFound:located.anchorFound
+              });
+              continue;
+            }
+            if (located.alreadyPresent) {
+              structuralAlreadyPresent++;
+              touchedPages.add(pageIndex);
+              continue;
+            }
+
+            const currentText = snapshot.text.slice(located.start, located.end);
+            const replacementText = qaStyledReplacement(currentText, op);
+            if (replacementText === currentText) {
+              structuralAlreadyPresent++;
+              touchedPages.add(pageIndex);
+              continue;
+            }
+            planned.push({
+              op,
+              start:located.start,
+              end:located.end,
+              replacementText,
+              mode:located.mode,
+              anchorMode:located.anchorMode || ""
+            });
+          }
+
+          const ordered = [...planned].sort((left, right) => left.start - right.start || left.end - right.end);
+          let overlaps = false;
+          for (let index = 1; index < ordered.length; index++) {
+            const previous = ordered[index - 1];
+            const current = ordered[index];
+            if (current.start < previous.end) {
+              overlaps = true;
+              structuralMisses.push({
+                type:"replace_text",
+                pageId:qaPageId(pageIndex),
+                opId:current.op?.opId,
+                conflictsWith:previous.op?.opId,
+                reason:"overlapping-corrections"
               });
             }
           }
+          if (overlaps) continue;
+
+          let nextText = snapshot.text;
+          for (const action of ordered.sort((left, right) => right.start - left.start || right.end - left.end)) {
+            nextText = nextText.slice(0, action.start) + action.replacementText + nextText.slice(action.end);
+            structuralApplied++;
+          }
+          if (nextText !== snapshot.text) {
+            page.text = nextText;
+            page.manualEdited = true;
+            page.chapterCandidate = chapterHeuristic(page.text);
+          }
+          if (operations.length) touchedPages.add(pageIndex);
         }
 
         const segmentsByPage = new Map();
