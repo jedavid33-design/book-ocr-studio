@@ -426,3 +426,11 @@ Surgical follow-up to v2.7.62.
 - Structural replacements that are already present but interrupted by internal `[[i]]…[[/i]]` markers are now recognized as verified no-ops instead of false conflicts.
 - The fallback is intentionally read-only: it can only prove a replacement is already present and cannot apply a correction using marker-stripped offsets.
 - This unblocks Build 232's visual-QA baseline capture without weakening transactional QA import safety.
+
+
+## Build 234 — Idempotent additive QA + Unicode heading ellipsis
+- Makes cumulative QA re-import idempotent when a correction adds punctuation that leaves the original match text visible inside the corrected phrase, such as adding a final dialogue quote.
+- The already-correct shortcut requires both the source and full replacement to resolve to the same stable item anchor, requires the replacement to be additive, and requires its matched range to contain the shorter source range.
+- Deletions, shortenings, unrelated occurrences, and unanchored page-wide matches do not use this shortcut; transactional import behavior remains unchanged.
+- Treats Unicode ellipsis (`…`) as a valid character in uppercase structural headings, so source-faithful headings such as `ADRIAN … AGAIN` stay out of prose-only terminal-punctuation and short-paragraph audits.
+- Visible chapter heading text and `chapterPov` metadata remain source-faithful.
