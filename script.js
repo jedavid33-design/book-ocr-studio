@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "227";
+  const BUILD_VERSION = "228";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -1273,8 +1273,12 @@
       if (!score) {
         throw new Error(`Backup does not match the ${state.files.length} selected screenshots. Select the same book screenshots used for this OCR run.`);
       }
-      applyCheckpoint(saved);
-      saveCheckpoint();
+      // An explicitly chosen OCR backup is authoritative. Do not let a stale
+      // local checkpoint or durable repair overlay silently overwrite it.
+      applyCheckpoint(saved, { applyOverlay:false });
+      clearCheckpoint();
+      const persisted = saveCheckpoint();
+      console.info("OCR backup restored authoritatively; stale local checkpoint and repair overlay were cleared.");
       if (state.currentPageIndex < 0 && state.pages.length) state.currentPageIndex = state.pages.length - 1;
       els.processBtn.disabled = !state.files.length || state.pages.length >= state.files.length;
       els.freshPaddleBtn.disabled = !state.files.length;
@@ -1284,7 +1288,9 @@
       syncCropPresetUi();
       updateNavigationControls();
       updateGuidedRepairModeUi();
-      setStatus(`OCR backup restored: ${state.pages.length} processed page${state.pages.length === 1 ? "" : "s"}. No OCR was run.`);
+      setStatus(persisted
+        ? `OCR backup restored authoritatively: ${state.pages.length} processed page${state.pages.length === 1 ? "" : "s"}. Stale browser edits were cleared; no OCR was run.`
+        : `OCR backup restored authoritatively: ${state.pages.length} processed page${state.pages.length === 1 ? "" : "s"}. Stale browser edits were cleared. Browser checkpoint storage is full, so keep this tab open while you work.`);
     } catch (err) {
       console.error(err);
       setStatus(`Could not restore OCR backup: ${err.message || err}`);
@@ -1404,7 +1410,7 @@
     return 0;
   }
 
-  function applyCheckpoint(saved) {
+  function applyCheckpoint(saved, { applyOverlay = true } = {}) {
     if (typeof saved.bookTitle === "string" && saved.bookTitle.trim()) els.bookTitle.value = saved.bookTitle;
     if (typeof saved.bookAuthor === "string" && saved.bookAuthor.trim()) els.bookAuthor.value = saved.bookAuthor;
     if (Number.isFinite(saved.cropTop)) els.cropTop.value = saved.cropTop;
@@ -1451,10 +1457,10 @@
       ? clamp(Number.isFinite(savedIndex) ? savedIndex : state.pages.length - 1, 0, state.pages.length - 1)
       : -1;
 
-    // Repair edits live in a compact second store as well as the large OCR
-    // checkpoint. Reapply them last so an older/full checkpoint can never
-    // resurrect pre-repair text after reload.
-    applyRepairOverlay();
+    // Ordinary browser recovery reapplies the durable repair overlay last so a
+    // compact edit store can beat an older/full checkpoint. Explicit backup
+    // import can opt out: the chosen backup is then the authoritative source.
+    if (applyOverlay) applyRepairOverlay();
   }
 
   function restoreCheckpointIfMatching() {
