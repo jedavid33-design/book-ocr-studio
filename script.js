@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "233";
+  const BUILD_VERSION = "234";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -1016,9 +1016,29 @@
     const replacementCandidates = qaCandidateSet(source, replacementText);
 
     const anchoredSource = qaPickAnchoredCandidate(sourceCandidates, anchor, expected);
-    if (anchoredSource) return { ...anchoredSource, anchorMode:anchor?.mode || "", alreadyPresent:false };
-
     const anchoredReplacement = qaPickAnchoredCandidate(replacementCandidates, anchor, expected);
+
+    // Build 234: additive corrections can leave the original matchText visible
+    // inside the already-correct replacement (for example, adding a closing
+    // dialogue quote). When BOTH forms resolve to the same stable anchor, the
+    // longer replacement must win as an idempotent no-op. Requiring the
+    // replacement range to contain the source range keeps deletions/shortenings
+    // and unrelated page-wide occurrences out of this shortcut.
+    if (anchoredSource && anchoredReplacement) {
+      const matchCanonical = qaCanonicalText(matchText);
+      const replacementCanonical = qaCanonicalText(replacementText);
+      const additiveReplacement = !!matchCanonical &&
+        replacementCanonical.length > matchCanonical.length &&
+        replacementCanonical.includes(matchCanonical);
+      const sameAnchoredRange = anchoredReplacement.start <= anchoredSource.start &&
+        anchoredReplacement.end >= anchoredSource.end &&
+        (anchoredReplacement.start < anchoredSource.start || anchoredReplacement.end > anchoredSource.end);
+      if (additiveReplacement && sameAnchoredRange) {
+        return { ...anchoredReplacement, anchorMode:anchor?.mode || "", alreadyPresent:true };
+      }
+    }
+
+    if (anchoredSource) return { ...anchoredSource, anchorMode:anchor?.mode || "", alreadyPresent:false };
     if (anchoredReplacement) return { ...anchoredReplacement, anchorMode:anchor?.mode || "", alreadyPresent:true };
 
     // Build 233: a completed QA import may already have wrapped part of the
@@ -7559,7 +7579,7 @@
     const s = stripItalicMarkers(String(text || "")).trim();
     return !s || s === "* * *" ||
       /^(?:CHAPTER\b|PROLOGUE\b|EPILOGUE\b)/i.test(s) ||
-      /^[A-Z][A-Z .'-]{2,}$/.test(s);
+      /^[A-Z][A-Z .…'-]{2,}$/.test(s);
   }
 
   // v32: Guided Repair must persist source-supported wrapped continuations in
