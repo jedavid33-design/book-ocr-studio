@@ -411,3 +411,11 @@ Surgical follow-up to v2.7.62.
 - Fixes Repair Book safe cleanup so legitimate nested single-quoted titles/emphasis keep their closing apostrophe inside dialogue (for example `“'She Blinded Me With Science.'”`, `'Tainted Love.'`, and `'help.'`).
 - The legacy apostrophe-plus-double-quote OCR cleanup now runs only when the paragraph has no plausible opening single quote before the candidate.
 - Leaves Build 230 QA import behavior, authoritative typography, page boundaries, chapter POV metadata, and visible chapter text unchanged.
+
+
+## Build 232 — Visual-QA authority for Final Polish
+- Successful cumulative chapter-QA import now records a compact baseline of source-inspected Final Polish conditions on the pages covered by that QA.
+- Final Polish suppresses quote, punctuation, wrap, scene-gap, and fragment warnings that match the completed visual-QA baseline, while still surfacing conditions introduced or changed after QA.
+- Baseline matching is page- and issue-type-specific, quote/dash/ellipsis tolerant, and survives paragraph continuation merges without storing a second full copy of the book text.
+- The baseline is saved in OCR checkpoints/backups and cleared on a fresh OCR restart.
+- Final Polish reports a green Visual QA authority row showing how many source-approved conditions were suppressed.
