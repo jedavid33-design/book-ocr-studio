@@ -351,3 +351,11 @@ Surgical follow-up to v2.7.62.
 - Tall quoted initials such as `“S` + `he's…` and `“Y` + `ou…` are merged before paragraph reconstruction.
 - Preserves whole-word decorative initials such as `A` + `few…` as `A few…`.
 - Leaves the improved paragraph-continuation logic and italics thresholds unchanged.
+
+
+## Build 224 — Combined QA + Opal POV metadata
+- Imports cumulative chapter-QA checkpoints alongside the legacy typography-only annotation format.
+- Applies high-confidence text replacements, authoritative cross-page boundary decisions, and confirmed italic segments without re-running OCR.
+- Persists chapter-level POV metadata from `chapter.pov` and exports it on chapter XHTML as `data-opal-pov="…"`.
+- Opal-specific POV metadata is non-visible and safe for other EPUB readers to ignore.
+- QA boundary decisions override the geometry-only cross-page join heuristic; unsupported future structural-operation shapes are reported instead of silently guessed.
