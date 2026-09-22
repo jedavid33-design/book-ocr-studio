@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "230";
+  const BUILD_VERSION = "231";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
