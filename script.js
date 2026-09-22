@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "223";
+  const BUILD_VERSION = "224";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -359,6 +359,11 @@
         fileName: file.name,
         text: String(page.text || ""),
         manualEdited: manualFlag,
+        chapterStart: !!page.chapterStart,
+        chapterTitle: page.chapterTitle || "",
+        chapterPov: page.chapterPov || "",
+        qaBoundaryToNext: page.layoutMeta?.qaBoundaryToNext || "",
+        qaBoundaryFromPrevious: page.layoutMeta?.qaBoundaryFromPrevious || "",
         savedAt: Date.now()
       };
       localStorage.setItem(REPAIR_OVERLAY_KEY, JSON.stringify(existing));
@@ -383,6 +388,12 @@
       if (!saved || typeof saved.text !== "string") return;
       page.text = saved.text;
       page.manualEdited = !!saved.manualEdited;
+      if (saved.chapterStart != null) page.chapterStart = !!saved.chapterStart;
+      if (typeof saved.chapterTitle === "string") page.chapterTitle = saved.chapterTitle;
+      if (typeof saved.chapterPov === "string") page.chapterPov = saved.chapterPov;
+      page.layoutMeta = { ...(page.layoutMeta || {}) };
+      if (typeof saved.qaBoundaryToNext === "string" && saved.qaBoundaryToNext) page.layoutMeta.qaBoundaryToNext = saved.qaBoundaryToNext;
+      if (typeof saved.qaBoundaryFromPrevious === "string" && saved.qaBoundaryFromPrevious) page.layoutMeta.qaBoundaryFromPrevious = saved.qaBoundaryFromPrevious;
       page.chapterCandidate = chapterHeuristic(page.text);
       applied++;
     });
@@ -412,6 +423,7 @@
           chapterCandidate: !!p.chapterCandidate,
           chapterStart: !!p.chapterStart,
           chapterTitle: p.chapterTitle || "",
+          chapterPov: p.chapterPov || "",
           manualEdited: !!p.manualEdited,
           layoutLines: Array.isArray(p.layoutLines) ? p.layoutLines : [],
           rawOcrItems: Array.isArray(p.rawOcrItems) ? p.rawOcrItems : [],
@@ -460,6 +472,7 @@
         pages.push({
           pageIndex:index, pageId, fileName:file.name, imagePath:"images/" + imageName,
           imageType:file.type || "", crop:{top:Number(els.cropTop.value)||0,bottom:Number(els.cropBottom.value)||0,sides:Number(els.cropSides.value)||0},
+          chapterStart:!!page.chapterStart, chapterTitle:page.chapterTitle||"", chapterPov:page.chapterPov||"",
           layoutMeta:page.layoutMeta || null, layoutLines, rawOcrItems
         });
         setStatus("Building typography ZIP: page " + (index + 1) + " of " + state.pages.length + "…");
@@ -642,70 +655,268 @@
     else {els.typographyUncertainPanel?.classList.add("hidden");setStatus("Uncertain typography review complete. Approved specimens were applied; Roman decisions remain unformatted.");}
   }
 
+  function qaPageIndex(pageId) {
+    const match = String(pageId || "").match(/^p(\d{4})$/);
+    return match ? Number(match[1]) - 1 : -1;
+  }
+
+  function qaRawItemFor(page, itemId) {
+    const match = String(itemId || "").match(/-w(\d{5})$/);
+    const index = match ? Number(match[1]) - 1 : -1;
+    return index >= 0 ? page?.rawOcrItems?.[index] || null : null;
+  }
+
+  function qaExactOccurrences(text, needle) {
+    const source = String(text || ""), target = String(needle || "");
+    if (!target) return [];
+    const hits = [];
+    let from = 0;
+    while (from <= source.length) {
+      const at = source.indexOf(target, from);
+      if (at < 0) break;
+      hits.push(at);
+      from = at + Math.max(1, target.length);
+    }
+    return hits;
+  }
+
+  function qaReplaceText(page, op) {
+    const matchText = String(op?.matchText || "");
+    const replacementText = String(op?.replacementText ?? "");
+    if (!matchText) return { ok:false, reason:"empty-match" };
+    const source = String(page?.text || "");
+    const exact = qaExactOccurrences(source, matchText);
+    if (exact.length === 1) {
+      const at = exact[0];
+      page.text = source.slice(0, at) + replacementText + source.slice(at + matchText.length);
+      return { ok:true, mode:"exact" };
+    }
+    if (exact.length > 1) {
+      const raw = qaRawItemFor(page, op?.itemId);
+      const rawText = String(raw?.text || raw?.value || raw?.label || "");
+      if (rawText) {
+        const rawHits = qaExactOccurrences(source, rawText);
+        const local = rawText.indexOf(matchText);
+        if (rawHits.length === 1 && local >= 0) {
+          const at = rawHits[0] + local;
+          page.text = source.slice(0, at) + replacementText + source.slice(at + matchText.length);
+          return { ok:true, mode:"item-context" };
+        }
+      }
+      return { ok:false, reason:"ambiguous-match", count:exact.length };
+    }
+    const flexible = flexiblePhraseMatch(source, matchText, 0) || typographyFuzzyMatch(source, matchText, 0);
+    if (flexible && flexible.end > flexible.start) {
+      page.text = source.slice(0, flexible.start) + replacementText + source.slice(flexible.end);
+      return { ok:true, mode:"fuzzy" };
+    }
+    return { ok:false, reason:"text-not-found" };
+  }
+
+  function qaBoundaryAction(fromPageId, toPageId, action) {
+    const fromIndex = qaPageIndex(fromPageId), toIndex = qaPageIndex(toPageId);
+    const fromPage = state.pages[fromIndex], toPage = state.pages[toIndex];
+    if (!fromPage || !toPage || toIndex !== fromIndex + 1) return false;
+    fromPage.layoutMeta = { ...(fromPage.layoutMeta || {}), qaBoundaryToNext:String(action || "") };
+    toPage.layoutMeta = { ...(toPage.layoutMeta || {}), qaBoundaryFromPrevious:String(action || "") };
+    return true;
+  }
+
   async function importTypographyAnnotationsFile(file) {
     if (!file) return;
-    if (!state.pages.length) { setStatus("Load the OCR project before importing typography annotations."); return; }
+    if (!state.pages.length) { setStatus("Load the OCR project before importing QA corrections."); return; }
     try {
       syncCurrentEditor();
       const payload = JSON.parse(await file.text());
-      if (payload?.schema !== "book-ocr-studio-chatgpt-typography-annotations-v1" || !Array.isArray(payload.pages)) {
-        throw new Error("That is not a supported Book OCR Studio typography annotation file.");
-      }
+      const isLegacy = payload?.schema === "book-ocr-studio-chatgpt-typography-annotations-v1" && Array.isArray(payload.pages);
+      const isCumulative = payload?.schema === "book-ocr-studio-cumulative-chapter-qa-checkpoint-v1" && Array.isArray(payload.chapters);
+      if (!isLegacy && !isCumulative) throw new Error("That is not a supported Book OCR Studio QA corrections file.");
+
       let requested = 0, applied = 0, alreadyPresent = 0;
-      const misses = [];
+      let structuralApplied = 0, boundariesApplied = 0, povApplied = 0;
+      const misses = [], structuralMisses = [];
+      const touchedPages = new Set();
       state.typographyUncertain = [];
-      for (const annotatedPage of payload.pages) {
-        const match = String(annotatedPage?.pageId || "").match(/^p(\d{4})$/);
-        if (!match) continue;
-        const pageIndex = Number(match[1]) - 1;
-        const page = state.pages[pageIndex];
-        if (!page) { misses.push({pageId:annotatedPage.pageId,reason:"page-not-loaded"}); continue; }
-        for (const span of (annotatedPage.uncertainSpans || [])) {
-          const itemId=String(span?.itemId||"");
-          const wordMatch=itemId.match(/-w(\d{5})$/);
-          const rawIndex=wordMatch?Number(wordMatch[1])-1:-1;
-          const raw=rawIndex>=0?page.rawOcrItems?.[rawIndex]:null;
-          const b=raw?.bbox || raw?.box || raw?.rect || null;
-          let box=null;
-          if(Array.isArray(b)&&b.length>=4) box={x:Number(b[0]),y:Number(b[1]),width:Number(b[2])-Number(b[0]),height:Number(b[3])-Number(b[1])};
-          else if(b&&typeof b==="object") box={x:Number(b.x??b.left??0),y:Number(b.y??b.top??0),width:Number(b.width??((b.right??0)-(b.left??0))),height:Number(b.height??((b.bottom??0)-(b.top??0)))};
-          state.typographyUncertain.push({pageIndex,itemId,text:String(span?.text||""),box,resolution:null});
-        }
-                const current = parseItalicMarkedText(page.text || "");
-        const plain = current.plain;
-        const ranges = [...current.ranges];
-        let searchFrom = 0;
-        for (const span of (annotatedPage.italicSpans || [])) {
-          requested++;
-          const phrase = String(span?.text || "").trim();
-          if (!phrase) { misses.push({pageId:annotatedPage.pageId,itemId:span?.itemId||"",reason:"empty-text"}); continue; }
-          let hit = flexiblePhraseMatch(plain, phrase, searchFrom);
-          if (!hit) hit = flexiblePhraseMatch(plain, phrase, 0);
-          if (!hit) hit = typographyFuzzyMatch(plain, phrase, searchFrom);
-          if (!hit) hit = typographyFuzzyMatch(plain, phrase, 0);
-          if (!hit) {
-            misses.push({pageId:annotatedPage.pageId,itemId:span?.itemId||"",text:phrase,reason:"text-not-found"});
-            continue;
+
+      if (isCumulative) {
+        for (const chapterEntry of payload.chapters) {
+          const chapter = chapterEntry?.chapter || {};
+          const startPageId = chapter?.reviewedPageRange?.startPageId || "";
+          const startIndex = qaPageIndex(startPageId);
+          const startPage = state.pages[startIndex];
+          if (startPage) {
+            if (chapter.heading) startPage.chapterTitle = String(chapter.heading);
+            startPage.chapterStart = true;
+            startPage.chapterCandidate = true;
+            if (chapter.pov) {
+              startPage.chapterPov = String(chapter.pov).trim();
+              povApplied++;
+            }
+            touchedPages.add(startIndex);
           }
-          const covered = ranges.some(r => hit.start >= r.start && hit.end <= r.end);
-          if (covered) alreadyPresent++;
-          else { ranges.push({start:hit.start,end:hit.end}); applied++; }
-          searchFrom = Math.max(searchFrom, hit.end);
+
+          for (const audit of (chapterEntry?.structural?.boundaryAudit || [])) {
+            if (qaBoundaryAction(audit?.from, audit?.to, audit?.action)) {
+              boundariesApplied++;
+              touchedPages.add(qaPageIndex(audit?.from));
+              touchedPages.add(qaPageIndex(audit?.to));
+            } else {
+              structuralMisses.push({type:"boundary",from:audit?.from,to:audit?.to,reason:"boundary-page-mismatch"});
+            }
+          }
+
+          for (const op of (chapterEntry?.structural?.operations || [])) {
+            if (op?.type === "merge_across_pages") {
+              const fromPageId = op?.from?.pageId || op?.fromPageId;
+              const toPageId = op?.to?.pageId || op?.toPageId;
+              if (qaBoundaryAction(fromPageId, toPageId, "merge_across_pages")) {
+                structuralApplied++;
+                touchedPages.add(qaPageIndex(fromPageId));
+                touchedPages.add(qaPageIndex(toPageId));
+              } else {
+                structuralMisses.push({opId:op?.opId,type:op?.type,reason:"boundary-page-mismatch"});
+              }
+              continue;
+            }
+            const pageIndex = qaPageIndex(op?.pageId);
+            const page = state.pages[pageIndex];
+            if (!page) {
+              structuralMisses.push({opId:op?.opId,type:op?.type,pageId:op?.pageId,reason:"page-not-loaded"});
+              continue;
+            }
+            if (typeof op?.matchText === "string" && op.matchText && typeof op?.replacementText === "string") {
+              const result = qaReplaceText(page, op);
+              if (result.ok) {
+                structuralApplied++;
+                page.manualEdited = true;
+                page.chapterCandidate = chapterHeuristic(page.text);
+                touchedPages.add(pageIndex);
+              } else {
+                structuralMisses.push({opId:op?.opId,type:op?.type,pageId:op?.pageId,itemId:op?.itemId,matchText:op?.matchText,reason:result.reason,count:result.count});
+              }
+            } else {
+              structuralMisses.push({opId:op?.opId,type:op?.type,pageId:op?.pageId,reason:"unsupported-operation-shape"});
+            }
+          }
         }
-        page.text = renderItalicRanges(plain, ranges);
-        page.chapterCandidate = chapterHeuristic(page.text);
-        saveRepairOverlayPage(pageIndex);
+
+        const segmentsByPage = new Map();
+        for (const chapterEntry of payload.chapters) {
+          for (const span of (chapterEntry?.typography?.confidentItalicSpans || [])) {
+            for (const segment of (span?.segments || [])) {
+              const pageIndex = qaPageIndex(segment?.pageId);
+              if (pageIndex < 0) continue;
+              if (!segmentsByPage.has(pageIndex)) segmentsByPage.set(pageIndex, []);
+              segmentsByPage.get(pageIndex).push({...segment,spanId:span?.spanId||""});
+            }
+          }
+          for (const uncertain of (chapterEntry?.typography?.uncertainSpans || [])) {
+            const segments = Array.isArray(uncertain?.segments) ? uncertain.segments : [uncertain];
+            for (const segment of segments) {
+              const pageIndex = qaPageIndex(segment?.pageId);
+              const page = state.pages[pageIndex];
+              if (!page) continue;
+              const raw = qaRawItemFor(page, segment?.itemId);
+              const b = raw?.bbox || raw?.box || raw?.rect || null;
+              let box = null;
+              if (Array.isArray(b) && b.length >= 4) box = {x:Number(b[0]),y:Number(b[1]),width:Number(b[2])-Number(b[0]),height:Number(b[3])-Number(b[1])};
+              else if (b && typeof b === "object") box = {x:Number(b.x??b.left??0),y:Number(b.y??b.top??0),width:Number(b.width??((b.right??0)-(b.left??0))),height:Number(b.height??((b.bottom??0)-(b.top??0)))};
+              state.typographyUncertain.push({pageIndex,itemId:String(segment?.itemId||""),text:String(segment?.matchText||segment?.text||""),box,resolution:null});
+            }
+          }
+        }
+
+        for (const [pageIndex, segments] of segmentsByPage) {
+          const page = state.pages[pageIndex];
+          if (!page) continue;
+          segments.sort((a,b)=>{
+            const ai=Number(String(a.itemId||"").match(/-w(\d{5})$/)?.[1]||0);
+            const bi=Number(String(b.itemId||"").match(/-w(\d{5})$/)?.[1]||0);
+            return ai-bi || Number(a.startChar||0)-Number(b.startChar||0);
+          });
+          const current = parseItalicMarkedText(page.text || "");
+          const plain = current.plain;
+          const ranges = [...current.ranges];
+          let searchFrom = 0;
+          for (const segment of segments) {
+            requested++;
+            const phrase = String(segment?.matchText || "").trim();
+            if (!phrase) { misses.push({pageId:segment?.pageId,itemId:segment?.itemId,spanId:segment?.spanId,reason:"empty-text"}); continue; }
+            let hit = flexiblePhraseMatch(plain, phrase, searchFrom);
+            if (!hit) hit = flexiblePhraseMatch(plain, phrase, 0);
+            if (!hit) hit = typographyFuzzyMatch(plain, phrase, searchFrom);
+            if (!hit) hit = typographyFuzzyMatch(plain, phrase, 0);
+            if (!hit) { misses.push({pageId:segment?.pageId,itemId:segment?.itemId,spanId:segment?.spanId,text:phrase,reason:"text-not-found"}); continue; }
+            const covered = ranges.some(r => hit.start >= r.start && hit.end <= r.end);
+            if (covered) alreadyPresent++;
+            else { ranges.push({start:hit.start,end:hit.end}); applied++; }
+            searchFrom = Math.max(searchFrom, hit.end);
+          }
+          page.text = renderItalicRanges(plain, ranges);
+          page.chapterCandidate = chapterHeuristic(page.text);
+          touchedPages.add(pageIndex);
+        }
+      } else {
+        for (const annotatedPage of payload.pages) {
+          const pageIndex = qaPageIndex(annotatedPage?.pageId);
+          const page = state.pages[pageIndex];
+          if (!page) { misses.push({pageId:annotatedPage?.pageId,reason:"page-not-loaded"}); continue; }
+
+          for (const span of (annotatedPage.uncertainSpans || [])) {
+            const raw = qaRawItemFor(page, span?.itemId);
+            const b = raw?.bbox || raw?.box || raw?.rect || null;
+            let box = null;
+            if (Array.isArray(b) && b.length >= 4) box = {x:Number(b[0]),y:Number(b[1]),width:Number(b[2])-Number(b[0]),height:Number(b[3])-Number(b[1])};
+            else if (b && typeof b === "object") box = {x:Number(b.x??b.left??0),y:Number(b.y??b.top??0),width:Number(b.width??((b.right??0)-(b.left??0))),height:Number(b.height??((b.bottom??0)-(b.top??0)))};
+            state.typographyUncertain.push({pageIndex,itemId:String(span?.itemId||""),text:String(span?.text||""),box,resolution:null});
+          }
+
+          const current = parseItalicMarkedText(page.text || "");
+          const plain = current.plain;
+          const ranges = [...current.ranges];
+          let searchFrom = 0;
+          for (const span of (annotatedPage.italicSpans || [])) {
+            requested++;
+            const phrase = String(span?.text || "").trim();
+            if (!phrase) { misses.push({pageId:annotatedPage.pageId,itemId:span?.itemId||"",reason:"empty-text"}); continue; }
+            let hit = flexiblePhraseMatch(plain, phrase, searchFrom);
+            if (!hit) hit = flexiblePhraseMatch(plain, phrase, 0);
+            if (!hit) hit = typographyFuzzyMatch(plain, phrase, searchFrom);
+            if (!hit) hit = typographyFuzzyMatch(plain, phrase, 0);
+            if (!hit) { misses.push({pageId:annotatedPage.pageId,itemId:span?.itemId||"",text:phrase,reason:"text-not-found"}); continue; }
+            const covered = ranges.some(r => hit.start >= r.start && hit.end <= r.end);
+            if (covered) alreadyPresent++;
+            else { ranges.push({start:hit.start,end:hit.end}); applied++; }
+            searchFrom = Math.max(searchFrom, hit.end);
+          }
+          page.text = renderItalicRanges(plain, ranges);
+          page.chapterCandidate = chapterHeuristic(page.text);
+          touchedPages.add(pageIndex);
+        }
       }
+
+      touchedPages.forEach(pageIndex => {
+        if (pageIndex >= 0 && state.pages[pageIndex]) saveRepairOverlayPage(pageIndex, { manualEdited: !!state.pages[pageIndex].manualEdited });
+      });
+      saveChapterMemory();
       saveCheckpoint();
       renderReview();
       updateNavigationControls();
+
       const missCount = misses.length;
-      state.lastTypographyImportReport = {build:BUILD_VERSION,importedAt:new Date().toISOString(),requested,applied,alreadyPresent,misses};
-      setStatus(`Typography annotations imported: ${applied} confident italic span${applied===1?"":"s"} applied, ${state.typographyUncertain.length} uncertain left Roman for isolated-crop review, ${alreadyPresent} already present, ${missCount} unmatched.`);
-      if (missCount) console.warn("Typography annotation import misses", misses);
+      state.lastTypographyImportReport = {
+        build:BUILD_VERSION, importedAt:new Date().toISOString(), requested, applied, alreadyPresent, misses,
+        structuralApplied, boundariesApplied, povApplied, structuralMisses
+      };
+      const issueCount = missCount + structuralMisses.length;
+      setStatus(isCumulative
+        ? `QA corrections imported: ${structuralApplied} structural fix${structuralApplied===1?"":"es"}, ${boundariesApplied} boundary decision${boundariesApplied===1?"":"s"}, ${applied} italic segment${applied===1?"":"s"}, ${povApplied} chapter POV tag${povApplied===1?"":"s"}, ${state.typographyUncertain.length} uncertain typography item${state.typographyUncertain.length===1?"":"s"}. ${issueCount ? issueCount + " item(s) need review; see console." : "No import conflicts."}`
+        : `Typography annotations imported: ${applied} confident italic span${applied===1?"":"s"} applied, ${state.typographyUncertain.length} uncertain left Roman for isolated-crop review, ${alreadyPresent} already present, ${missCount} unmatched.`);
+      if (misses.length) console.warn("Typography annotation import misses", misses);
+      if (structuralMisses.length) console.warn("Structural QA import misses", structuralMisses);
     } catch (err) {
       console.error(err);
-      setStatus(`Could not import typography annotations: ${err.message || err}`);
+      setStatus(`Could not import QA corrections: ${err.message || err}`);
     }
   }
 
@@ -784,6 +995,7 @@
         fileName: page.file?.name || state.files[index]?.name || "",
         chapterStart: !!page.chapterStart,
         chapterTitle: page.chapterTitle || "",
+        chapterPov: page.chapterPov || "",
       }));
       localStorage.setItem(CHAPTER_MEMORY_KEY, JSON.stringify({
         signatureNames: state.files.map(file => normalizedStem(file.name)),
@@ -810,6 +1022,7 @@
       return {
         chapterStart: !!item.chapterStart,
         chapterTitle: item.chapterTitle || "",
+        chapterPov: item.chapterPov || "",
       };
     } catch (_) {
       return null;
@@ -913,6 +1126,7 @@
         chapterCandidate: !!page.chapterCandidate,
         chapterStart: page.chapterStart != null ? !!page.chapterStart : !!page.chapterCandidate,
         chapterTitle: page.chapterTitle || "",
+        chapterPov: page.chapterPov || "",
         manualEdited: !!page.manualEdited,
         layoutLines: Array.isArray(page.layoutLines) ? page.layoutLines : [],
         rawOcrItems: Array.isArray(page.rawOcrItems) ? page.rawOcrItems : [],
@@ -1640,6 +1854,8 @@
       page.chapterCandidate = isChapter;
       page.chapterStart = isChapter;
       page.chapterTitle = isChapter ? detectChapterTitle(page.text, detected + 1) : "";
+      if (!isChapter) page.chapterPov = "";
+      else page.chapterPov = page.chapterPov || "";
       if (isChapter) detected++;
     });
     state.lastDropcapAudit = null;
@@ -1791,7 +2007,7 @@
       const end = i + 1 < starts.length ? starts[i + 1] : state.pages.length;
       const page = state.pages[start];
       const title = (page.chapterTitle || "").trim() || detectChapterTitle(page.text, i + 1);
-      sections.push({ title, start, end, nav: true });
+      sections.push({ title, start, end, nav: true, pov: String(page.chapterPov || "").trim() });
     });
 
     return sections.filter(section => section.end > section.start);
@@ -2782,6 +2998,7 @@
         chapterTitle: rememberedChapter && rememberedChapter.chapterTitle
           ? rememberedChapter.chapterTitle
           : detectChapterTitle(text, index + 1),
+        chapterPov: rememberedChapter?.chapterPov || "",
         layoutLines: paddleResult.layoutLines || [],
         rawOcrItems: normalizePaddleItems(paddleResult.result?.items),
         layoutMeta: paddleResult.layoutMeta || null,
@@ -8592,15 +8809,21 @@
 
       const firstParagraphIsSceneBreak = String(paragraphs[0] || "").trim() === "* * *";
       const previousExportIsSceneBreak = String(out[out.length - 1]?.text || "").trim() === "* * *";
+      const previousPage = state.pages[pageIndex - 1];
+      const qaBoundary = String(previousPage?.layoutMeta?.qaBoundaryToNext || page?.layoutMeta?.qaBoundaryFromPrevious || "");
+      const qaForcesMerge = qaBoundary === "merge_across_pages";
+      const qaForcesSeparate = qaBoundary === "keep_separate" || qaBoundary === "chapter_boundary";
+      const geometryAllowsJoin = page?.layoutMeta
+        && page.layoutMeta.firstStartsIndented === false
+        && page.layoutMeta.firstIsFurniture === false
+        && previousPage?.layoutMeta?.lastIsFurniture !== true;
       const canJoinAcrossPage = pageIndex > section.start
         && out.length
         && !page?.chapterStart
         && !firstParagraphIsSceneBreak
         && !previousExportIsSceneBreak
-        && page?.layoutMeta
-        && page.layoutMeta.firstStartsIndented === false
-        && page.layoutMeta.firstIsFurniture === false
-        && state.pages[pageIndex - 1]?.layoutMeta?.lastIsFurniture !== true;
+        && !qaForcesSeparate
+        && (qaForcesMerge || geometryAllowsJoin);
 
       if (canJoinAcrossPage) {
         out[out.length - 1].text = joinParagraphLines([out[out.length - 1].text, paragraphs[0]]);
@@ -8775,6 +8998,7 @@
       const hasHeading = Boolean(String(section.title || "").trim());
       const headingHtml = hasHeading ? `<h1>${escapeXml(section.title)}</h1>` : "";
       const sectionType = section.nav ? "chapter" : "bodymatter";
+      const povAttr = section.pov ? ` data-opal-pov="${escapeXml(section.pov)}"` : "";
 
       zip.file(`EPUB/${fileName}`, `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
@@ -8785,7 +9009,7 @@
   <link rel="stylesheet" type="text/css" href="style.css"/>
 </head>
 <body>
-  <section epub:type="${sectionType}">
+  <section epub:type="${sectionType}"${povAttr}>
     ${headingHtml}
     ${bodyParagraphs.join("\n    ")}
   </section>
