@@ -389,3 +389,12 @@ Surgical follow-up to v2.7.62.
 - After a successful backup match, stale local checkpoint and repair-overlay data are cleared before the restored backup becomes the live project.
 - Automatic browser recovery still reapplies the repair overlay for ordinary sessions; only deliberate backup import is treated as sovereign.
 - This fixes cases where a 204-page backup appeared fully restored while older browser edits silently overwrote text on a subset of those pages.
+
+
+## Build 229 — Page-snapshot QA application
+- Resolves every text correction on a page against the untouched restored page snapshot before applying any edits, then commits non-overlapping changes from the end of the page backward.
+- Prevents multiple QA corrections on the same OCR line from invalidating one another's stable-item anchors.
+- Adds neighboring raw OCR line anchors and conservative stable-item position fallback for repeated fragments.
+- Preserves existing smart-quote glyphs when a QA correction changes nearby punctuation, so structural fixes do not flatten surrounding typography.
+- Detects overlapping text corrections as a hard transactional conflict instead of guessing.
+- Retains Build 228's authoritative explicit-backup restore behavior and all-or-nothing combined-QA import.
