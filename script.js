@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "229";
+  const BUILD_VERSION = "230";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -951,6 +951,58 @@
     return ranked[0].candidate;
   }
 
+  function qaDashLike(ch) {
+    return "-‐‑‒–—―−_".includes(String(ch || ""));
+  }
+
+  function qaBoundaryFallbackNeedle(op) {
+    const matchText = String(op?.matchText || "");
+    const replacementText = String(op?.replacementText ?? "");
+    if (!matchText || !replacementText) return null;
+
+    // A hyphen at a screenshot line wrap may have been stripped entirely by
+    // paragraph reconstruction, fusing the two sides (spicy-smelling ->
+    // spicysmelling, re-education -> reeducation).
+    const wrapPattern = /[-‐‑‒–—―−_]\s+/gu;
+    if (wrapPattern.test(matchText)) {
+      wrapPattern.lastIndex = 0;
+      const collapsed = matchText.replace(wrapPattern, "");
+      if (collapsed && collapsed !== matchText) {
+        return { needle:collapsed, mode:"collapsed-line-wrap" };
+      }
+    }
+
+    // A line-ending dash may also have been dropped when the next OCR line was
+    // joined, producing peopleincluding or predictedus. In that case target
+    // the stable stem and insert the QA-approved dash after it.
+    const last = matchText.at(-1) || "";
+    if (qaDashLike(last)) {
+      const stem = matchText.slice(0, -1);
+      if (stem.trim().length >= 4) return { needle:stem, mode:"dropped-line-end-dash" };
+    }
+    return null;
+  }
+
+  function qaLocateBoundaryFallback(page, op, anchor, expected) {
+    const fallback = qaBoundaryFallbackNeedle(op);
+    if (!fallback) return null;
+    const candidates = qaCandidateSet(page?.text || "", fallback.needle);
+    if (!candidates.length) return null;
+
+    const anchored = qaPickAnchoredCandidate(candidates, anchor, expected);
+    if (anchored) {
+      return { ...anchored, mode:fallback.mode, anchorMode:anchor?.mode || "", alreadyPresent:false };
+    }
+    if (candidates.length === 1) {
+      return { ...candidates[0], mode:fallback.mode, anchorMode:"", alreadyPresent:false };
+    }
+    const positioned = qaPickPositionCandidate(candidates, page, op);
+    if (positioned) {
+      return { ...positioned, mode:fallback.mode, anchorMode:"stable-item-position", alreadyPresent:false };
+    }
+    return null;
+  }
+
   function qaLocateReplacement(page, op) {
     const source = String(page?.text || "");
     const matchText = String(op?.matchText || "");
@@ -966,6 +1018,9 @@
 
     const anchoredReplacement = qaPickAnchoredCandidate(replacementCandidates, anchor, expected);
     if (anchoredReplacement) return { ...anchoredReplacement, anchorMode:anchor?.mode || "", alreadyPresent:true };
+
+    const boundaryFallback = qaLocateBoundaryFallback(page, op, anchor, expected);
+    if (boundaryFallback) return boundaryFallback;
 
     if (sourceCandidates.length === 1) return { ...sourceCandidates[0], alreadyPresent:false };
     if (replacementCandidates.length === 1) return { ...replacementCandidates[0], alreadyPresent:true };
@@ -1038,6 +1093,29 @@
   function qaStyledReplacement(currentText, op) {
     return qaPreserveQuoteStyle(currentText, op?.matchText, op?.replacementText);
   }
+
+  function qaApplyOperationToPhrase(phrase, op) {
+    let source = String(phrase || "");
+    const matchText = String(op?.matchText || "");
+    if (!source || !matchText) return source;
+
+    let hits = qaExactOccurrences(source, matchText);
+    if (!hits.length) hits = qaCanonicalOccurrences(source, matchText);
+    if (!hits.length) {
+      const fallback = qaBoundaryFallbackNeedle(op);
+      if (fallback) {
+        hits = qaExactOccurrences(source, fallback.needle);
+        if (!hits.length) hits = qaCanonicalOccurrences(source, fallback.needle);
+      }
+    }
+    if (hits.length !== 1) return source;
+
+    const hit = hits[0];
+    const currentText = source.slice(hit.start, hit.end);
+    const replacementText = qaStyledReplacement(currentText, op);
+    return source.slice(0, hit.start) + replacementText + source.slice(hit.end);
+  }
+
 
   function qaReplaceText(page, op) {
     const matchText = String(op?.matchText || "");
@@ -1176,6 +1254,7 @@
           }
         }
 
+        const structuralOpsByItem = new Map();
         const replacementOpsByPage = new Map();
         for (const chapterEntry of payload.chapters) {
           for (const op of (chapterEntry?.structural?.operations || [])) {
@@ -1201,6 +1280,10 @@
             if (op?.type !== "replace_text" || typeof op?.matchText !== "string" || !op.matchText || typeof op?.replacementText !== "string") {
               structuralMisses.push({opId:op?.opId,type:op?.type,pageId:op?.pageId,reason:"unsupported-operation-shape"});
               continue;
+            }
+            for (const itemId of qaTargetItemIds(op)) {
+              if (!structuralOpsByItem.has(itemId)) structuralOpsByItem.set(itemId, []);
+              structuralOpsByItem.get(itemId).push(op);
             }
             if (!replacementOpsByPage.has(pageIndex)) replacementOpsByPage.set(pageIndex, []);
             replacementOpsByPage.get(pageIndex).push(op);
@@ -1321,7 +1404,15 @@
             requested++;
             const finalPhrase = String(segment?.finalText || "").trim();
             const sourcePhrase = String(segment?.matchText || "").trim();
-            const phrases = finalPhrase && finalPhrase !== sourcePhrase ? [finalPhrase, sourcePhrase] : [finalPhrase || sourcePhrase];
+            let derivedPhrase = sourcePhrase;
+            for (const op of (structuralOpsByItem.get(String(segment?.itemId || "")) || [])) {
+              derivedPhrase = qaApplyOperationToPhrase(derivedPhrase, op);
+            }
+            const phrases = [];
+            for (const phrase of [finalPhrase, derivedPhrase, sourcePhrase]) {
+              const clean = String(phrase || "").trim();
+              if (clean && !phrases.includes(clean)) phrases.push(clean);
+            }
             let hit = null;
             for (const phrase of phrases) {
               if (!phrase) continue;
