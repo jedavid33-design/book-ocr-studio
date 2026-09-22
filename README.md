@@ -359,3 +359,12 @@ Surgical follow-up to v2.7.62.
 - Persists chapter-level POV metadata from `chapter.pov` and exports it on chapter XHTML as `data-opal-pov="…"`.
 - Opal-specific POV metadata is non-visible and safe for other EPUB readers to ignore.
 - QA boundary decisions override the geometry-only cross-page join heuristic; unsupported future structural-operation shapes are reported instead of silently guessed.
+
+
+## Build 225 — Transactional authoritative QA import
+- Treats completed cumulative chapter QA as authoritative for chapter starts and every reviewed page boundary.
+- Unlisted page boundaries inside a reviewed chapter default to `keep_separate`; explicit `merge_across_pages` operations override that default.
+- Supports structural corrections targeted by either `itemId` or multi-line `itemIds`, using the raw OCR item sequence to disambiguate repeated matches.
+- Honors typography-segment `finalText` after structural text repair, with original `matchText` as a fallback.
+- Combined QA import now runs transactionally on a working copy. Any structural or italic conflict blocks the entire import and leaves the live OCR project unchanged.
+- Validates the QA source page count before applying corrections.
