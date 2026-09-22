@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "232";
+  const BUILD_VERSION = "233";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -1020,6 +1020,24 @@
 
     const anchoredReplacement = qaPickAnchoredCandidate(replacementCandidates, anchor, expected);
     if (anchoredReplacement) return { ...anchoredReplacement, anchorMode:anchor?.mode || "", alreadyPresent:true };
+
+    // Build 233: a completed QA import may already have wrapped part of the
+    // corrected phrase in [[i]] markers. Those markers are formatting metadata,
+    // not book text, so a second import must still recognize the structural
+    // replacement as already present. This path is deliberately no-op only:
+    // it never applies a correction through stripped-marker coordinates.
+    const sourceWithoutItalicMarkers = stripItalicMarkers(source);
+    if (sourceWithoutItalicMarkers !== source) {
+      const markedReplacementCandidates = qaCandidateSet(sourceWithoutItalicMarkers, replacementText);
+      if (markedReplacementCandidates.length === 1) {
+        return {
+          ...markedReplacementCandidates[0],
+          mode:"replacement-through-italic-markers",
+          anchorMode:"",
+          alreadyPresent:true
+        };
+      }
+    }
 
     const boundaryFallback = qaLocateBoundaryFallback(page, op, anchor, expected);
     if (boundaryFallback) return boundaryFallback;
