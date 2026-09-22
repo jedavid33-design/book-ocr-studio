@@ -398,3 +398,10 @@ Surgical follow-up to v2.7.62.
 - Preserves existing smart-quote glyphs when a QA correction changes nearby punctuation, so structural fixes do not flatten surrounding typography.
 - Detects overlapping text corrections as a hard transactional conflict instead of guessing.
 - Retains Build 228's authoritative explicit-backup restore behavior and all-or-nothing combined-QA import.
+
+
+## Build 230 — Reconstructed-boundary QA recovery
+- Recovers QA corrections when paragraph reconstruction previously removed a screenshot line-ending hyphen or dash and fused the surrounding text (for example `spicy-smelling` becoming `spicysmelling`, or `people— including` becoming `peopleincluding`).
+- Uses stable OCR item anchors and conservative item-position checks for these boundary repairs rather than broad fuzzy matching.
+- Derives each italic segment's post-structural wording from text corrections attached to the same stable OCR item, so italics remain locatable after typo/punctuation repair even when the QA segment has no explicit `finalText`.
+- Retains Build 229 page-snapshot application, quote-style preservation, transactional import, and Build 228 authoritative backup restore.
