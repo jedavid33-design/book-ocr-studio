@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "222";
+  const BUILD_VERSION = "223";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -389,10 +389,8 @@
     return applied;
   }
 
-  function saveCheckpoint() {
-    if (!state.files.length) return;
-    try {
-      const payload = {
+  function buildCheckpointPayload() {
+    return {
         signature: checkpointSignature(),
         cropTop: Number(els.cropTop.value) || 0,
         cropBottom: Number(els.cropBottom.value) || 0,
@@ -421,9 +419,18 @@
           tesseractEvidence: p.tesseractEvidence || null,
         })),
       };
+  }
+
+  function saveCheckpoint() {
+    if (!state.files.length) return false;
+    try {
+      const payload = buildCheckpointPayload();
       localStorage.setItem(CHECKPOINT_KEY, JSON.stringify(payload));
+      return true;
     } catch (err) {
       console.warn("Could not save OCR checkpoint", err);
+      setStatus("Browser checkpoint storage is full. OCR remains live in this tab; export an OCR backup before closing or reloading.");
+      return false;
     }
   }
 
@@ -707,11 +714,12 @@
       setStatus("No OCR project is loaded to back up.");
       return;
     }
-    saveCheckpoint();
+    // Export the live in-memory project, not the last localStorage snapshot.
+    // Large books can exceed the browser storage quota while OCR continues
+    // successfully in memory; reading localStorage here would silently export
+    // only the last checkpoint that happened to fit.
     try {
-      const raw = localStorage.getItem(CHECKPOINT_KEY);
-      if (!raw) throw new Error("The OCR checkpoint is not available.");
-      const checkpoint = JSON.parse(raw);
+      const checkpoint = buildCheckpointPayload();
       const payload = {
         schema: "book-ocr-studio-ocr-backup-v2",
         build: BUILD_VERSION,
