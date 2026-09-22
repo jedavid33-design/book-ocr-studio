@@ -1013,7 +1013,23 @@
     const expected = qaExpectedCharPosition(page, op);
 
     const sourceCandidates = qaCandidateSet(source, matchText);
-    const replacementCandidates = qaCandidateSet(source, replacementText);
+    // Final Polish can normalize the QA file's spaced-dot ellipsis to the
+    // single Unicode ellipsis glyph. Treat that presentation-only form as the
+    // same authoritative replacement when proving idempotence or healing an
+    // anchored additive over-application.
+    const replacementNeedles = [replacementText];
+    const unicodeEllipsisReplacement = replacementText.replace(/\.\s*\.\s*\./g, "…");
+    if (unicodeEllipsisReplacement !== replacementText) replacementNeedles.push(unicodeEllipsisReplacement);
+    const replacementCandidates = [];
+    const seenReplacementCandidates = new Set();
+    for (const needle of replacementNeedles) {
+      for (const candidate of qaCandidateSet(source, needle)) {
+        const key = candidate.start + ":" + candidate.end;
+        if (seenReplacementCandidates.has(key)) continue;
+        seenReplacementCandidates.add(key);
+        replacementCandidates.push(candidate);
+      }
+    }
 
     const anchoredSource = qaPickAnchoredCandidate(sourceCandidates, anchor, expected);
     const anchoredReplacement = qaPickAnchoredCandidate(replacementCandidates, anchor, expected);
@@ -1036,7 +1052,16 @@
     // anchor, replace the over-applied range with the authoritative replacement.
     // This is intentionally not a page-wide dedupe rule.
     if (anchoredReplacement && narrowAdditiveSuffix) {
-      const overAppliedCandidates = qaCandidateSet(source, replacementText + narrowAdditiveSuffix);
+      const overAppliedCandidates = [];
+      const seenOverAppliedCandidates = new Set();
+      for (const needle of replacementNeedles) {
+        for (const candidate of qaCandidateSet(source, needle + narrowAdditiveSuffix)) {
+          const key = candidate.start + ":" + candidate.end;
+          if (seenOverAppliedCandidates.has(key)) continue;
+          seenOverAppliedCandidates.add(key);
+          overAppliedCandidates.push(candidate);
+        }
+      }
       const anchoredOverApplied = qaPickAnchoredCandidate(overAppliedCandidates, anchor, expected);
       const sameAnchoredReplacement = anchoredOverApplied &&
         anchoredOverApplied.start <= anchoredReplacement.start &&
