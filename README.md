@@ -405,3 +405,9 @@ Surgical follow-up to v2.7.62.
 - Uses stable OCR item anchors and conservative item-position checks for these boundary repairs rather than broad fuzzy matching.
 - Derives each italic segment's post-structural wording from text corrections attached to the same stable OCR item, so italics remain locatable after typo/punctuation repair even when the QA segment has no explicit `finalText`.
 - Retains Build 229 page-snapshot application, quote-style preservation, transactional import, and Build 228 authoritative backup restore.
+
+
+## Build 231 — Nested quote preservation
+- Fixes Repair Book safe cleanup so legitimate nested single-quoted titles/emphasis keep their closing apostrophe inside dialogue (for example `“'She Blinded Me With Science.'”`, `'Tainted Love.'`, and `'help.'`).
+- The legacy apostrophe-plus-double-quote OCR cleanup now runs only when the paragraph has no plausible opening single quote before the candidate.
+- Leaves Build 230 QA import behavior, authoritative typography, page boundaries, chapter POV metadata, and visible chapter text unchanged.
