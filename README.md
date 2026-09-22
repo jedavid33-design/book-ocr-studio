@@ -376,3 +376,9 @@ Surgical follow-up to v2.7.62.
 - Recognizes corrections already present in reconstructed page text as verified no-ops instead of import conflicts.
 - Uses full raw OCR line context to disambiguate repeated fragments such as `fi re` on the same page.
 - Import remains transactional: any unresolved correction still blocks the entire combined QA import.
+
+
+## Build 227 — Remaining QA normalization + visible conflicts
+- Normalizes smart/straight quote variants, dash glyph variants, spaced ellipses, layout-only spaces around punctuation, hyphenated line-wrap spacing, and common split-fi OCR artifacts during QA targeting.
+- Keeps stable OCR item anchoring and transactional all-or-nothing import behavior.
+- On a blocked QA import, prints the structural conflict table and includes the conflict operation IDs directly in the visible status message.
