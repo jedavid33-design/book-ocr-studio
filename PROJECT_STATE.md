@@ -42,7 +42,7 @@ For an already-completed OCR project, importing the OCR backup can begin at step
 - A complete backup restores downstream text/geometry work immediately.
 - A partial backup restores existing OCR immediately but requires the original screenshots to continue OCR.
 - Reattaching the original screenshot batch matches by saved signature / filename / normalized filename stem and must not reset restored work.
-- If a different screenshot batch is selected while an old source-free project is auto-recovered, Build 239 asks whether to start a new book. Confirming replaces the browser recovery checkpoint but does not alter exported backup files.
+- If a different screenshot batch is selected while an old source-free project is auto-recovered, Build 239 asks whether to start a new book. Confirming replaces the browser recovery checkpoint but does not alter exported backup files. A fresh batch also claims the browser recovery identity immediately, even before page 1 is OCRed, so an unrelated old project cannot reappear on the next reload.
 - Lightweight localStorage data may still exist for small auxiliary state such as chapter memory, repair overlay, or italic-learning support. Do not move the full project checkpoint back to localStorage.
 
 ## OCR / geometry architecture
