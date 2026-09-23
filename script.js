@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "236";
+  const BUILD_VERSION = "237";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -101,6 +101,9 @@
   const CHECKPOINT_KEY = "bookOcrStudio.progress.current";
   const REPAIR_OVERLAY_KEY = "bookOcrStudio.repairs.current";
   const CHAPTER_MEMORY_KEY = "bookOcrStudio.chapterMemory.current";
+  const PROJECT_DB_NAME = "bookOcrStudioProjects";
+  const PROJECT_DB_STORE = "checkpoints";
+  const PROJECT_DB_KEY = "current";
   const LEGACY_CHECKPOINT_KEYS = [
     "bookOcrStudio.progress.v12",
     "bookOcrStudio.progress.v11",
@@ -317,8 +320,45 @@
       .trim() || "book";
   }
 
+  function isRealSourceFile(file) {
+    return typeof Blob !== "undefined" && file instanceof Blob && !file?.__virtualSource;
+  }
+
+  function sourceFilesAttached() {
+    return !!state.files.length && state.files.every(isRealSourceFile);
+  }
+
+  function attachedSourceFileCount() {
+    return state.files.filter(isRealSourceFile).length;
+  }
+
+  function signatureFileDescriptor(entry, index = 0) {
+    const raw = String(entry || "");
+    const match = raw.match(/^(.*):(\d+):(\d+)$/);
+    const name = match ? match[1] : raw || `page-${String(index + 1).padStart(4, "0")}.png`;
+    return {
+      name,
+      size: match ? Number(match[2]) || 0 : 0,
+      lastModified: match ? Number(match[3]) || 0 : 0,
+      type: "",
+      __virtualSource: true
+    };
+  }
+
+  function virtualFilesFromCheckpoint(saved) {
+    const signature = Array.isArray(saved?.signature) ? saved.signature : [];
+    if (signature.length) return signature.map(signatureFileDescriptor);
+    return (saved?.pages || []).map((page, index) => ({
+      name: String(page?.fileName || `page-${String(index + 1).padStart(4, "0")}.png`),
+      size: 0,
+      lastModified: 0,
+      type: "",
+      __virtualSource: true
+    }));
+  }
+
   function checkpointSignature() {
-    return state.files.map(f => `${f.name}:${f.size}:${f.lastModified || 0}`);
+    return state.files.map(f => `${f.name}:${Number(f.size) || 0}:${Number(f.lastModified) || 0}`);
   }
 
   function repairOverlaySignature() {
@@ -404,6 +444,7 @@
   function buildCheckpointPayload() {
     return {
         signature: checkpointSignature(),
+        totalPageCount: state.files.length,
         cropTop: Number(els.cropTop.value) || 0,
         cropBottom: Number(els.cropBottom.value) || 0,
         cropSides: Number(els.cropSides.value) || 0,
@@ -419,8 +460,8 @@
         ignoredLigatureCandidates: Array.from(state.ignoredLigatureCandidates || []),
         ignoredFinalPolishIssues: Array.from(state.ignoredFinalPolishIssues || []),
         qaApprovedPolishEvidence: Array.isArray(state.qaApprovedPolishEvidence) ? state.qaApprovedPolishEvidence : [],
-        pages: state.pages.map(p => ({
-          fileName: p.file.name,
+        pages: state.pages.map((p, index) => ({
+          fileName: p.file?.name || state.files[index]?.name || `page-${index + 1}`,
           text: p.text || "",
           chapterCandidate: !!p.chapterCandidate,
           chapterStart: !!p.chapterStart,
@@ -435,15 +476,98 @@
       };
   }
 
+  let projectCheckpointWriteChain = Promise.resolve();
+  let projectCheckpointLastError = null;
+
+  function openProjectDb() {
+    return new Promise((resolve, reject) => {
+      if (!globalThis.indexedDB) {
+        reject(new Error("IndexedDB is unavailable in this browser."));
+        return;
+      }
+      const req = indexedDB.open(PROJECT_DB_NAME, 1);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(PROJECT_DB_STORE)) db.createObjectStore(PROJECT_DB_STORE);
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error || new Error("Could not open project storage."));
+    });
+  }
+
+  async function readProjectCheckpoint() {
+    const db = await openProjectDb();
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(PROJECT_DB_STORE, "readonly");
+      const req = tx.objectStore(PROJECT_DB_STORE).get(PROJECT_DB_KEY);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  async function writeProjectCheckpoint(payload) {
+    const db = await openProjectDb();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(PROJECT_DB_STORE, "readwrite");
+      tx.objectStore(PROJECT_DB_STORE).put(payload, PROJECT_DB_KEY);
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || new Error("Project checkpoint transaction aborted."));
+    });
+    return true;
+  }
+
+  async function deleteProjectCheckpoint() {
+    const db = await openProjectDb();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(PROJECT_DB_STORE, "readwrite");
+      tx.objectStore(PROJECT_DB_STORE).delete(PROJECT_DB_KEY);
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || new Error("Project checkpoint delete aborted."));
+    });
+  }
+
+  function queueProjectCheckpointWrite(payload) {
+    projectCheckpointLastError = null;
+    projectCheckpointWriteChain = projectCheckpointWriteChain
+      .catch(() => {})
+      .then(() => writeProjectCheckpoint(payload))
+      .then(() => {
+        // Build 237 migration: once the large checkpoint is safely in IndexedDB,
+        // remove legacy whole-project localStorage copies so they cannot fill the
+        // small synchronous storage quota again.
+        try {
+          localStorage.removeItem(CHECKPOINT_KEY);
+          LEGACY_CHECKPOINT_KEYS.forEach(key => localStorage.removeItem(key));
+        } catch (_) {}
+        return true;
+      })
+      .catch(err => {
+        projectCheckpointLastError = err;
+        console.warn("Could not save OCR project to IndexedDB", err);
+        return false;
+      });
+    return true;
+  }
+
+  async function flushCheckpointSave() {
+    try {
+      await projectCheckpointWriteChain;
+      return !projectCheckpointLastError;
+    } catch (_) {
+      return false;
+    }
+  }
+
   function saveCheckpoint() {
-    if (!state.files.length) return false;
+    if (!state.files.length || !state.pages.length) return false;
     try {
       const payload = buildCheckpointPayload();
-      localStorage.setItem(CHECKPOINT_KEY, JSON.stringify(payload));
+      queueProjectCheckpointWrite(payload);
       return true;
     } catch (err) {
-      console.warn("Could not save OCR checkpoint", err);
-      setStatus("Browser checkpoint storage is full. OCR remains live in this tab; export an OCR backup before closing or reloading.");
+      console.warn("Could not queue OCR project checkpoint", err);
       return false;
     }
   }
