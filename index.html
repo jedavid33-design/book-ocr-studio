@@ -13,7 +13,7 @@
 <link href="manifest.webmanifest" rel="manifest"/>
 <link href="apple-touch-icon.png" rel="apple-touch-icon"/>
 <link href="icon-192.png" rel="icon" sizes="192x192" type="image/png"/>
-<link href="styles.css?v=58" rel="stylesheet"/>
+<link href="styles.css?v=59" rel="stylesheet"/>
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
 </head>
 <body>
@@ -33,15 +33,7 @@
 </label>
 <div class="status-box subtle" id="epubImportStatus">No EPUB imported.</div>
 </div></details>
-<details class="compact-epub-repair"><summary class="compact-epub-repair-summary">OCR experiment tools</summary><div class="compact-epub-repair-body">
-<p class="hint">Analyze a previously exported Roman Residual report without loading screenshots or an OCR project.</p>
-<div class="actions"><button class="button secondary" id="italicRomanResidualOfflineBtn" type="button">Analyze Roman Residual Export</button></div>
-<p class="hint">Neural Italic N1 · import a Build 206+ labeled crop dataset and run a page-grouped held-out image-classification experiment. Diagnostic only.</p>
-<div class="actions"><button class="button secondary" id="neuralItalicN1Btn" type="button">Run Neural Italic N1</button></div>
-<input accept="application/json,.json" id="neuralItalicN1Input" style="display:none" type="file">
-<div class="status-box subtle" id="neuralItalicN1Status">No neural crop dataset loaded.</div>
-<input accept="application/json,.json" id="italicRomanResidualImport" style="display:none" type="file">
-</div></details></section>
+</section>
 <section class="card">
 <h2>1. Book info</h2>
 <label>
@@ -122,15 +114,22 @@
 <section class="card">
 <h2>4. OCR</h2>
 <p class="hint">Version 2.0 uses PaddleOCR (PP-OCRv5) in your browser. Tap <strong>Process all pages</strong> and PaddleOCR will work through the book sequentially, saving after every page. The first OCR run may take longer while the models load.</p>
-<div class="actions">
+<div class="actions production-actions">
 <button class="button primary" disabled="" id="processBtn" type="button">Process all pages</button>
-<button class="button ghost" disabled="" id="freshPaddleBtn" type="button">Clear old OCR + restart with Paddle</button>
 <button class="button secondary" id="exportOcrBackupBtn" type="button">Export OCR backup</button>
 <button class="button secondary" id="importOcrBackupBtn" type="button">Import OCR backup</button>
 <button class="button secondary" id="exportTypographyTestBtn" type="button">Export Typography Test</button>
 <button class="button secondary" id="importTypographyAnnotationsBtn" type="button">Import QA Corrections</button>
+</div>
+<details class="inline-tools">
+<summary>More OCR / recovery tools</summary>
+<div class="actions">
+<button class="button ghost" disabled="" id="freshPaddleBtn" type="button">Clear old OCR + restart with Paddle</button>
 <button class="button secondary" id="typographyFirstReadBtn" type="button">First-Read Uncertain Review</button>
 <button class="button secondary" id="typographyReviewBtn" type="button">Review Imported Typography</button>
+</div>
+<p class="hint">Recovery and inspection tools for unusual books or troubleshooting. The normal production path does not require these.</p>
+</details>
 <input accept="application/json,.json" id="importTypographyAnnotationsFile" style="display:none" type="file">
 <div class="hidden" id="typographyUncertainPanel" style="margin-top:16px">
   <div class="status-box"><strong>First-read uncertain review</strong><div id="typographyUncertainMeta"></div></div>
@@ -188,12 +187,10 @@
 <details class="card hidden review-collapsible" id="reviewSection" open=""><summary class="review-section-summary">5. Review</summary>
 <div class="section-head">
 <div>
-<h2>5. Review</h2>
 <p class="hint">After batch OCR, review every page or just the detected chapter starts. Edits save automatically.</p>
 <div class="preset-row">
 <button class="chip" id="reviewAllBtn" type="button">All pages</button>
 <button class="chip active" id="reviewChaptersBtn" type="button">Chapter starts only</button>
-<button class="chip" id="redetectChaptersBtn" type="button" title="Replace chapter markers from saved OCR. No OCR rerun.">Re-detect chapter starts</button>
 </div>
 </div>
 <div class="review-tools compact">
@@ -206,17 +203,27 @@
 <button class="button secondary" disabled="" id="pageDropcapBtn" type="button">Dropcap Rescue</button>
 <button class="button secondary" disabled="" id="markItalicBtn" type="button">Mark selection italic</button>
 <button class="button ghost" disabled="" id="clearItalicBtn" type="button">Remove italic marks</button>
-<button class="button secondary" disabled="" id="messageOcrBtn" type="button">Message-page OCR · Paddle</button>
 <button class="button primary" disabled="" id="nextPageBtn" type="button">Next page</button>
 </div>
+<details class="inline-tools review-extra-tools">
+<summary>Page & recovery tools</summary>
+<div class="actions">
+<button class="button secondary" disabled="" id="messageOcrBtn" type="button">Message-page OCR · Paddle</button>
+<button class="button secondary" id="redetectChaptersBtn" type="button" title="Replace chapter markers from saved OCR. No OCR rerun.">Re-detect chapter starts</button>
+</div>
+</details>
 </details>
 <section class="card hidden" id="guidedRepairSection"><h2>6. Guided Repair</h2><div class="subcard guided-repair-card">
-<h3>Guided Repair</h3>
 <p class="hint">One pass through the safe, proven repair pipeline. Studio rebuilds paragraph structure first, applies conservative italics while source geometry is still authoritative, then runs safe cleanup, split-ligature repair, and Dropcap Rescue. High-confidence dropcaps are accepted automatically; anything uncertain stays for review.</p>
-<div class="repair-mode-compact" id="repairModeControls"><span class="repair-mode-label">Mode</span><button class="repair-mode-chip active" id="repairModeWhole" type="button">Whole book</button><button class="repair-mode-chip" id="repairModeChapter" type="button">Chapter by chapter</button><label class="repair-geometry-toggle" title="Turn off to run the proven text-only Dropcap Rescue path"><input id="geometryAssist" type="checkbox" checked> Geometry assist</label></div><div class="actions">
+<div class="actions">
 <button class="button primary" id="repairBook" type="button">Repair Book</button>
 <span class="progress-pill" id="repairBookStatus">Ready</span>
-</div><div class="guided-live-status hidden" id="guidedLiveStatus"></div><pre class="repair-diagnostic hidden" id="repairDiagnostic"></pre><div class="repair-chapter-nav hidden" id="repairChapterNav"><button class="repair-nav-button" id="repairChapterPrev" type="button">‹</button><span class="repair-chapter-status" id="repairChapterStatus">Chapter 1 of 1</span><button class="repair-nav-button" id="repairChapterNext" type="button">›</button></div>
+</div>
+<details class="inline-tools repair-options">
+<summary>Repair options</summary>
+<div class="repair-mode-compact" id="repairModeControls"><span class="repair-mode-label">Mode</span><button class="repair-mode-chip active" id="repairModeWhole" type="button">Whole book</button><button class="repair-mode-chip" id="repairModeChapter" type="button">Chapter by chapter</button><label class="repair-geometry-toggle" title="Turn off to run the proven text-only Dropcap Rescue path"><input id="geometryAssist" type="checkbox" checked> Geometry assist</label></div>
+</details>
+<div class="guided-live-status hidden" id="guidedLiveStatus"></div><pre class="repair-diagnostic hidden" id="repairDiagnostic"></pre><div class="repair-chapter-nav hidden" id="repairChapterNav"><button class="repair-nav-button" id="repairChapterPrev" type="button">‹</button><span class="repair-chapter-status" id="repairChapterStatus">Chapter 1 of 1</span><button class="repair-nav-button" id="repairChapterNext" type="button">›</button></div>
 <details class="ligature-inline-review hidden" id="repairReview">
 <summary id="repairReviewToggle">Review repairs (0)</summary>
 <div class="ligature-inline-body">
@@ -240,6 +247,36 @@
 </div>
 </details>
 </div>
+</div></section><details class="card hidden advanced-collapsible" id="advancedSection"><summary class="advanced-summary">7. Advanced</summary><div class="advanced-body"><p class="hint advanced-label"><strong>Diagnostics and individual tools</strong> · Use these when testing a build or rerunning one stage manually.</p><div class="subcard regression-card">
+<h3>Regression Check</h3>
+<p class="hint">Inspection only. Checks paragraph sanity, text continuity, cleanup normalization, scene breaks, split ligatures, layout geometry, dropcaps, and italic sanity without changing the book. The original 20-page IMG_2701–IMG_2720 test set also gets its known layout-profile checks.</p>
+<div class="actions">
+<button class="button secondary" id="runRegression" type="button">Run Regression Check</button>
+<span class="progress-pill" id="regressionStatus">Not run</span>
+</div>
+<div class="regression-results hidden" id="regressionResults"></div>
+</div><div class="subcard">
+<h3>Paragraph Reconstruction</h3>
+<p class="hint">PaddleOCR now saves line positions and uses first-line indentation as primary paragraph evidence. Rebuild from saved geometry later without re-running OCR. Rebuilding replaces current page text, so do it before manual text edits.</p>
+<div class="actions">
+<button class="button secondary" disabled="" id="rebuildParagraphs" type="button">Rebuild paragraphs</button>
+<button class="button secondary" disabled="" id="downloadLayoutDiagnostics" type="button">Download layout diagnostics</button>
+<span class="progress-pill" id="paragraphStatus">Needs OCR from this build</span>
+</div>
+</div><div class="subcard">
+<h3>Formatting Rescue</h3>
+<p class="hint">Safe cleanup normalizes OCR ellipses and decorative scene dividers without rewriting prose, and now survives paragraph rebuilds. CloudLibrary/Iowan is in supervised calibration mode: automatic italics stay OFF while Studio measures word shape, shear, edge lean, ink density, and local roman contrast. Other profiles keep their existing behavior. Word-level diagnostics exports the calibration measurements and candidate runs.</p>
+<div class="actions">
+<button class="button secondary" id="safePolish" type="button">Safe text cleanup</button>
+<button class="button secondary" id="autoItalicScan" type="button">Auto italic scan</button>
+<button class="button secondary" id="downloadItalicDiagnostics" type="button">Download italic calibration diagnostics</button>
+<span class="progress-pill" id="polishStatus">Not run</span>
+<span class="progress-pill" id="italicStatus">Italics not scanned</span>
+</div>
+</div>
+<details class="subcard research-disclosure" id="italicResearchTools">
+<summary>Italic research & learning</summary>
+<div class="research-disclosure-body">
 <div class="subcard italic-learning-card" id="italicLearningSection">
 <h3>𝘐 Italic Review &amp; Learning</h3>
 <p class="hint">Italic Hunt is the spoiler-safe single-word trainer. Line Hunt is the post-read cleanup trainer: it queues suspicious full lines, allows duplicates, learns an all-Roman line word-by-word, and lets mixed lines split into OCR words. No re-OCR, Repair Book, or Final Polish rerun is required when OCR data is already loaded.</p>
@@ -270,37 +307,29 @@
 <p class="hint">Story order, page location, and surrounding text stay hidden. Italic and Roman train this OCR/font profile across books; Glyph / Decorative is remembered as an exclusion class without entering the Italic-vs-Roman learner; Unsure skips training. Split mixed specimens into OCR-word pieces. Labels are still training-only and do not change EPUB formatting yet. Punctuation-only crops are excluded automatically.</p>
 <div class="review-list" id="italicCalibrationReviewList"><div class="hint">Choose Learned review or Random review to begin.</div></div>
 <div class="subcard" id="visualItalicTesting" style="margin-top:16px"><h4 style="margin-top:0">Visual Italic · experimental validation</h4><p class="hint">Independent spoiler-safe neural validation. Labels here do not train either italic system.</p><div id="visualItalicStatus" class="status" style="margin-top:12px">Visual Italic ready to run.</div><div id="visualItalicReview" style="margin-top:12px"></div></div>
+
 </div>
-</div></section><details class="card hidden advanced-collapsible" id="advancedSection"><summary class="advanced-summary">7. Advanced</summary><div class="advanced-body"><p class="hint advanced-label"><strong>Diagnostics and individual tools</strong> · Use these when testing a build or rerunning one stage manually.</p><div class="subcard regression-card">
-<h3>Regression Check</h3>
-<p class="hint">Inspection only. Checks paragraph sanity, text continuity, cleanup normalization, scene breaks, split ligatures, layout geometry, dropcaps, and italic sanity without changing the book. The original 20-page IMG_2701–IMG_2720 test set also gets its known layout-profile checks.</p>
-<div class="actions">
-<button class="button secondary" id="runRegression" type="button">Run Regression Check</button>
-<span class="progress-pill" id="regressionStatus">Not run</span>
-</div>
-<div class="regression-results hidden" id="regressionResults"></div>
-</div><div class="subcard">
-<h3>Paragraph Reconstruction</h3>
-<p class="hint">PaddleOCR now saves line positions and uses first-line indentation as primary paragraph evidence. Rebuild from saved geometry later without re-running OCR. Rebuilding replaces current page text, so do it before manual text edits.</p>
-<div class="actions">
-<button class="button secondary" disabled="" id="rebuildParagraphs" type="button">Rebuild paragraphs</button>
-<button class="button secondary" disabled="" id="downloadLayoutDiagnostics" type="button">Download layout diagnostics</button>
-<span class="progress-pill" id="paragraphStatus">Needs OCR from this build</span>
-</div>
-</div><div class="subcard">
-<h3>Formatting Rescue</h3>
-<p class="hint">Safe cleanup normalizes OCR ellipses and decorative scene dividers without rewriting prose, and now survives paragraph rebuilds. CloudLibrary/Iowan is in supervised calibration mode: automatic italics stay OFF while Studio measures word shape, shear, edge lean, ink density, and local roman contrast. Other profiles keep their existing behavior. Word-level diagnostics exports the calibration measurements and candidate runs.</p>
-<div class="actions">
-<button class="button secondary" id="safePolish" type="button">Safe text cleanup</button>
-<button class="button secondary" id="autoItalicScan" type="button">Auto italic scan</button>
-<button class="button secondary" id="downloadItalicDiagnostics" type="button">Download italic calibration diagnostics</button>
-<span class="progress-pill" id="polishStatus">Not run</span>
-<span class="progress-pill" id="italicStatus">Italics not scanned</span>
-</div>
-</div></div></details><details class="card hidden kindle-ready-section" id="kindleReadySection" open=""><summary class="kindle-ready-summary">8. Kindle Ready</summary><div class="kindle-ready-body"><p class="hint">Final preflight for a clean reflowable EPUB before Send to Kindle. This inspects the repaired/polished book and does not change text.</p><div class="actions"><button class="button primary" id="runKindleReady" type="button">Run Kindle Ready Check</button><span class="progress-pill" id="kindleReadyStatus">Not checked</span></div><div class="regression-results hidden" id="kindleReadyResults"></div></div></details><section class="card hidden" id="exportSection"><h2>9. Export</h2><div class="actions">
+</details>
+</div></details><details class="card hidden kindle-ready-section" id="kindleReadySection" open=""><summary class="kindle-ready-summary">8. Kindle Ready</summary><div class="kindle-ready-body"><p class="hint">Final preflight for a clean reflowable EPUB before Send to Kindle. This inspects the repaired/polished book and does not change text.</p><div class="actions"><button class="button primary" id="runKindleReady" type="button">Run Kindle Ready Check</button><span class="progress-pill" id="kindleReadyStatus">Not checked</span></div><div class="regression-results hidden" id="kindleReadyResults"></div></div></details><section class="card hidden" id="exportSection"><h2>9. Export</h2><div class="actions">
 <button class="button primary" id="downloadTxt" type="button">Download TXT</button>
 <button class="button secondary" id="downloadEpub" type="button">Download EPUB</button>
 </div><p class="hint">For imported EPUBs, export keeps the original package and changes only repairs you applied. For screenshot projects, it uses the existing Book OCR Studio exporter.</p></section>
+<details class="card lab-collapsible">
+<summary class="advanced-summary">Lab / offline experiments</summary>
+<div class="advanced-body">
+<p class="hint advanced-label"><strong>Research only</strong> · These tools are not part of the production book workflow.</p>
+<div class="subcard">
+<h3>Italic experiments</h3>
+<p class="hint">Analyze a previously exported Roman Residual report without loading screenshots or an OCR project.</p>
+<div class="actions"><button class="button secondary" id="italicRomanResidualOfflineBtn" type="button">Analyze Roman Residual Export</button></div>
+<p class="hint">Neural Italic N1 imports a Build 206+ labeled crop dataset and runs a page-grouped held-out image-classification experiment. Diagnostic only.</p>
+<div class="actions"><button class="button secondary" id="neuralItalicN1Btn" type="button">Run Neural Italic N1</button></div>
+<input accept="application/json,.json" id="neuralItalicN1Input" style="display:none" type="file">
+<div class="status-box subtle" id="neuralItalicN1Status">No neural crop dataset loaded.</div>
+<input accept="application/json,.json" id="italicRomanResidualImport" style="display:none" type="file">
+</div>
+</div>
+</details>
 </main>
 <dialog aria-labelledby="pageDropcapTitle" id="pageDropcapDialog">
 <div class="dialog-card">
@@ -336,7 +365,7 @@
 </dialog>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="epub-polish.js?v=58"></script>
-<script src="script-loader.js?v=237"></script>
+<script src="script-loader.js?v=238"></script>
 <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
