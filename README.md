@@ -442,3 +442,12 @@ Surgical follow-up to v2.7.62.
 - Keeps the repair deliberately narrow to short punctuation-only additive suffixes; it is not a general page-wide quote or punctuation deduper.
 - Paragraph-fragment auditing now calls the shared `isStructuralBlock()` classifier instead of maintaining a second uppercase-heading regex.
 - As a result, Unicode-ellipsis headings such as `ADRIAN … AGAIN` are excluded consistently from both terminal-punctuation and short-paragraph audits without rewriting their visible text or POV metadata.
+
+
+## Build 236 — Decorative scene-marker review
+- Adds a review-only Final Polish audit for extremely short standalone OCR tokens that are narrow, centered in the saved source geometry, vertically isolated, and positioned between normal prose paragraphs.
+- These candidates are intended to catch decorative scene-break ornaments that Paddle rendered as bogus text such as `1MC`, without hard-coding that literal token or auto-converting arbitrary short text.
+- Decorative-marker candidates cannot be passively suppressed by the cumulative visual-QA authority baseline; they require an explicit user decision.
+- Review actions are **Convert to scene break**, **Keep as text**, and **Open page**. Conversion stores the canonical `* * *` scene marker that exports as a semantic EPUB separator.
+- A decorative-marker candidate is excluded from the generic short-paragraph audit so one source condition does not create duplicate review cards.
+- Kindle Ready remains blocked while any unresolved decorative-marker candidate is present, with the Polish Review row explicitly naming that candidate class.
