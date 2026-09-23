@@ -249,6 +249,19 @@ progress { width: 100%; height: 12px; }
   padding: 12px;
 }
 .review-body img { width: 100%; border-radius: 9px; border: 1px solid var(--line); }
+.review-source-missing {
+  min-height: 190px;
+  display: grid;
+  place-items: center;
+  padding: 12px;
+  border: 1px dashed var(--line);
+  border-radius: 9px;
+  background: #f4efe9;
+  color: var(--muted);
+  text-align: center;
+  font-size: .82rem;
+  font-weight: 700;
+}
 .review-body textarea { min-height: 190px; }
 
 .hidden { display: none !important; }
