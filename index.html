@@ -171,7 +171,6 @@
   </div>
 </div>
 <input accept="application/json,.json" id="importOcrBackupFile" style="display:none" type="file">
-</div>
 <p class="hint">Export OCR backup saves processed text, word/line geometry, chapter markers, repair state, and OCR items to a portable JSON project. A backup can be restored without screenshots. Attach the original screenshots later only to continue incomplete OCR or use image-based review/diagnostic tools.</p>
 <p class="hint">Typography workflow: Export Typography Test → visual annotation → Import Typography Annotations. Confident italics are applied automatically. Uncertain calls stay Roman unless approved in First-Read Uncertain Review, which shows isolated crops only.</p>
 <p class="hint">The restart button removes saved OCR text from older versions but keeps your current screenshot selection and preserves saved chapter markers where possible.</p>
@@ -277,8 +276,7 @@
 <details class="subcard research-disclosure" id="italicResearchTools">
 <summary>Italic research & learning</summary>
 <div class="research-disclosure-body">
-<div class="subcard italic-learning-card" id="italicLearningSection">
-<h3>𝘐 Italic Review &amp; Learning</h3>
+<div class="italic-learning-card" id="italicLearningSection">
 <p class="hint">Italic Hunt is the spoiler-safe single-word trainer. Line Hunt is the post-read cleanup trainer: it queues suspicious full lines, allows duplicates, learns an all-Roman line word-by-word, and lets mixed lines split into OCR words. No re-OCR, Repair Book, or Final Polish rerun is required when OCR data is already loaded.</p>
 <div class="actions">
 <button class="button primary" id="italicReviewHuntBtn" type="button">Italic Hunt</button>
@@ -307,7 +305,8 @@
 <p class="hint">Story order, page location, and surrounding text stay hidden. Italic and Roman train this OCR/font profile across books; Glyph / Decorative is remembered as an exclusion class without entering the Italic-vs-Roman learner; Unsure skips training. Split mixed specimens into OCR-word pieces. Labels are still training-only and do not change EPUB formatting yet. Punctuation-only crops are excluded automatically.</p>
 <div class="review-list" id="italicCalibrationReviewList"><div class="hint">Choose Learned review or Random review to begin.</div></div>
 <div class="subcard" id="visualItalicTesting" style="margin-top:16px"><h4 style="margin-top:0">Visual Italic · experimental validation</h4><p class="hint">Independent spoiler-safe neural validation. Labels here do not train either italic system.</p><div id="visualItalicStatus" class="status" style="margin-top:12px">Visual Italic ready to run.</div><div id="visualItalicReview" style="margin-top:12px"></div></div>
-
+</div>
+</div>
 </div>
 </details>
 </div></details><details class="card hidden kindle-ready-section" id="kindleReadySection" open=""><summary class="kindle-ready-summary">8. Kindle Ready</summary><div class="kindle-ready-body"><p class="hint">Final preflight for a clean reflowable EPUB before Send to Kindle. This inspects the repaired/polished book and does not change text.</p><div class="actions"><button class="button primary" id="runKindleReady" type="button">Run Kindle Ready Check</button><span class="progress-pill" id="kindleReadyStatus">Not checked</span></div><div class="regression-results hidden" id="kindleReadyResults"></div></div></details><section class="card hidden" id="exportSection"><h2>9. Export</h2><div class="actions">
