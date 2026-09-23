@@ -3227,6 +3227,14 @@
           : `${total} source page${total===1?"":"s"} in project · screenshots not attached`;
     }
 
+    const dropzone = els.imageInput?.closest(".dropzone");
+    const dropzoneTitle = dropzone?.querySelector("strong");
+    const dropzoneHint = dropzone?.querySelector("span");
+    if (dropzoneTitle) dropzoneTitle.textContent = total && !attached ? "Attach source screenshots" : "Choose book screenshots";
+    if (dropzoneHint) dropzoneHint.textContent = total && !attached
+      ? "Only needed to continue OCR or use source-image tools. Select the original full screenshot batch."
+      : "Select the whole batch. Files are sorted naturally by filename.";
+
     if (els.processBtn) els.processBtn.disabled = state.processing || !attached || !total || processed >= total;
     if (els.freshPaddleBtn) els.freshPaddleBtn.disabled = state.processing || !attached || !total;
     if (els.exportTypographyTestBtn) els.exportTypographyTestBtn.disabled = !attached || !state.pages.length;
