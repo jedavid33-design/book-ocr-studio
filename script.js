@@ -574,6 +574,7 @@
 
   async function exportTypographyTest() {
     if (!state.files.length || !state.pages.length) { setStatus("Load and OCR pages before exporting a typography test."); return; }
+    if (!sourceFilesAttached()) { setStatus("Attach the original source screenshots before exporting a Typography Test package."); return; }
     const button = els.exportTypographyTestBtn; if (button) button.disabled = true;
     try {
       if (typeof JSZip === "undefined") throw new Error("ZIP support did not load. Refresh and try again.");
@@ -2566,6 +2567,10 @@
 
   function loadImageFromFile(file) {
     return new Promise((resolve, reject) => {
+      if (!isRealSourceFile(file)) {
+        reject(new Error(`Source screenshot ${file?.name || ""} is not attached.`));
+        return;
+      }
       const url = URL.createObjectURL(file);
       const img = new Image();
       img.onload = () => {
@@ -2620,7 +2625,7 @@
   }
 
   async function updatePreview() {
-    if (!state.files.length) {
+    if (!state.files.length || !sourceFilesAttached()) {
       const c = els.previewCanvas;
       c.width = 800;
       c.height = 360;
@@ -2630,8 +2635,11 @@
       ctx.fillStyle = "#756c63";
       ctx.font = "32px -apple-system, sans-serif";
       ctx.textAlign = "center";
-      ctx.fillText("Add screenshots to preview crop", c.width / 2, c.height / 2);
+      ctx.fillText(state.files.length ? "Attach source screenshots to preview crop" : "Add screenshots to preview crop", c.width / 2, c.height / 2);
       els.previewDims.textContent = "";
+      if (els.previewSample) els.previewSample.textContent = state.files.length
+        ? `${state.files.length} source page${state.files.length===1?"":"s"} in project · screenshots not attached`
+        : "Add screenshots to choose a sample";
       return;
     }
 
@@ -2652,6 +2660,13 @@
 
   function renderThumbs() {
     els.thumbStrip.innerHTML = "";
+    if (state.files.length && !sourceFilesAttached()) {
+      const note = document.createElement("div");
+      note.className = "status-box subtle";
+      note.textContent = `${state.files.length} source page${state.files.length===1?"":"s"} restored from project data. Choose the original screenshots above only if you need image-based review or must continue OCR.`;
+      els.thumbStrip.appendChild(note);
+      return;
+    }
     state.files.slice(0, 40).forEach((file, index) => {
       const wrap = document.createElement("div");
       wrap.className = "thumb";
