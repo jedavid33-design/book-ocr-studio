@@ -751,7 +751,11 @@
   async function renderUncertainCrop() {
     const item=state.typographyUncertain[state.typographyUncertainPosition];
     if(!item||!els.typographyUncertainCanvas)return;
-    const page=state.pages[item.pageIndex], file=page?.file; if(!file)return;
+    const page=state.pages[item.pageIndex], file=page?.file;
+    if(!isRealSourceFile(file)){
+      setStatus("Attach the original source screenshots to review uncertain typography crops.");
+      return;
+    }
     if(els.typographyUncertainMeta) els.typographyUncertainMeta.textContent=`Uncertain specimen ${state.typographyUncertainPosition+1} of ${state.typographyUncertain.length}`;
     const bmp=await createImageBitmap(file);
     const box=item.box;
@@ -1769,7 +1773,10 @@
       const safeTitle = cleanFilename(els.bookTitle?.value || "book");
       downloadBlob(new Blob([JSON.stringify(payload)], { type: "application/json" }),
         `${safeTitle}-ocr-backup-build-${BUILD_VERSION}.json`);
-      setStatus(`OCR backup exported: ${payload.pageCount} processed page${payload.pageCount === 1 ? "" : "s"}. Keep this file with the screenshots; it can restore the project without re-running OCR.`);
+      const complete = checkpoint.pages.length >= checkpoint.signature.length;
+      setStatus(complete
+        ? `OCR backup exported: ${payload.pageCount} processed page${payload.pageCount === 1 ? "" : "s"}. This backup can reopen the completed project without screenshots; attach them later only for image-based tools.`
+        : `OCR backup exported: ${payload.pageCount} of ${checkpoint.signature.length} pages processed. The backup can reopen this progress without screenshots, but the original screenshots are required to continue OCR.`);
     } catch (err) {
       console.error(err);
       setStatus(`Could not export OCR backup: ${err.message || err}`);
@@ -4253,7 +4260,7 @@
   }
 
   async function hydrateRawDropcapDetections(pageIndexes = null, progressCallback = null) {
-    if (state.importedEpub || !state.files.length) return 0;
+    if (state.importedEpub || !state.files.length || !sourceFilesAttached()) return 0;
     const allowed = pageIndexes ? new Set(pageIndexes) : null;
     const targets = state.pages
       .map((page, pageIndex) => ({ page, pageIndex }))
@@ -5809,8 +5816,10 @@
   }
 
   async function autoScanItalics({ rebuildText = true, progressCallback = null } = {}) {
-    if (!state.pages.length || !state.files.length) {
-      setStatus("Load and OCR screenshot pages before running the automatic italic scan.");
+    if (!state.pages.length || !state.files.length || !sourceFilesAttached()) {
+      setStatus(state.pages.length
+        ? "Attach the original source screenshots before running the automatic italic scan."
+        : "Load and OCR screenshot pages before running the automatic italic scan.");
       return;
     }
     syncCurrentEditor();
@@ -11494,7 +11503,7 @@ ${coverSpine}${spine.join("\n")}
     return 1-prev[bb.length]/Math.max(aa.length,bb.length,1);
   }
   async function runTesseractSidecar(){
-    if(!state.files.length){setStatus("Add the book screenshots first.");return;}
+    if(!state.files.length||!sourceFilesAttached()){setStatus("Attach the original book screenshots before running the Tesseract sidecar.");return;}
     const T=await ensureTesseractSidecar();
     const sample=state.files.map((_,i)=>i);
     const worker=await T.createWorker("eng",1,{logger:m=>{
