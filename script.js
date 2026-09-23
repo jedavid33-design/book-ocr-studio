@@ -1777,36 +1777,50 @@
 
   async function importOcrBackupFile(file) {
     if (!file) return;
-    if (!state.files.length) {
-      setStatus("Choose the book screenshots first, then import the OCR backup. The screenshots are needed to reconnect saved OCR geometry to the source pages.");
-      return;
-    }
     try {
       const payload = JSON.parse(await file.text());
       const saved = /^book-ocr-studio-ocr-backup-v[12]$/.test(payload?.schema || "") ? payload.checkpoint : payload;
       if (!saved || !Array.isArray(saved.pages) || !saved.pages.length) throw new Error("That file does not contain an OCR checkpoint.");
-      const score = checkpointMatchScore(saved);
-      if (!score) {
-        throw new Error(`Backup does not match the ${state.files.length} selected screenshots. Select the same book screenshots used for this OCR run.`);
+
+      // Build 237: a backup is a real project restore. Screenshots are optional
+      // for downstream text/geometry work. If no real source files are attached,
+      // create lightweight filename descriptors from the saved signature so every
+      // page, chapter, POV tag, geometry record, and repair state can reopen now.
+      if (sourceFilesAttached()) {
+        const score = checkpointMatchScore(saved, state.files);
+        if (!score) {
+          throw new Error(`Backup does not match the ${state.files.length} selected screenshots. Clear them or select the screenshots from this book.`);
+        }
+      } else {
+        state.files = virtualFilesFromCheckpoint(saved);
       }
-      // An explicitly chosen OCR backup is authoritative. Do not let a stale
-      // local checkpoint or durable repair overlay silently overwrite it.
+
       applyCheckpoint(saved, { applyOverlay:false });
       clearCheckpoint();
-      const persisted = saveCheckpoint();
+      saveCheckpoint();
+      const persisted = await flushCheckpointSave();
       console.info("OCR backup restored authoritatively; stale local checkpoint and repair overlay were cleared.");
+
       if (state.currentPageIndex < 0 && state.pages.length) state.currentPageIndex = state.pages.length - 1;
-      els.processBtn.disabled = !state.files.length || state.pages.length >= state.files.length;
-      els.freshPaddleBtn.disabled = !state.files.length;
       setPostOcrSectionsVisible(state.pages.length > 0);
+      refreshSourceAttachmentUi();
+      renderThumbs();
       renderReview();
       refreshParagraphRebuildUi();
       syncCropPresetUi();
+      await updatePreview().catch(err => console.warn("Could not render crop preview", err));
       updateNavigationControls();
       updateGuidedRepairModeUi();
+
+      const complete = state.pages.length >= state.files.length;
+      const sourceNote = sourceFilesAttached()
+        ? "Source screenshots are attached."
+        : complete
+          ? "Source screenshots are not attached; all downstream text/geometry work remains available."
+          : `OCR is incomplete (${state.pages.length}/${state.files.length}); attach the original screenshots to continue OCR.`;
       setStatus(persisted
-        ? `OCR backup restored authoritatively: ${state.pages.length} processed page${state.pages.length === 1 ? "" : "s"}. Stale browser edits were cleared; no OCR was run.`
-        : `OCR backup restored authoritatively: ${state.pages.length} processed page${state.pages.length === 1 ? "" : "s"}. Stale browser edits were cleared. Browser checkpoint storage is full, so keep this tab open while you work.`);
+        ? `OCR backup restored: ${state.pages.length} processed page${state.pages.length === 1 ? "" : "s"} of ${state.files.length}. ${sourceNote}`
+        : `OCR backup restored in memory: ${state.pages.length}/${state.files.length} pages. IndexedDB could not persist this restore, so export another backup before closing. ${sourceNote}`);
     } catch (err) {
       console.error(err);
       setStatus(`Could not restore OCR backup: ${err.message || err}`);
@@ -1819,6 +1833,10 @@
       localStorage.removeItem(REPAIR_OVERLAY_KEY);
       LEGACY_CHECKPOINT_KEYS.forEach(key => localStorage.removeItem(key));
     } catch (_) {}
+    projectCheckpointWriteChain = projectCheckpointWriteChain
+      .catch(() => {})
+      .then(() => deleteProjectCheckpoint())
+      .catch(err => console.warn("Could not clear IndexedDB project checkpoint", err));
   }
 
   function saveChapterMemory() {
@@ -1907,8 +1925,9 @@
       .replace(/[^a-z0-9]+/g, "");
   }
 
-  function checkpointMatchScore(saved) {
-    const signature = checkpointSignature();
+  function checkpointMatchScore(saved, files = state.files) {
+    const currentFiles = Array.isArray(files) ? files : [];
+    const signature = currentFiles.map(f => `${f.name}:${Number(f.size) || 0}:${Number(f.lastModified) || 0}`);
     if (!Array.isArray(saved?.signature) || saved.signature.length !== signature.length) return 0;
 
     // Best case: the browser returned the files with identical metadata.
@@ -1917,7 +1936,7 @@
     // iOS/Safari can hand the exact same Photos selection back with different
     // size/lastModified metadata after a reload or deployment. Match names next.
     const savedNames = saved.signature.map(signatureFileName);
-    const currentNames = state.files.map(f => f.name);
+    const currentNames = currentFiles.map(f => f.name);
     if (savedNames.every((name, i) => name === currentNames[i])) return 2;
 
     // Last safe fallback: same number of files, same ordered filename stems.
