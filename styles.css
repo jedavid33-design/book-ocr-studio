@@ -1041,3 +1041,63 @@ select{width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid var(-
     width: fit-content;
   }
 }
+
+
+/* Build 240 across-room OCR completion/failure notice */
+.ocr-batch-notice {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  max-width: min(92vw, 760px);
+}
+.ocr-batch-notice::backdrop {
+  background: rgba(24,20,18,.72);
+  backdrop-filter: blur(6px);
+}
+.ocr-batch-notice-card {
+  min-width: min(82vw, 680px);
+  padding: clamp(32px, 7vw, 64px);
+  border-radius: 30px;
+  text-align: center;
+  background: #f8f5f0;
+  border: 4px solid rgba(70,120,76,.35);
+  box-shadow: 0 26px 80px rgba(0,0,0,.32);
+}
+.ocr-batch-notice-icon {
+  width: clamp(110px, 22vw, 180px);
+  height: clamp(110px, 22vw, 180px);
+  margin: 0 auto 18px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  font-size: clamp(4.5rem, 13vw, 8rem);
+  line-height: 1;
+  font-weight: 900;
+  background: rgba(70,120,76,.12);
+  color: #315b37;
+}
+.ocr-batch-notice h2 {
+  margin: 0;
+  font-size: clamp(2.4rem, 8vw, 5.3rem);
+  line-height: .95;
+  letter-spacing: .01em;
+}
+.ocr-batch-notice p {
+  margin: 18px auto 0;
+  max-width: 540px;
+  color: var(--muted);
+  font-size: clamp(1rem, 2.8vw, 1.4rem);
+  line-height: 1.35;
+}
+.ocr-batch-notice-dismiss {
+  margin-top: 28px;
+  min-width: 180px;
+  font-size: 1.05rem;
+}
+.ocr-batch-notice.failure .ocr-batch-notice-card {
+  border-color: rgba(150,58,58,.42);
+}
+.ocr-batch-notice.failure .ocr-batch-notice-icon {
+  background: rgba(150,58,58,.12);
+  color: #8b3131;
+}
