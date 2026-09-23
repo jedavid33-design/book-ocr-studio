@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "237";
+  const BUILD_VERSION = "238";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -13,7 +13,6 @@
     pages: [],
     coverFile: null,
     coverUrl: "",
-    worker: null,
     paddle: null,
     stopRequested: false,
     processing: false,
@@ -34,6 +33,7 @@
     guidedRepairChapterIndex: 0,
     sourceProfile: "cloud-iowan",
     cropPreviewIndex: 0,
+    thumbnailsExpanded: false,
     italicCalibrationReviewSet: [],
     italicCalibrationLabels: {},
     italicLearningProfile: null,
@@ -110,7 +110,6 @@
     "bookOcrStudio.progress.v10",
     "bookOcrStudio.progress.v9",
   ];
-  const WORKER_RECYCLE_EVERY = 12;
 
   const els = {
     bookTitle: $("bookTitle"),
@@ -201,7 +200,6 @@
     exportVisualItalic: $("exportVisualItalic"),
     visualItalicReview: $("visualItalicReview"),
     visualItalicStatus: $("visualItalicStatus"),
-    visualItalicStatus: $("visualItalicStatus"),
     italicLineHuntBtn: $("italicLineHuntBtn"),
     italicValidationBtn: $("italicValidationBtn"),
     italicCropExportBtn: $("italicCropExportBtn"),
@@ -220,7 +218,7 @@
     ligatureReviewSummaryToggle: $("ligatureReviewSummaryToggle"),
     ligatureReviewSummary: $("ligatureReviewSummary"),
     ligatureReviewList: $("ligatureReviewList"),
-        rebuildParagraphs: $("rebuildParagraphs"),
+    rebuildParagraphs: $("rebuildParagraphs"),
     downloadLayoutDiagnostics: $("downloadLayoutDiagnostics"),
     paragraphStatus: $("paragraphStatus"),
     repairBook: $("repairBook"),
@@ -2716,7 +2714,11 @@
       els.thumbStrip.appendChild(note);
       return;
     }
-    state.files.slice(0, 40).forEach((file, index) => {
+    if (!state.files.length) return;
+
+    const expanded = !!state.thumbnailsExpanded;
+    const visibleLimit = expanded ? 40 : 8;
+    state.files.slice(0, visibleLimit).forEach((file, index) => {
       const wrap = document.createElement("div");
       wrap.className = "thumb";
       const img = document.createElement("img");
@@ -2729,13 +2731,24 @@
       wrap.append(img, number);
       els.thumbStrip.appendChild(wrap);
     });
-    if (state.files.length > 40) {
+
+    if (state.files.length > visibleLimit) {
       const more = document.createElement("div");
-      more.className = "thumb";
-      more.style.display = "grid";
-      more.style.placeItems = "center";
-      more.textContent = `+${state.files.length - 40}`;
+      more.className = "thumb thumb-more";
+      more.textContent = `+${state.files.length - visibleLimit}`;
       els.thumbStrip.appendChild(more);
+    }
+
+    if (state.files.length > 8) {
+      const toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = "thumb-toggle";
+      toggle.textContent = expanded ? "Hide extra thumbnails" : `Show thumbnails (${Math.min(state.files.length, 40)})`;
+      toggle.addEventListener("click", () => {
+        state.thumbnailsExpanded = !state.thumbnailsExpanded;
+        renderThumbs();
+      });
+      els.thumbStrip.appendChild(toggle);
     }
   }
 
@@ -8964,12 +8977,31 @@
   function renderFinalPolishReport(report) {
     if (!els.finalPolishResults) return;
     els.finalPolishResults.innerHTML = "";
+
+    const detail = document.createElement("details");
+    detail.className = "polish-audit-details";
+    const warnings = report.checks.filter(check => check.status === "warn").length;
+    const failures = report.checks.filter(check => check.status === "fail").length;
+    const passed = report.checks.filter(check => check.status === "pass").length;
+    detail.open = Boolean(report.issues.length || warnings || failures);
+
+    const summary = document.createElement("summary");
+    summary.className = "polish-audit-summary";
+    summary.textContent = !report.issues.length && !warnings && !failures
+      ? `✓ Final Polish · 0 review · ${passed} checks passed`
+      : `Final Polish audit · ${report.issues.length} review · ${warnings + failures} attention`;
+    detail.appendChild(summary);
+
+    const rows = document.createElement("div");
+    rows.className = "polish-audit-rows";
     report.checks.forEach(check => {
       const row = document.createElement("div");
       row.className = `regression-row final-polish-row ${check.status}`;
       row.innerHTML = `<strong>${escapeHtml(check.name)}</strong><span>${escapeHtml(check.detail)}</span>`;
-      els.finalPolishResults.appendChild(row);
+      rows.appendChild(row);
     });
+    detail.appendChild(rows);
+    els.finalPolishResults.appendChild(detail);
     els.finalPolishResults.classList.remove("hidden");
 
     if (!els.finalPolishReview || !els.finalPolishReviewList || !els.finalPolishReviewToggle) return;
@@ -10429,6 +10461,7 @@ ${coverSpine}${spine.join("\n")}
   els.imageInput.addEventListener("change", async () => {
     const selected = Array.from(els.imageInput.files || []).sort(naturalSort);
     if (!selected.length) return;
+    state.thumbnailsExpanded = false;
 
     // If a backup/IndexedDB project is already open without pixels, selecting
     // screenshots means ATTACH SOURCES, not "start over". Match the saved
@@ -10510,6 +10543,7 @@ ${coverSpine}${spine.join("\n")}
     state.ignoredLigatureCandidates = new Set();
     state.ignoredFinalPolishIssues = new Set();
     state.qaApprovedPolishEvidence = [];
+    state.thumbnailsExpanded = false;
     refreshSourceAttachmentUi();
     setPostOcrSectionsVisible(false);
     renderThumbs();
