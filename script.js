@@ -3205,6 +3205,39 @@
     setStatus(`Removed italic marks from page ${state.currentPageIndex + 1} and saved that formatting decision durably.`);
   }
 
+  function refreshSourceAttachmentUi() {
+    const total = state.files.length;
+    const attached = sourceFilesAttached();
+    const attachedCount = attachedSourceFileCount();
+    const processed = state.pages.length;
+
+    if (els.fileCount) {
+      els.fileCount.textContent = !total
+        ? "0 pages loaded"
+        : attached
+          ? `${total} screenshot${total===1?"":"s"} loaded`
+          : `${total} source page${total===1?"":"s"} in project · screenshots not attached`;
+    }
+
+    if (els.processBtn) els.processBtn.disabled = state.processing || !attached || !total || processed >= total;
+    if (els.freshPaddleBtn) els.freshPaddleBtn.disabled = state.processing || !attached || !total;
+    if (els.exportTypographyTestBtn) els.exportTypographyTestBtn.disabled = !attached || !state.pages.length;
+    if (els.typographyFirstReadBtn) els.typographyFirstReadBtn.disabled = !attached || !state.typographyUncertain.length;
+    if (els.typographyReviewBtn) els.typographyReviewBtn.disabled = !attached || !state.pages.length;
+    if (els.previewPrev) els.previewPrev.disabled = !attached || total < 2;
+    if (els.previewNext) els.previewNext.disabled = !attached || total < 2;
+
+    const pixelButtons = [
+      els.autoItalicScan, els.italicReviewHuntBtn, els.italicLineHuntBtn,
+      els.italicReviewLearnedBtn, els.italicReviewRandomBtn, els.italicValidationBtn,
+      els.italicPixelStudyBtn, els.italicReferenceAtlasBtn, els.tesseractSidecarBtn,
+      els.visualItalicBtn, els.italicCropExportBtn
+    ].filter(Boolean);
+    pixelButtons.forEach(button => { button.disabled = !attached; });
+
+    return { total, processed, attached, attachedCount };
+  }
+
   function updateNavigationControls() {
     const processed = state.pages.length;
     const total = state.files.length;
@@ -3215,14 +3248,16 @@
       : `${processed} of ${total} processed`;
 
     const hasCurrent = processed > 0 && state.currentPageIndex >= 0;
+    const currentHasSource = hasCurrent && isRealSourceFile(state.pages[state.currentPageIndex]?.file || state.files[state.currentPageIndex]);
     els.prevPageBtn.disabled = state.processing || !hasCurrent || pos <= 0;
-    els.messageOcrBtn.disabled = state.processing || !hasCurrent;
+    els.messageOcrBtn.disabled = state.processing || !hasCurrent || !currentHasSource;
     els.pageDropcapBtn.disabled = state.processing || !hasCurrent;
     if (els.markItalicBtn) els.markItalicBtn.disabled = state.processing || !hasCurrent;
     if (els.clearItalicBtn) els.clearItalicBtn.disabled = state.processing || !hasCurrent;
     els.nextPageBtn.disabled = state.processing || !hasCurrent || pos < 0 || pos >= indices.length - 1;
     els.prevPageBtn.textContent = state.reviewMode === "chapters" ? "Previous chapter" : "Previous page";
     els.nextPageBtn.textContent = state.reviewMode === "chapters" ? "Next chapter" : "Next page";
+    refreshSourceAttachmentUi();
   }
 
 
@@ -3317,11 +3352,20 @@
     const body = document.createElement("div");
     body.className = "review-body";
 
-    const img = document.createElement("img");
-    const url = pageImageUrl(page.file);
-    img.onload = () => URL.revokeObjectURL(url);
-    img.src = url;
-    img.alt = `Original screenshot ${index + 1}`;
+    let sourceView;
+    if (isRealSourceFile(page.file)) {
+      const img = document.createElement("img");
+      const url = pageImageUrl(page.file);
+      img.onload = () => URL.revokeObjectURL(url);
+      img.src = url;
+      img.alt = `Original screenshot ${index + 1}`;
+      sourceView = img;
+    } else {
+      const missing = document.createElement("div");
+      missing.className = "review-source-missing";
+      missing.textContent = "Source screenshot not attached";
+      sourceView = missing;
+    }
 
     const text = document.createElement("textarea");
     text.value = page.text;
@@ -3349,7 +3393,7 @@
       saveCheckpoint();
     });
 
-    body.append(img, text);
+    body.append(sourceView, text);
     item.append(title, chapterControls, body);
     els.reviewList.appendChild(item);
 
