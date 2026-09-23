@@ -1841,10 +1841,20 @@
       localStorage.removeItem(REPAIR_OVERLAY_KEY);
       LEGACY_CHECKPOINT_KEYS.forEach(key => localStorage.removeItem(key));
     } catch (_) {}
+    projectCheckpointLastError = null;
     projectCheckpointWriteChain = projectCheckpointWriteChain
       .catch(() => {})
       .then(() => deleteProjectCheckpoint())
-      .catch(err => console.warn("Could not clear IndexedDB project checkpoint", err));
+      .then(() => {
+        projectCheckpointLastError = null;
+        return true;
+      })
+      .catch(err => {
+        projectCheckpointLastError = err;
+        console.warn("Could not clear IndexedDB project checkpoint", err);
+        return false;
+      });
+    return projectCheckpointWriteChain;
   }
 
   function saveChapterMemory() {
@@ -1888,7 +1898,7 @@
     }
   }
 
-  function restartFreshWithPaddle() {
+  async function restartFreshWithPaddle() {
     if (!state.files.length || state.processing) return;
 
     const ok = confirm(
@@ -1899,7 +1909,7 @@
     if (!ok) return;
 
     saveChapterMemory();
-    clearCheckpoint();
+    await clearCheckpoint();
 
     state.pages = [];
     state.bookLayoutProfile = null;
@@ -10460,8 +10470,9 @@ ${coverSpine}${spine.join("\n")}
     }
   });
 
-  els.clearImages.addEventListener("click", () => {
+  els.clearImages.addEventListener("click", async () => {
     els.imageInput.value = "";
+    await clearCheckpoint();
     state.files = [];
     state.pages = [];
     state.currentPageIndex = -1;
@@ -10469,7 +10480,6 @@ ${coverSpine}${spine.join("\n")}
     state.ignoredLigatureCandidates = new Set();
     state.ignoredFinalPolishIssues = new Set();
     state.qaApprovedPolishEvidence = [];
-    clearCheckpoint();
     refreshSourceAttachmentUi();
     setPostOcrSectionsVisible(false);
     renderThumbs();
