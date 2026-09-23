@@ -477,3 +477,12 @@ Surgical follow-up to v2.7.62.
 - Reduces screenshot thumbnail clutter to eight previews by default, with an explicit expansion control that retains the previous 40-thumbnail ceiling.
 - Successful Final Polish audits collapse to a compact summary such as **0 review · checks passed**; warnings/review items expand the detailed audit automatically.
 - Removes a duplicated `visualItalicStatus` DOM reference plus unused `state.worker` / `WORKER_RECYCLE_EVERY` remnants.
+
+
+## Build 239 — New-book escape from automatic recovery
+- Fixes the case where a hard reload auto-restores the last IndexedDB OCR project and then treats a genuinely new screenshot batch only as an attempted source reattachment.
+- Matching screenshots still reconnect to the restored project exactly as Build 237 intended, with no OCR reset.
+- A mismatched screenshot batch now prompts to **start a new book**. Cancel keeps the recovered project untouched; confirm clears only browser recovery state for that old project and loads the new screenshots.
+- Exported OCR backup files are never modified by starting a new book.
+- Starting a fresh screenshot batch clears stale chapter-memory identity and writes the new source signature to IndexedDB immediately, so another reload cannot resurrect the unrelated previous project before page 1 is OCRed.
+- Adds `PROJECT_STATE.md` as the repo-first continuity file for fresh development threads.
