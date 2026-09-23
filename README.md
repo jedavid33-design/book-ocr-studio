@@ -451,3 +451,15 @@ Surgical follow-up to v2.7.62.
 - Review actions are **Convert to scene break**, **Keep as text**, and **Open page**. Conversion stores the canonical `* * *` scene marker that exports as a semantic EPUB separator.
 - A decorative-marker candidate is excluded from the generic short-paragraph audit so one source condition does not create duplicate review cards.
 - Kindle Ready remains blocked while any unresolved decorative-marker candidate is present, with the Polish Review row explicitly naming that candidate class.
+
+
+## Build 237 — Screenshot-free project restore + IndexedDB checkpoints
+- OCR backups can now reopen a Book OCR Studio project without first selecting the original screenshots.
+- Complete backups restore text, saved word/line geometry, chapter metadata, POV tags, QA authority, Repair/Polish state, and downstream EPUB/TXT workflow immediately.
+- Partial backups also restore without screenshots. Studio clearly marks OCR as incomplete and keeps OCR continuation disabled until the original full screenshot batch is attached.
+- Selecting screenshots while a detached backup project is open now means **attach sources**. Studio validates the saved filename/signature identity and reconnects the File objects without resetting restored text or metadata.
+- Source-image-only controls are disabled while screenshots are detached; Review shows a source-placeholder while text editing and geometry-based downstream work remain available.
+- Full automatic project checkpoints moved from localStorage to IndexedDB. Legacy localStorage checkpoints remain readable for migration and are removed after a verified IndexedDB write succeeds.
+- Each completed OCR page waits for its IndexedDB checkpoint commit before batch OCR advances, so a reported saved page has crossed a real durability boundary.
+- On startup, Studio can recover the latest IndexedDB project without screenshots. If that project is partial, attaching the original screenshot batch resumes OCR at the next unprocessed page.
+- Portable JSON OCR backups remain user-controlled safety copies and do not embed screenshot pixels.
