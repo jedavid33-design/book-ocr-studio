@@ -3927,6 +3927,9 @@
   async function processSinglePage(index, { batch = false } = {}) {
     if (!state.files.length) return;
     if (index < 0 || index >= state.files.length) return;
+    if (!isRealSourceFile(state.files[index])) {
+      throw new Error(`Source screenshot for page ${index + 1} is not attached.`);
+    }
 
     state.processing = true;
     els.processBtn.disabled = true;
@@ -3972,6 +3975,10 @@
 
       state.currentPageIndex = index;
       saveCheckpoint();
+      // OCR progress is a durability boundary. Wait for IndexedDB to commit
+      // this completed page before moving to the next screenshot.
+      const persisted = await flushCheckpointSave();
+      if (!persisted) throw new Error("IndexedDB could not persist the completed OCR page.");
       if (!batch) renderReview();
       refreshParagraphRebuildUi();
 
@@ -3990,7 +3997,7 @@
       else throw err;
     } finally {
       state.processing = false;
-      els.processBtn.disabled = !state.files.length || state.pages.length >= state.files.length;
+      refreshSourceAttachmentUi();
       updateNavigationControls();
     }
   }
@@ -4109,11 +4116,16 @@
 
   async function processAllPages() {
     if (!state.files.length || state.processing) return;
+    const startIndex = state.pages.length;
+    if (startIndex < state.files.length && !sourceFilesAttached()) {
+      setStatus(`OCR is paused at page ${startIndex + 1}. Attach the original ${state.files.length} screenshots to continue; restored OCR work is unchanged.`);
+      refreshSourceAttachmentUi();
+      return;
+    }
     els.reviewSection.classList.remove("hidden");
     els.guidedRepairSection?.classList.remove("hidden");
     els.advancedSection?.classList.remove("hidden");
     els.exportSection.classList.remove("hidden");
-    const startIndex = state.pages.length;
     if (startIndex >= state.files.length) {
       setStatus("All pages are already processed.");
       setReviewMode("chapters");
@@ -4151,6 +4163,7 @@
     state.currentPageIndex = 0;
     state.reviewMode = "chapters";
     saveCheckpoint();
+    await flushCheckpointSave();
     renderReview();
     refreshParagraphRebuildUi();
     const chapters = state.pages.filter(page => page.chapterStart).length;
