@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "238";
+  const BUILD_VERSION = "239";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -3286,7 +3286,7 @@
     const dropzoneHint = dropzone?.querySelector("span");
     if (dropzoneTitle) dropzoneTitle.textContent = total && !attached ? "Attach source screenshots" : "Choose book screenshots";
     if (dropzoneHint) dropzoneHint.textContent = total && !attached
-      ? "Only needed to continue OCR or use source-image tools. Select the original full screenshot batch."
+      ? "Select the original batch to reconnect this project, or choose a different batch to start a new book."
       : "Select the whole batch. Files are sorted naturally by filename.";
 
     if (els.processBtn) els.processBtn.disabled = state.processing || !attached || !total || processed >= total;
@@ -10463,15 +10463,61 @@ ${coverSpine}${spine.join("\n")}
     if (!selected.length) return;
     state.thumbnailsExpanded = false;
 
-    // If a backup/IndexedDB project is already open without pixels, selecting
-    // screenshots means ATTACH SOURCES, not "start over". Match the saved
-    // signature first and preserve every restored text/geometry/QA decision.
+    // A source-free recovered project has two legitimate next moves:
+    // 1) reattach its original screenshot batch, or
+    // 2) start a completely different book.
+    // Match first. A mismatch is never silently destructive: ask before
+    // replacing the browser recovery checkpoint with the new book.
     if (state.pages.length && state.files.length && !sourceFilesAttached()) {
       const savedIdentity = { signature: checkpointSignature() };
       const score = checkpointMatchScore(savedIdentity, selected);
       if (!score) {
-        els.imageInput.value = "";
-        setStatus(`Those ${selected.length} screenshots do not match this restored ${state.files.length}-page project. Nothing was changed.`);
+        const oldCount = state.files.length;
+        const oldTitle = String(els.bookTitle?.value || "").trim();
+        const newBook = confirm(
+          `These ${selected.length} screenshots do not match the restored ${oldCount}-page project${oldTitle ? ` “${oldTitle}”` : ""}.\n\n` +
+          "Start a new book with the selected screenshots? This replaces the browser recovery checkpoint for the restored project, but does not alter any OCR backup file you exported."
+        );
+        if (!newBook) {
+          els.imageInput.value = "";
+          setStatus("Kept the restored project. Its source screenshots are still detached.");
+          return;
+        }
+
+        await clearCheckpoint();
+        state.importedEpub = null;
+        state.dropcapCandidates = [];
+        state.pageDropcapCandidate = null;
+        state.repairBookHasRun = false;
+        state.finalPolishHasRun = false;
+        state.bookLayoutProfile = null;
+        state.ignoredLigatureCandidates = new Set();
+        state.ignoredFinalPolishIssues = new Set();
+        state.qaApprovedPolishEvidence = [];
+        state.typographyReviewActive = false;
+        state.typographyReviewPages = [];
+        state.typographyReviewPosition = 0;
+        state.typographyReviewVerdicts = {};
+        state.typographyUncertain = [];
+        state.typographyUncertainPosition = 0;
+        state.files = selected;
+        state.pages = [];
+        state.currentPageIndex = -1;
+        state.guidedRepairChapterIndex = 0;
+        state.cropPreviewIndex = defaultPreviewIndex();
+
+        if (els.bookTitle) els.bookTitle.value = "";
+        if (els.bookAuthor) els.bookAuthor.value = "";
+
+        refreshSourceAttachmentUi();
+        setPostOcrSectionsVisible(false);
+        renderThumbs();
+        renderReview();
+        refreshParagraphRebuildUi();
+        syncCropPresetUi();
+        await updatePreview().catch(err => console.warn("Could not render crop preview", err));
+        updateNavigationControls();
+        setStatus(`Started a new book with ${selected.length} screenshot${selected.length===1?"":"s"}. The previous recovered project was cleared from browser recovery storage; exported backups are unchanged.`);
         return;
       }
 
