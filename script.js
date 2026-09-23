@@ -1757,10 +1757,9 @@
       setStatus("No OCR project is loaded to back up.");
       return;
     }
-    // Export the live in-memory project, not the last localStorage snapshot.
-    // Large books can exceed the browser storage quota while OCR continues
-    // successfully in memory; reading localStorage here would silently export
-    // only the last checkpoint that happened to fit.
+    // Export the live in-memory project, not a browser checkpoint.
+    // Build 237 stores automatic checkpoints in IndexedDB, while this JSON stays
+    // the portable user-controlled copy and can reopen without source images.
     try {
       const checkpoint = buildCheckpointPayload();
       const payload = {
@@ -2044,6 +2043,7 @@
       const best = candidates[0];
       applyCheckpoint(best.saved);
       saveCheckpoint();
+      await flushCheckpointSave();
       console.info(`Recovered ${state.pages.length} pages from ${best.key} (match score ${best.score}).`);
       return state.pages.length;
     } catch (err) {
@@ -2072,6 +2072,7 @@
       applyCheckpoint(saved, { applyOverlay:true });
       if (!state.files.length) return 0;
       saveCheckpoint();
+      await flushCheckpointSave();
       refreshSourceAttachmentUi();
       setPostOcrSectionsVisible(true);
       renderThumbs();
@@ -3890,6 +3891,7 @@
     state.pages[index].layoutLines = layoutLines || [];
     state.pages[index].layoutMeta = layoutMeta || null;
     saveCheckpoint();
+    await flushCheckpointSave();
 
     const count = result?.items?.length || 0;
     setStatus(`PaddleOCR updated page ${index + 1} from ${count} detected text lines.`);
@@ -3999,7 +4001,10 @@
     } catch (err) {
       console.error(err);
       saveCheckpoint();
-      setStatus(`OCR failed on page ${index + 1}. Your previous progress was preserved.`);
+      const persisted = await flushCheckpointSave();
+      setStatus(persisted
+        ? `OCR stopped on page ${index + 1}. Completed pages are preserved in IndexedDB; tap Process all pages to resume.`
+        : `OCR stopped on page ${index + 1}, and browser project storage could not be updated. Your work is still live in this tab; export an OCR backup before closing.`);
       if (!batch) alert(`OCR failed on page ${index + 1}: ${err.message || err}`);
       else throw err;
     } finally {
@@ -9478,6 +9483,7 @@
 
       state.repairBookHasRun = true;
       saveCheckpoint();
+      await flushCheckpointSave();
       repairStage = "render repaired results";
       renderReview();
       renderDropcapResults();
