@@ -145,6 +145,7 @@ Normal production controls should remain visually dominant.
 
 ## Known / deferred work
 
+- **Post-vacation wishlist:** add a persistent, large, high-visibility popup/modal when **Process all pages** finishes OCR successfully. Its purpose is simply to make completion obvious from across the room; the popup text itself does not need to carry detailed status information. It should remain visible until dismissed.
 - **Immediate real-world test:** first full Kindle book.
 - A partial-backup → restore without screenshots → attach originals → resume OCR path is implemented but has not been deliberately end-to-end tested as a manufactured scenario.
 - EPUB scene-break conversion currently serializes an empty semantic `<hr class="scene-break"/>` and uses CSS generated content for visible stars. Kindle preserved the spacing but did not display the generated ornament in the Ruby Circle test. This is accepted for now.
