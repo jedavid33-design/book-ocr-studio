@@ -10485,6 +10485,7 @@ ${coverSpine}${spine.join("\n")}
         }
 
         await clearCheckpoint();
+        try { localStorage.removeItem(CHAPTER_MEMORY_KEY); } catch (_) {}
         state.importedEpub = null;
         state.dropcapCandidates = [];
         state.pageDropcapCandidate = null;
@@ -10575,6 +10576,12 @@ ${coverSpine}${spine.join("\n")}
         setStatus(`Recovered ${restored} processed pages. Tap Process all pages to resume at page ${Math.min(restored + 1, state.files.length)}, or review what is already saved.`);
       }
     } else {
+      // A genuinely new screenshot batch becomes the new browser recovery
+      // identity immediately, even before page 1 is OCRed. This prevents an
+      // unrelated older project from reappearing after a reload.
+      try { localStorage.removeItem(CHAPTER_MEMORY_KEY); } catch (_) {}
+      saveCheckpoint();
+      await flushCheckpointSave();
       setStatus(state.files.length ? "Ready to process all pages." : "Add screenshots to begin.");
     }
   });
