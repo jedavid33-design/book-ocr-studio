@@ -1732,6 +1732,7 @@
       });
       saveChapterMemory();
       saveCheckpoint();
+      await flushCheckpointSave();
       renderReview();
       updateNavigationControls();
 
