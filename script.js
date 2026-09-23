@@ -561,7 +561,7 @@
   }
 
   function saveCheckpoint() {
-    if (!state.files.length || !state.pages.length) return false;
+    if (!state.files.length) return false;
     try {
       const payload = buildCheckpointPayload();
       queueProjectCheckpointWrite(payload);
