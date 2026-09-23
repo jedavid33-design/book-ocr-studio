@@ -486,3 +486,15 @@ Surgical follow-up to v2.7.62.
 - Exported OCR backup files are never modified by starting a new book.
 - Starting a fresh screenshot batch clears stale chapter-memory identity and writes the new source signature to IndexedDB immediately, so another reload cannot resurrect the unrelated previous project before page 1 is OCRed.
 - Adds `PROJECT_STATE.md` as the repo-first continuity file for fresh development threads.
+
+
+## Build 240 — Self-describing QA packages + across-room OCR notices
+- Typography Test ZIP exports now include `QA-INSTRUCTIONS.md` in addition to `typography-map.json` and source screenshots.
+- The embedded QA instructions define screenshot pixels as authoritative and require a pixel-by-pixel pass for typography, OCR text, punctuation, paragraph/quote structure, page boundaries, scene breaks, chapter metadata, and stable-ID anchoring.
+- QA is explicitly **one chapter at a time** unless the user says otherwise.
+- The returned QA file must remain **cumulative**: each new chapter is appended to the same `book-ocr-studio-cumulative-chapter-qa-checkpoint-v1` JSON while earlier completed chapters are carried forward.
+- The instructions document the importer-compatible shapes for `replace_text`, `merge_across_pages`, boundary audit decisions, confident italic spans, uncertain spans, chapter headings, and POV metadata.
+- Users can add book-specific notes in chat, such as whether the book has POV labels, chapter titles, special layouts, or unusual scene-break ornaments.
+- Successful batch OCR now opens a large persistent **OCR COMPLETE** modal intended to be visible from across the room.
+- Failed/stopped OCR now opens a large persistent **OCR STOPPED** modal so the user can see that Studio needs attention without reading the status line.
+- Both notices remain visible until dismissed; failure details still preserve the existing page-level recovery status underneath.
