@@ -2001,38 +2001,86 @@
     if (applyOverlay) applyRepairOverlay();
   }
 
-  function restoreCheckpointIfMatching() {
+  function legacyCheckpointCandidates(files = state.files) {
+    const candidates = [];
     try {
       const keys = [CHECKPOINT_KEY, ...LEGACY_CHECKPOINT_KEYS];
-      const candidates = [];
-
       for (const key of keys) {
         const raw = localStorage.getItem(key);
         if (!raw) continue;
-
         let saved;
         try { saved = JSON.parse(raw); } catch (_) { continue; }
-        const score = checkpointMatchScore(saved);
+        const score = files?.length ? checkpointMatchScore(saved, files) : 1;
         if (!score) continue;
         candidates.push({ key, saved, score, pageCount: Array.isArray(saved.pages) ? saved.pages.length : 0 });
       }
+    } catch (_) {}
+    return candidates;
+  }
 
+  async function restoreCheckpointIfMatching() {
+    try {
+      const candidates = [];
+      const indexed = await readProjectCheckpoint().catch(err => {
+        console.warn("Could not read IndexedDB project checkpoint", err);
+        return null;
+      });
+      if (indexed) {
+        const score = checkpointMatchScore(indexed, state.files);
+        if (score) candidates.push({ key:"IndexedDB", saved:indexed, score, pageCount:Array.isArray(indexed.pages) ? indexed.pages.length : 0 });
+      }
+      candidates.push(...legacyCheckpointCandidates(state.files));
       if (!candidates.length) return 0;
 
-      // Prefer the checkpoint containing the most completed work. This matters
-      // if a newer build accidentally saved one fresh page before an older,
-      // much larger project was recovered.
       candidates.sort((a, b) => (b.pageCount - a.pageCount) || (b.score - a.score));
       const best = candidates[0];
       applyCheckpoint(best.saved);
-
-      // Re-save in the permanent format with the currently selected files so
-      // future version updates no longer depend on old iOS file metadata.
       saveCheckpoint();
       console.info(`Recovered ${state.pages.length} pages from ${best.key} (match score ${best.score}).`);
       return state.pages.length;
     } catch (err) {
       console.warn("Could not restore OCR checkpoint", err);
+      return 0;
+    }
+  }
+
+  async function restoreLatestProjectWithoutSources() {
+    if (state.files.length || state.pages.length) return 0;
+    try {
+      let saved = await readProjectCheckpoint().catch(() => null);
+      let source = "IndexedDB";
+
+      if (!saved) {
+        const legacy = legacyCheckpointCandidates([]);
+        legacy.sort((a, b) => b.pageCount - a.pageCount);
+        if (legacy.length) {
+          saved = legacy[0].saved;
+          source = legacy[0].key;
+        }
+      }
+      if (!saved || !Array.isArray(saved.pages) || !saved.pages.length) return 0;
+
+      state.files = virtualFilesFromCheckpoint(saved);
+      applyCheckpoint(saved, { applyOverlay:true });
+      if (!state.files.length) return 0;
+      saveCheckpoint();
+      refreshSourceAttachmentUi();
+      setPostOcrSectionsVisible(true);
+      renderThumbs();
+      renderReview();
+      refreshParagraphRebuildUi();
+      syncCropPresetUi();
+      await updatePreview().catch(() => {});
+      updateNavigationControls();
+      updateGuidedRepairModeUi();
+
+      const complete = state.pages.length >= state.files.length;
+      setStatus(complete
+        ? `Recovered ${state.pages.length}-page OCR project from ${source}. Source screenshots are not attached; downstream work is ready.`
+        : `Recovered ${state.pages.length} of ${state.files.length} processed pages from ${source}. Attach the original screenshots to continue OCR at page ${state.pages.length + 1}.`);
+      return state.pages.length;
+    } catch (err) {
+      console.warn("Could not restore project without source screenshots", err);
       return 0;
     }
   }
