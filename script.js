@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "239";
+  const BUILD_VERSION = "240";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -166,6 +166,12 @@
     progressPercent: $("progressPercent"),
     progressBar: $("progressBar"),
     statusBox: $("statusBox"),
+    ocrBatchNotice: $("ocrBatchNotice"),
+    ocrBatchNoticeCard: $("ocrBatchNoticeCard"),
+    ocrBatchNoticeIcon: $("ocrBatchNoticeIcon"),
+    ocrBatchNoticeTitle: $("ocrBatchNoticeTitle"),
+    ocrBatchNoticeDetail: $("ocrBatchNoticeDetail"),
+    ocrBatchNoticeDismiss: $("ocrBatchNoticeDismiss"),
     reviewSection: $("reviewSection"),
     reviewList: $("reviewList"),
     reviewProgress: $("reviewProgress"),
@@ -279,6 +285,34 @@
 
   function setStatus(message) {
     els.statusBox.textContent = message;
+  }
+
+  function showOcrBatchNotice(kind, detail = "") {
+    const dialog = els.ocrBatchNotice;
+    if (!dialog) return;
+    const failed = kind === "failure";
+    dialog.classList.toggle("failure", failed);
+    dialog.classList.toggle("success", !failed);
+    if (els.ocrBatchNoticeIcon) els.ocrBatchNoticeIcon.textContent = failed ? "!" : "✓";
+    if (els.ocrBatchNoticeTitle) els.ocrBatchNoticeTitle.textContent = failed ? "OCR STOPPED" : "OCR COMPLETE";
+    if (els.ocrBatchNoticeDetail) els.ocrBatchNoticeDetail.textContent = detail || (failed ? "OCR needs attention." : "All pages finished.");
+    try {
+      if (!dialog.open && typeof dialog.showModal === "function") dialog.showModal();
+      else dialog.setAttribute("open", "");
+    } catch (_) {
+      dialog.setAttribute("open", "");
+    }
+  }
+
+  function hideOcrBatchNotice() {
+    const dialog = els.ocrBatchNotice;
+    if (!dialog) return;
+    try {
+      if (dialog.open && typeof dialog.close === "function") dialog.close();
+      else dialog.removeAttribute("open");
+    } catch (_) {
+      dialog.removeAttribute("open");
+    }
   }
 
   function setGuidedProgress(stage, percent = null, detail = "") {
@@ -637,8 +671,219 @@
         book:{title:els.bookTitle?.value||"",author:els.bookAuthor?.value||"",sourceProfile:state.sourceProfile||"cloud-iowan",pageCount:pages.length},
         pages
       };
+      const qaInstructions = `# BOOK OCR STUDIO — PIXEL-BY-PIXEL QA INSTRUCTIONS
+
+Use this package as the complete source for Book OCR Studio visual QA. The user may add book-specific notes in chat, for example that this book has POV labels, chapter titles, unusual scene-break ornaments, text-message layouts, or other intentional formatting. Apply those notes in addition to these instructions.
+
+## Core rule: screenshot pixels are authoritative
+
+This is a PIXEL-BY-PIXEL visual QA pass. Inspect the original page screenshots in \`images/\` directly. Do not treat OCR text, automatic guesses, learned labels, or typography-map geometry as visually authoritative. \`typography-map.json\` provides stable IDs and geometry so corrections can be anchored back to Book OCR Studio.
+
+When screenshot pixels and OCR disagree, correct the OCR to match the screenshot. Do not rewrite prose for style, grammar, consistency, or what seems likely. Preserve source wording, punctuation, capitalization, typography, paragraphing, and intentional oddities exactly.
+
+## Work ONE CHAPTER AT A TIME
+
+Process exactly one chapter at a time unless the user explicitly asks for more.
+
+- Identify the chapter's true first and last page from the screenshots.
+- Inspect the page immediately before or after the chapter only when needed to resolve a page-boundary continuation, quote, paragraph, scene break, chapter heading, or chapter transition.
+- Do not continue into later chapters on your own.
+- After each chapter, update the SAME cumulative QA JSON so it contains every completed chapter so far.
+- Return/save the cumulative JSON after each chapter. Never make a chapter-only JSON that discards earlier completed QA.
+- When the user says to continue, append the next chapter to the existing cumulative file.
+
+## What to inspect on every reviewed page
+
+Compare the screenshot pixels against the OCR/geometry carefully. Check all of the following:
+
+1. TYPOGRAPHY / ITALICS
+   - Determine italics visually, word by word.
+   - Mark only glyphs that are actually italic in the screenshot.
+   - Do not extend italics across neighboring Roman words, punctuation, paragraph boundaries, or line boundaries unless the pixels show they belong to the italic span.
+   - Preserve mixed Roman/italic text within the same sentence or line.
+   - Treat uncertain italic specimens conservatively: if the pixels are genuinely ambiguous, put them in \`uncertainSpans\` instead of guessing.
+   - Do not infer italics from meaning, emphasis, titles, internal thoughts, or surrounding context.
+
+2. OCR TEXT ACCURACY
+   - Missing, duplicated, or substituted letters/words.
+   - OCR confusions such as I/l/1, O/0, rn/m, cl/d, punctuation mistaken for letters, and dropped standalone characters.
+   - Missing or duplicated punctuation.
+   - Apostrophes and quotation marks, including curly opening/closing direction where visible.
+   - Periods, commas, colons, semicolons, question marks, exclamation points.
+   - Ellipses, including whether the source uses an ellipsis glyph or spaced dots.
+   - Hyphens, en dashes, em dashes, and line-wrap hyphens.
+   - Capitalization and intentional all-caps/small heading text.
+   - Decorative initials/drop caps when OCR loses or duplicates the first character.
+   - Do not silently modernize punctuation or spelling.
+
+3. PARAGRAPH / STRUCTURAL QA
+   - Paragraph starts and ends.
+   - False paragraph splits caused by line wrapping.
+   - Missing paragraph breaks.
+   - Incorrect joins between separate paragraphs.
+   - Page-to-page sentence/paragraph continuations.
+   - Whether a page boundary should remain separate, is a chapter boundary, or requires \`merge_across_pages\`.
+   - Dialogue/quote structure that crosses paragraph or page boundaries.
+   - Standalone scene breaks and decorative separators. Preserve semantic scene breaks rather than OCR hallucinations of ornamental glyphs.
+   - Headers, footers, page numbers, app chrome, progress text, or other non-book UI accidentally captured as OCR should not become body prose.
+   - Text messages, letters, signs, labels, and other special layouts should retain their source-faithful reading order and paragraph structure.
+
+4. CHAPTER METADATA
+   - Record the exact visible chapter heading in \`chapter.heading\`.
+   - Record POV in \`chapter.pov\` ONLY when the book/source or user-specific note establishes a POV label. Preserve source-faithful wording exactly, including repeated words or qualifiers such as AGAIN.
+   - Do not invent or normalize chapter titles or POV names.
+   - Use \`reviewedPageRange\` for the exact pages visually reviewed as that chapter.
+   - Use \`boundaryCheck.nextPageId\` when there is a following page available to establish the chapter boundary.
+
+## Stable IDs and correction anchoring
+
+Use the IDs from \`typography-map.json\`:
+
+- Page IDs look like \`p0001\`.
+- Line IDs look like \`p0001-l0001\`.
+- Word/item IDs look like \`p0001-w00001\`.
+
+Corrections should be anchored to the smallest reliable stable item or item range. Do not invent IDs. For text replacement operations, copy \`matchText\` from the OCR/source-map wording being corrected and \`replacementText\` from the screenshot-authoritative reading.
+
+## Required cumulative JSON
+
+The file imported into Book OCR Studio MUST use this top-level schema:
+
+\`\`\`json
+{
+  "schema": "book-ocr-studio-cumulative-chapter-qa-checkpoint-v1",
+  "sourceMap": {
+    "pageCount": 0
+  },
+  "chapters": []
+}
+\`\`\`
+
+Set \`sourceMap.pageCount\` to the package's full book page count from \`typography-map.json\`, not merely the number of pages reviewed so far.
+
+Each completed chapter should be appended in this shape:
+
+\`\`\`json
+{
+  "chapter": {
+    "number": 1,
+    "heading": "Exact source-faithful heading",
+    "pov": "",
+    "reviewedPageRange": {
+      "startPageId": "p0001",
+      "endPageId": "p0010"
+    },
+    "boundaryCheck": {
+      "nextPageId": "p0011"
+    }
+  },
+  "structural": {
+    "operations": [],
+    "boundaryAudit": []
+  },
+  "typography": {
+    "confidentItalicSpans": [],
+    "uncertainSpans": []
+  }
+}
+\`\`\`
+
+### Structural operations
+
+For an OCR/text correction on one page, use:
+
+\`\`\`json
+{
+  "opId": "ch01-op001",
+  "type": "replace_text",
+  "pageId": "p0003",
+  "itemId": "p0003-w00017",
+  "matchText": "OCR text",
+  "replacementText": "Screenshot-authoritative text"
+}
+\`\`\`
+
+Use \`itemIds\` instead of \`itemId\` when the correction spans multiple stable OCR items.
+
+For a true continuation that must merge across consecutive screenshot pages, use:
+
+\`\`\`json
+{
+  "opId": "ch01-op002",
+  "type": "merge_across_pages",
+  "from": { "pageId": "p0007" },
+  "to": { "pageId": "p0008" }
+}
+\`\`\`
+
+Record explicit page-boundary decisions in \`structural.boundaryAudit\`:
+
+\`\`\`json
+{
+  "from": "p0007",
+  "to": "p0008",
+  "action": "keep_separate"
+}
+\`\`\`
+
+Valid intended boundary actions are:
+- \`keep_separate\`
+- \`merge_across_pages\`
+- \`chapter_boundary\`
+
+Every visually reviewed within-chapter page boundary should have an authoritative decision. Do not merge merely because a sentence continues naturally; use the screenshot structure to decide whether OCR Studio should join the page fragments into one paragraph.
+
+### Confident italic spans
+
+Put visually certain italics in \`typography.confidentItalicSpans\`. A span may contain one or more segments. Each segment should anchor to a stable item and include the exact screenshot-authoritative italic text:
+
+\`\`\`json
+{
+  "spanId": "ch01-it001",
+  "segments": [
+    {
+      "pageId": "p0004",
+      "itemId": "p0004-w00023",
+      "matchText": "OCR wording",
+      "finalText": "Exact italic wording"
+    }
+  ]
+}
+\`\`\`
+
+If one visual italic phrase crosses multiple OCR items, use multiple segments as needed rather than extending formatting across Roman words.
+
+### Uncertain italic spans
+
+If visual evidence is genuinely ambiguous, put the specimen in \`typography.uncertainSpans\` using stable page/item IDs and the candidate text. Book OCR Studio will keep it Roman unless it is later approved in the isolated uncertain-review UI.
+
+## Cumulative-file discipline
+
+After Chapter 1, the JSON contains Chapter 1.
+After Chapter 2, return a new version containing Chapters 1 + 2.
+After Chapter 3, return Chapters 1 + 2 + 3.
+Continue this pattern through the book.
+
+Do not regenerate earlier chapters from memory. Carry forward their prior QA records unchanged unless a newly inspected boundary requires a precise correction to an earlier chapter's final boundary metadata.
+
+Before returning each cumulative JSON:
+- Confirm the schema string is exact.
+- Confirm \`sourceMap.pageCount\` equals the full package page count.
+- Confirm every referenced page/item ID exists in \`typography-map.json\`.
+- Confirm operation IDs and span IDs are unique.
+- Confirm the new file still contains every previously completed chapter.
+- Confirm no unresolved guess has been silently promoted to a confident correction.
+
+## Chat behavior
+
+Keep user-facing commentary compact. Do not paste large amounts of book text or spoil later pages unnecessarily. The work product is the cumulative JSON. If a screenshot is ambiguous and the source cannot support a confident decision, say so rather than inventing a correction.
+
+Start with Chapter 1 unless the user explicitly names a different chapter.
+`;
+
       zip.file("typography-map.json", JSON.stringify(payload, null, 2));
-      zip.file("README.txt", "Book OCR Studio blind typography package\n\nOpen typography-map.json for OCR geometry and stable IDs. Original screenshots are in images/. No Auto Italics Scan guesses or training labels are included.\n");
+      zip.file("QA-INSTRUCTIONS.md", qaInstructions);
+      zip.file("README.txt", "Book OCR Studio visual QA package\n\nREAD QA-INSTRUCTIONS.md FIRST. Open typography-map.json for OCR geometry and stable IDs. Original screenshots are in images/. No Auto Italics Scan guesses or training labels are included.\n");
       setStatus("Compressing typography ZIP…");
       const blob = await zip.generateAsync({type:"blob",compression:"DEFLATE",compressionOptions:{level:6}});
       const safeTitle = cleanFilename(els.bookTitle?.value || "book");
@@ -4067,8 +4312,9 @@
       setStatus(persisted
         ? `OCR stopped on page ${index + 1}. Completed pages are preserved in IndexedDB; tap Process all pages to resume.`
         : `OCR stopped on page ${index + 1}, and browser project storage could not be updated. Your work is still live in this tab; export an OCR backup before closing.`);
-      if (!batch) alert(`OCR failed on page ${index + 1}: ${err.message || err}`);
-      else throw err;
+      if (!batch) {
+        showOcrBatchNotice("failure", `OCR failed on page ${index + 1}. Completed work is saved when browser storage is available.`);
+      } else throw err;
     } finally {
       state.processing = false;
       refreshSourceAttachmentUi();
@@ -4215,6 +4461,7 @@
       } catch (err) {
         console.error(err);
         setStatus(`Batch OCR stopped on page ${index + 1}. Pages 1–${index} are safely saved. Tap Process all pages to resume.`);
+        showOcrBatchNotice("failure", `Stopped on page ${index + 1} of ${state.files.length}. Completed pages are saved.`);
         renderReview();
         return;
       }
@@ -4242,6 +4489,7 @@
     refreshParagraphRebuildUi();
     const chapters = state.pages.filter(page => page.chapterStart).length;
     setStatus(`Batch OCR complete: ${state.pages.length} pages processed with Paddle + cached Tesseract evidence. Dual-OCR structural guard preserved ${dualGuarded} page${dualGuarded===1?"":"s"} where both engines agreed but reconstruction disagreed; ${rebuilt} page${rebuilt===1?"":"s"} used geometry reconstruction. Strict chapter detection found ${chapters} chapter start page${chapters===1?"":"s"} for review. Typography was left untouched.`);
+    showOcrBatchNotice("success", `${state.pages.length} of ${state.files.length} pages finished successfully.`);
     if(state.tesseractWorker){try{await state.tesseractWorker.terminate();}catch(_){} state.tesseractWorker=null;}
   }
 
@@ -10607,6 +10855,7 @@ ${coverSpine}${spine.join("\n")}
     setStatus("Add screenshots to begin.");
   });
 
+  els.ocrBatchNoticeDismiss?.addEventListener("click", hideOcrBatchNotice);
   els.freshPaddleBtn.addEventListener("click", restartFreshWithPaddle);
   els.exportOcrBackupBtn?.addEventListener("click", exportOcrBackup);
   els.exportTypographyTestBtn?.addEventListener("click", exportTypographyTest);
