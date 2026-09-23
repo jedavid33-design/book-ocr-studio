@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "235";
+  const BUILD_VERSION = "236";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -7843,6 +7843,7 @@
     const report = finalPolishAudit({ suppressQaApproved:false, respectIgnored:false });
     const allowed = reviewedPageIndexes instanceof Set ? reviewedPageIndexes : null;
     const records = (report?.issues || [])
+      .filter(issue => issue?.qaSuppressible !== false)
       .filter(issue => !allowed || allowed.has(Number(issue?.pageIndex)))
       .map(polishEvidenceRecord)
       .filter(record => record.text);
@@ -8098,7 +8099,10 @@
     const addIssue = (issue) => {
       issue.key = finalIssueKey(issue);
       if (respectIgnored && state.ignoredFinalPolishIssues.has(issue.key)) return false;
-      if (suppressQaApproved && qaApprovedPolishIssue(issue)) {
+      // Build 236: some source-geometry warnings require an explicit decision.
+      // A page having completed visual QA is not, by itself, approval of a
+      // suspicious OCR token that may actually be a decorative scene ornament.
+      if (suppressQaApproved && issue?.qaSuppressible !== false && qaApprovedPolishIssue(issue)) {
         qaSuppressed++;
         return false;
       }
@@ -8517,11 +8521,83 @@
         ? `${possibleSceneBreaks} page${possibleSceneBreaks===1?"":"s"} have unusually large internal gaps without a semantic scene break.`
         : "No suspicious large internal gaps without scene markers found.");
 
+    // Build 236: decorative ornaments can OCR into tiny nonsense tokens instead
+    // of one of the known scene-marker glyphs. Surface only a narrow, centered,
+    // standalone block that sits between real prose and is backed by the saved
+    // source geometry. This is review-only: never infer a scene break from text
+    // such as "1MC" without an explicit user decision.
+    let decorativeMarkers = 0;
+    const decorativeMarkerParagraphs = new Set();
+    state.pages.forEach((page, pageIndex) => {
+      const blocks = pageBlocks(page);
+      const lines = Array.isArray(page?.layoutLines) ? page.layoutLines.filter(line => line?.text && line?.box) : [];
+      if (blocks.length < 3 || lines.length < 3) return;
+
+      const minX = Math.min(...lines.map(line => Number(line.box.x)).filter(Number.isFinite));
+      const maxRight = Math.max(...lines.map(line => Number(line.box.x) + Number(line.box.w)).filter(Number.isFinite));
+      if (!Number.isFinite(minX) || !Number.isFinite(maxRight) || maxRight <= minX) return;
+      const pageWidth = maxRight - Math.min(0, minX);
+      const pageCenter = (Math.min(0, minX) + maxRight) / 2;
+      const hs = lines.map(line => Number(line?.box?.h)).filter(h => Number.isFinite(h) && h > 2);
+      const typicalH = median(hs) || 28;
+      const norm = value => qaCanonicalText(stripItalicMarkers(String(value || ""))).toLowerCase();
+
+      for (let paraIndex = 1; paraIndex < blocks.length - 1; paraIndex++) {
+        const plain = stripItalicMarkers(blocks[paraIndex]).trim();
+        if (!plain || plain === "* * *" || isStructuralBlock(plain) || isSceneMarkerText(plain)) continue;
+        if (plain.length > 8 || /\s/u.test(plain) || !/[A-Za-z0-9]/u.test(plain)) continue;
+        if (/[.!?…"'’”)]$/u.test(plain)) continue;
+
+        const before = stripItalicMarkers(blocks[paraIndex - 1]).trim();
+        const after = stripItalicMarkers(blocks[paraIndex + 1]).trim();
+        const proseLike = value => value.length >= 24 && !isStructuralBlock(value) && value !== "* * *";
+        if (!proseLike(before) || !proseLike(after)) continue;
+
+        const target = norm(plain);
+        const matchingLines = lines
+          .map((line, lineIndex) => ({ line, lineIndex }))
+          .filter(entry => norm(entry.line.text) === target);
+        if (matchingLines.length !== 1) continue;
+
+        const { line, lineIndex } = matchingLines[0];
+        if (!isCenteredShortLine(line, pageWidth, pageCenter)) continue;
+        const lineWidth = Number(line?.box?.w);
+        if (!Number.isFinite(lineWidth) || lineWidth > Math.max(typicalH * 4.5, pageWidth * 0.16)) continue;
+
+        const previousLine = lines[lineIndex - 1];
+        const nextLine = lines[lineIndex + 1];
+        if (!previousLine?.box || !nextLine?.box) continue;
+        const gapBefore = Number(line.box.y) - (Number(previousLine.box.y) + Number(previousLine.box.h));
+        const gapAfter = Number(nextLine.box.y) - (Number(line.box.y) + Number(line.box.h));
+        if (!Number.isFinite(gapBefore) || !Number.isFinite(gapAfter)) continue;
+        if (Math.max(gapBefore, gapAfter) < typicalH * 0.55) continue;
+
+        decorativeMarkerParagraphs.add(pageIndex + ":" + paraIndex);
+        const issue = {
+          type: "Decorative marker candidate",
+          qaSuppressible: false,
+          pageIndex,
+          paraIndex,
+          fileName: page.fileName || page.file?.name || `Page ${pageIndex + 1}`,
+          current: plain,
+          fullText: blocks[paraIndex],
+          suggestion: "* * *",
+          detail: `This ${plain.length}-character standalone OCR token is narrow, centered in the saved source geometry, isolated by vertical spacing, and sits between prose paragraphs. It may be a decorative scene-break ornament misread as text. Confirm explicitly before converting it.`
+        };
+        if (addIssue(issue)) decorativeMarkers++;
+      }
+    });
+    addCheck("Decorative-marker audit", decorativeMarkers ? "warn" : "pass",
+      decorativeMarkers
+        ? `${decorativeMarkers} centered standalone OCR token${decorativeMarkers===1?"":"s"} may represent a decorative scene-break ornament and require an explicit decision.`
+        : "No unresolved geometry-backed decorative-marker candidates found.");
+
     let fragments = 0;
     state.pages.forEach((page, pageIndex) => {
       const paras = pageBlocks(page);
       paras.forEach((para, paraIndex) => {
         const plain = stripItalicMarkers(para).trim();
+        if (decorativeMarkerParagraphs.has(pageIndex + ":" + paraIndex)) return;
         const messageSpeakerLabel = /^(?:ME|YOU|SABRINA|TUCKER)$/i.test(plain);
         if (plain && plain.length <= 24 &&
             !messageSpeakerLabel &&
@@ -8754,6 +8830,36 @@
           setStatus("Saved this possible split as correct.");
         });
         button("Open page (optional)", "ghost", () => jumpToPage(issue.pageIndex));
+      } else if (issue.type === "Decorative marker candidate") {
+        button("Convert to scene break", "secondary", () => {
+          const page = state.pages[issue.pageIndex];
+          const blocks = pageBlocks(page);
+          if (!page || !blocks[issue.paraIndex]) return;
+          const current = stripItalicMarkers(blocks[issue.paraIndex]).trim();
+          if (qaCanonicalText(current) !== qaCanonicalText(issue.current || "")) {
+            setStatus("The flagged decorative-marker text changed since this review card was created. Nothing was changed.");
+            jumpToPage(issue.pageIndex);
+            return;
+          }
+          blocks[issue.paraIndex] = "* * *";
+          writePageBlocks(page, blocks);
+          page.manualEdited = true;
+          saveRepairOverlayPage(issue.pageIndex, { manualEdited: true });
+          state.ignoredFinalPolishIssues.add(issue.key);
+          saveCheckpoint();
+          renderReview();
+          const report = runFinalPolish();
+          if (report && els.finalPolishReview) els.finalPolishReview.open = true;
+          setStatus(`Converted “${issue.current}” to a semantic scene break.`);
+        });
+        button("Keep as text", "ghost", () => {
+          state.ignoredFinalPolishIssues.add(issue.key);
+          saveCheckpoint();
+          const report = runFinalPolish();
+          if (report && els.finalPolishReview) els.finalPolishReview.open = true;
+          setStatus(`Explicitly kept “${issue.current}” as text.`);
+        });
+        button("Open page", "secondary", () => jumpToPage(issue.pageIndex));
       } else if (issue.type === "Possible scene break") {
         button("Insert scene break", "secondary", () => {
           const page = state.pages[issue.pageIndex];
@@ -9651,9 +9757,10 @@
     } catch (_) {
       polishIssues = [];
     }
+    const unresolvedDecorativeMarkers = polishIssues.filter(issue => issue?.type === "Decorative marker candidate").length;
     add("Polish review", polishIssues.length ? "fail" : "pass",
       polishIssues.length
-        ? `${polishIssues.length} unresolved Final Polish item${polishIssues.length===1?"":"s"} remain.`
+        ? `${polishIssues.length} unresolved Final Polish item${polishIssues.length===1?"":"s"} remain${unresolvedDecorativeMarkers ? ` (including ${unresolvedDecorativeMarkers} decorative-marker candidate${unresolvedDecorativeMarkers===1?"":"s"} requiring an explicit decision)` : ""}.`
         : "No unresolved Final Polish items remain.");
 
     const combined = state.pages.map(p => String(p.text || "")).join("\n");
