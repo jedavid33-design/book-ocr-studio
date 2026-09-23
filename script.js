@@ -10350,20 +10350,59 @@ ${coverSpine}${spine.join("\n")}
   });
 
   els.imageInput.addEventListener("change", async () => {
+    const selected = Array.from(els.imageInput.files || []).sort(naturalSort);
+    if (!selected.length) return;
+
+    // If a backup/IndexedDB project is already open without pixels, selecting
+    // screenshots means ATTACH SOURCES, not "start over". Match the saved
+    // signature first and preserve every restored text/geometry/QA decision.
+    if (state.pages.length && state.files.length && !sourceFilesAttached()) {
+      const savedIdentity = { signature: checkpointSignature() };
+      const score = checkpointMatchScore(savedIdentity, selected);
+      if (!score) {
+        els.imageInput.value = "";
+        setStatus(`Those ${selected.length} screenshots do not match this restored ${state.files.length}-page project. Nothing was changed.`);
+        return;
+      }
+
+      const byName = new Map(selected.map(file => [file.name, file]));
+      const byStem = new Map(selected.map(file => [normalizedStem(file.name), file]));
+      state.files = selected;
+      state.pages.forEach((page, index) => {
+        const attached = byName.get(page.file?.name)
+          || byStem.get(normalizedStem(page.file?.name))
+          || selected[index];
+        if (attached) page.file = attached;
+      });
+      state.cropPreviewIndex = defaultPreviewIndex();
+      saveCheckpoint();
+      await flushCheckpointSave();
+      refreshSourceAttachmentUi();
+      renderThumbs();
+      renderReview();
+      syncCropPresetUi();
+      await updatePreview().catch(err => console.warn("Could not render crop preview", err));
+      updateNavigationControls();
+
+      const complete = state.pages.length >= state.files.length;
+      setStatus(complete
+        ? `Attached ${state.files.length} source screenshots to the restored project. No OCR was rerun.`
+        : `Attached ${state.files.length} source screenshots. OCR can resume at page ${state.pages.length + 1} of ${state.files.length}.`);
+      return;
+    }
+
     state.importedEpub = null;
     state.dropcapCandidates = [];
     state.repairBookHasRun = false;
     state.ignoredLigatureCandidates = new Set();
     state.ignoredFinalPolishIssues = new Set();
-    state.files = Array.from(els.imageInput.files || []).sort(naturalSort);
+    state.files = selected;
     state.pages = [];
     state.currentPageIndex = -1;
     state.cropPreviewIndex = defaultPreviewIndex();
-    const restored = state.files.length ? restoreCheckpointIfMatching() : 0;
+    const restored = state.files.length ? await restoreCheckpointIfMatching() : 0;
     if (restored && state.currentPageIndex < 0) state.currentPageIndex = restored - 1;
-    els.fileCount.textContent = `${state.files.length} page${state.files.length === 1 ? "" : "s"} loaded`;
-    els.processBtn.disabled = !state.files.length || restored >= state.files.length;
-    els.freshPaddleBtn.disabled = !state.files.length;
+    refreshSourceAttachmentUi();
     setPostOcrSectionsVisible(restored > 0);
     renderThumbs();
     renderReview();
@@ -10394,9 +10433,7 @@ ${coverSpine}${spine.join("\n")}
     state.ignoredFinalPolishIssues = new Set();
     state.qaApprovedPolishEvidence = [];
     clearCheckpoint();
-    els.fileCount.textContent = "0 pages loaded";
-    els.processBtn.disabled = true;
-    els.freshPaddleBtn.disabled = true;
+    refreshSourceAttachmentUi();
     setPostOcrSectionsVisible(false);
     renderThumbs();
     renderReview();
@@ -11545,5 +11582,17 @@ ${coverSpine}${spine.join("\n")}
     downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),`italic-held-out-validation-v${BUILD_VERSION}.json`);
     setStatus(`Exported honest held-out italic baseline for build ${BUILD_VERSION}. Send back italic-held-out-validation-v${BUILD_VERSION}.json.`);
   });
-  updatePreview();
+  restoreLatestProjectWithoutSources()
+    .then(restored => {
+      if (!restored) {
+        refreshSourceAttachmentUi();
+        return updatePreview();
+      }
+      return null;
+    })
+    .catch(err => {
+      console.warn("Startup project restore failed", err);
+      refreshSourceAttachmentUi();
+      updatePreview().catch(() => {});
+    });
 })();
