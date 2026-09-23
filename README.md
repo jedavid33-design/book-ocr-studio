@@ -463,3 +463,17 @@ Surgical follow-up to v2.7.62.
 - Each completed OCR page waits for its IndexedDB checkpoint commit before batch OCR advances, so a reported saved page has crossed a real durability boundary.
 - On startup, Studio can recover the latest IndexedDB project without screenshots. If that project is partial, attaching the original screenshot batch resumes OCR at the next unprocessed page.
 - Portable JSON OCR backups remain user-controlled safety copies and do not embed screenshot pixels.
+
+
+## Build 238 — Production UI cleanup
+- Freezes Build 237 persistence/restore behavior and makes no OCR, QA, Repair, Final Polish, italic-detection, POV, or EPUB-serialization logic changes.
+- Simplifies the visible production path to Book Info → Screenshots → Crop → OCR/QA → Review → Guided Repair/Final Polish → Kindle Ready → Export.
+- Moves restart/legacy typography inspection controls behind **More OCR / recovery tools** instead of presenting them beside the normal OCR actions.
+- Moves page re-OCR and chapter re-detection behind **Page & recovery tools** in Review.
+- Keeps Whole Book + Geometry Assist as the normal Repair configuration while moving chapter-by-chapter and geometry switches behind **Repair options**.
+- Moves the full Italic Review & Learning laboratory into a nested **Italic research & learning** disclosure inside Advanced; no training data or research code is removed.
+- Moves offline Roman Residual / Neural Italic N1 experiments out of the top of the app into a bottom **Lab / offline experiments** disclosure so those tools remain available without an OCR project.
+- Removes duplicated Review/Guided Repair presentation labels and de-emphasizes destructive **Reset learning** styling.
+- Reduces screenshot thumbnail clutter to eight previews by default, with an explicit expansion control that retains the previous 40-thumbnail ceiling.
+- Successful Final Polish audits collapse to a compact summary such as **0 review · checks passed**; warnings/review items expand the detailed audit automatically.
+- Removes a duplicated `visualItalicStatus` DOM reference plus unused `state.worker` / `WORKER_RECYCLE_EVERY` remnants.
