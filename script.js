@@ -478,6 +478,8 @@
 
   let projectCheckpointWriteChain = Promise.resolve();
   let projectCheckpointLastError = null;
+  let projectCheckpointPendingPayload = null;
+  let projectCheckpointDrainScheduled = false;
 
   function openProjectDb() {
     return new Promise((resolve, reject) => {
@@ -529,31 +531,56 @@
   }
 
   function queueProjectCheckpointWrite(payload) {
+    // Coalesce routine UI saves. A 204-page project can be large, and Review
+    // fires on every keystroke. Keep only the newest not-yet-written snapshot
+    // while an IndexedDB transaction is in flight. Explicit durability
+    // boundaries call flushCheckpointSave(), which waits for this drain.
+    projectCheckpointPendingPayload = payload;
     projectCheckpointLastError = null;
+    if (projectCheckpointDrainScheduled) return true;
+
+    projectCheckpointDrainScheduled = true;
     projectCheckpointWriteChain = projectCheckpointWriteChain
       .catch(() => {})
-      .then(() => writeProjectCheckpoint(payload))
-      .then(() => {
-        // Build 237 migration: once the large checkpoint is safely in IndexedDB,
-        // remove legacy whole-project localStorage copies so they cannot fill the
-        // small synchronous storage quota again.
-        try {
-          localStorage.removeItem(CHECKPOINT_KEY);
-          LEGACY_CHECKPOINT_KEYS.forEach(key => localStorage.removeItem(key));
-        } catch (_) {}
+      .then(async () => {
+        while (projectCheckpointPendingPayload) {
+          const nextPayload = projectCheckpointPendingPayload;
+          projectCheckpointPendingPayload = null;
+          await writeProjectCheckpoint(nextPayload);
+
+          // Build 237 migration: once the large checkpoint is safely in IndexedDB,
+          // remove legacy whole-project localStorage copies so they cannot fill the
+          // small synchronous storage quota again.
+          try {
+            localStorage.removeItem(CHECKPOINT_KEY);
+            LEGACY_CHECKPOINT_KEYS.forEach(key => localStorage.removeItem(key));
+          } catch (_) {}
+        }
         return true;
       })
       .catch(err => {
         projectCheckpointLastError = err;
+        projectCheckpointPendingPayload = null;
         console.warn("Could not save OCR project to IndexedDB", err);
         return false;
+      })
+      .finally(() => {
+        projectCheckpointDrainScheduled = false;
+        // A payload can arrive in the tiny handoff window after the drain loop
+        // observed empty. Start another drain rather than dropping that save.
+        if (projectCheckpointPendingPayload) queueProjectCheckpointWrite(projectCheckpointPendingPayload);
       });
     return true;
   }
 
   async function flushCheckpointSave() {
     try {
-      await projectCheckpointWriteChain;
+      while (projectCheckpointDrainScheduled || projectCheckpointPendingPayload) {
+        await projectCheckpointWriteChain;
+        if (projectCheckpointPendingPayload && !projectCheckpointDrainScheduled) {
+          queueProjectCheckpointWrite(projectCheckpointPendingPayload);
+        }
+      }
       return !projectCheckpointLastError;
     } catch (_) {
       return false;
@@ -1841,6 +1868,9 @@
       localStorage.removeItem(REPAIR_OVERLAY_KEY);
       LEGACY_CHECKPOINT_KEYS.forEach(key => localStorage.removeItem(key));
     } catch (_) {}
+    // A deliberate clear invalidates any routine snapshot still waiting behind
+    // the current transaction. Let an in-flight write finish, then delete it.
+    projectCheckpointPendingPayload = null;
     projectCheckpointLastError = null;
     projectCheckpointWriteChain = projectCheckpointWriteChain
       .catch(() => {})
