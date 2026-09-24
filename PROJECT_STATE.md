@@ -6,7 +6,7 @@
 
 ## Current state
 
-- **Current build:** 240
+- **Current build:** 241
 - **Status:** stable / feature-complete for the current OCR workflow. Leave the app alone unless real-book use exposes a concrete problem.
 - **Primary repo:** `jedavid33-design/book-ocr-studio`
 - **Branch:** `main`
@@ -145,7 +145,9 @@ Normal production controls should remain visually dominant.
 
 ## Known / deferred work
 
-- **Build 240 QA handoff:** every Typography Test ZIP includes `QA-INSTRUCTIONS.md`. A fresh QA thread should be able to receive the ZIP plus a short prompt such as “QA. Instructions included in the ZIP.” Book-specific notes can be added in chat.
+- **Build 241 QA handoff:** every Typography Test ZIP includes a short `QA-INSTRUCTIONS.md` router plus `CHATGPT-QA-INSTRUCTIONS.md` and `MUSE-QA-INSTRUCTIONS.md`. ChatGPT keeps the chapter-by-chapter cumulative workflow. Muse/Wren gets a continuous whole-book sequential workflow with strict canonical-schema, stable-ID, and silent-content-loss safeguards. Book-specific notes can still be added in chat.
+- **Pucked blind QA experiment (2026-09-23):** ChatGPT primary QA beat Muse/Wren in the blinded EPUB comparison. Muse successfully processed the full book autonomously and found useful local OCR corrections, but its output introduced silent source-text loss in multiple chapters. Until repeated testing proves otherwise, treat Muse as experimental/secondary QA rather than the sole authoritative correction engine.
+- **Scene-break QA gap discovered by Pucked:** both engines can visually recognize scene breaks, but the cumulative QA schema has no canonical insertion operation when OCR produced no safe ornament token to replace. Build 241 instructions explicitly forbid Muse from overwriting neighboring prose or inventing unsupported ops in that case. A future safe `insert_scene_break`-style transactional operation is the preferred fix.
 - **Build 240 across-room notices:** batch OCR success shows a persistent large `OCR COMPLETE` modal; batch OCR failure/stoppage shows a persistent large `OCR STOPPED` modal. Both remain until dismissed.
 - **Immediate real-world test:** first full Kindle book.
 - A partial-backup → restore without screenshots → attach originals → resume OCR path is implemented but has not been deliberately end-to-end tested as a manufactured scenario.
