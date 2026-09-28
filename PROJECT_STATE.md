@@ -6,7 +6,7 @@
 
 ## Current state
 
-- **Current build:** 241
+- **Current build:** 242
 - **Status:** stable / feature-complete for the current OCR workflow. Leave the app alone unless real-book use exposes a concrete problem.
 - **Primary repo:** `jedavid33-design/book-ocr-studio`
 - **Branch:** `main`
@@ -14,6 +14,7 @@
 - **Current production flow:** Book Info → Screenshots → Crop → OCR / QA → Review → Guided Repair → Final Polish → Kindle Ready → Export.
 - Build 238 cleaned the production UI without changing OCR/QA/Repair/Polish/export behavior.
 - Build 239 fixes a recovered-project edge case: if Studio auto-restores the last source-free project and the user selects a different screenshot batch, Studio offers to start a new book instead of trapping the user behind an attachment mismatch.
+- Build 242 starts the **pretty EPUBs** phase: title page, centered chapter headings, justified text, real scene-break ornaments (not CSS-generated), improved typography.
 
 ## Canonical workflow
 
@@ -146,13 +147,13 @@ Normal production controls should remain visually dominant.
 ## Known / deferred work
 
 - **Build 241 QA handoff:** every Typography Test ZIP includes a short `QA-INSTRUCTIONS.md` router plus `CHATGPT-QA-INSTRUCTIONS.md` and `MUSE-QA-INSTRUCTIONS.md`. ChatGPT keeps the chapter-by-chapter cumulative workflow. Muse/Wren gets a continuous whole-book sequential workflow with strict canonical-schema, stable-ID, and silent-content-loss safeguards. Book-specific notes can still be added in chat.
+- **Build 242 pretty EPUBs (phase 1):** title page with centered title/author, centered chapter headings with top margin, justified body text, 1.6 line-height, real `<p class="scene-break">* * *</p>` ornaments (Kindle-compatible, not CSS-generated). Future: drop caps, decorative ornaments, chapter-opening styling variants.
 - **Pucked blind QA experiment (2026-09-23):** ChatGPT primary QA beat Muse/Wren in the blinded EPUB comparison. Muse successfully processed the full book autonomously and found useful local OCR corrections, but its output introduced silent source-text loss in multiple chapters. Until repeated testing proves otherwise, treat Muse as experimental/secondary QA rather than the sole authoritative correction engine.
 - **Scene-break QA gap discovered by Pucked:** both engines can visually recognize scene breaks, but the cumulative QA schema has no canonical insertion operation when OCR produced no safe ornament token to replace. Build 241 instructions explicitly forbid Muse from overwriting neighboring prose or inventing unsupported ops in that case. A future safe `insert_scene_break`-style transactional operation is the preferred fix.
 - **Build 240 across-room notices:** batch OCR success shows a persistent large `OCR COMPLETE` modal; batch OCR failure/stoppage shows a persistent large `OCR STOPPED` modal. Both remain until dismissed.
 - **Immediate real-world test:** first full Kindle book.
 - A partial-backup → restore without screenshots → attach originals → resume OCR path is implemented but has not been deliberately end-to-end tested as a manufactured scenario.
-- EPUB scene-break conversion currently serializes an empty semantic `<hr class="scene-break"/>` and uses CSS generated content for visible stars. Kindle preserved the spacing but did not display the generated ornament in the Ruby Circle test. This is accepted for now.
-- Future phase: **pretty EPUBs**. Potential work includes real XHTML scene ornaments, chapter-opening styling, title-page treatment, typography/spacing polish, and other presentation improvements.
+- EPUB scene-break conversion now serializes real text content (`<p class="scene-break">* * *</p>`) instead of empty `<hr/>` with CSS-generated ornament. Kindle displays this correctly.
 - Large-scale `script.js` modularization can happen later, after more real-book use proves the current behavior stable.
 - README build archaeology can be pruned later. Do not mix that cleanup into functional fixes without a reason.
 

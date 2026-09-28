@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "241";
+  const BUILD_VERSION = "242";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -10457,18 +10457,36 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
   </rootfiles>
 </container>`);
 
+    // Title page
+    zip.file("EPUB/title.xhtml", `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <title>${escapeXml(title)}</title>
+  <link rel="stylesheet" type="text/css" href="style.css"/>
+</head>
+<body>
+  <section epub:type="titlepage" class="title-page">
+    <h1 class="book-title">${escapeXml(title)}</h1>
+    <p class="book-author">${escapeXml(author)}</p>
+  </section>
+</body>
+</html>`);
+
     const manifest = [
       '    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>',
+      '    <item id="title-page" href="title.xhtml" media-type="application/xhtml+xml"/>',
       '    <item id="style" href="style.css" media-type="text/css"/>'
     ];
-    const spine = [];
+    const spine = ['    <itemref idref="title-page"/>'];
     const navItems = [];
 
     sections.forEach((section, sectionIndex) => {
       const fileName = `chapter-${String(sectionIndex + 1).padStart(3, "0")}.xhtml`;
       const itemId = `chapter-${sectionIndex + 1}`;
       const bodyParagraphs = sectionParagraphs(section).map(({ text, pageIndex, paragraphIndex }) => {
-        if (String(text || "").trim() === "* * *") return `<hr id="p-${pageIndex + 1}-${paragraphIndex + 1}" class="scene-break"/>`;
+        if (String(text || "").trim() === "* * *") return `<p id="p-${pageIndex + 1}-${paragraphIndex + 1}" class="scene-break">* * *</p>`;
         const html = paragraphToEpubHtml(text);
         return html.replace("<p>", `<p id="p-${pageIndex + 1}-${paragraphIndex + 1}">`);
       });
@@ -10514,13 +10532,34 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
     zip.file("EPUB/style.css", `
 body{
   font-family:serif;
-  line-height:1.45;
+  line-height:1.6;
   margin:5%;
+  text-align:justify;
 }
+/* Title page */
+.title-page{
+  text-align:center;
+  padding-top:25%;
+}
+.book-title{
+  font-size:2em;
+  margin:0 0 0.5em;
+  text-align:center;
+  line-height:1.3;
+}
+.book-author{
+  font-size:1.2em;
+  text-align:center;
+  text-indent:0;
+  margin:0;
+}
+/* Chapter headings */
 h1{
   font-size:1.5em;
-  margin:0 0 1.5em;
-  text-align:left;
+  margin:2em 0 1.5em;
+  text-align:center;
+  line-height:1.3;
+  text-indent:0;
 }
 p{
   display:block;
@@ -10537,12 +10576,9 @@ em{
   font-style:italic;
 }
 .scene-break{
-  border:0;
   text-align:center;
+  text-indent:0;
   margin:1.5em 0;
-}
-.scene-break:after{
-  content:"* * *";
 }
 `);
 
