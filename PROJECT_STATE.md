@@ -6,7 +6,7 @@
 
 ## Current state
 
-- **Current build:** 242
+- **Current build:** 243
 - **Status:** stable / feature-complete for the current OCR workflow. Leave the app alone unless real-book use exposes a concrete problem.
 - **Primary repo:** `jedavid33-design/book-ocr-studio`
 - **Branch:** `main`
@@ -63,6 +63,8 @@ Independent visual QA is intentionally outside the automatic OCR detector.
 - Visual QA treats screenshot pixels as authoritative.
 - QA can correct italics per word, paragraph structure, quote structure, scene breaks, page-boundary continuations, and chapter POV metadata.
 - Cumulative QA import is **transactional**. Do not partially apply a correction package that contains unresolved conflicts.
+- **Build 243: cumulative QA import runs a pre-import validator** (`validateQaCumulativePackage`) enforcing the frozen QA rulebook mechanically before anything is applied: exact schema, pageCount, ordered chapters, required arrays per chapter, unique op/span IDs, every page covered exactly once, every within-chapter boundary audited, matchText byte-exact against OCR items, plus the Rule 20 absolutes (chapters key not renamed, no unrelated replacement text via Levenshtein similarity, no doubled em-dash). Errors abort with no changes applied; warnings (possible content loss, missing metadata) require explicit confirmation; routine notices (quote additions, merge from/to shape variants) are reported in the import summary. The validator passes the real Book 3 QA package with 0 errors.
+- Merge from/to shapes are normalized by `qaMergePageIds` (nested `from:{pageId}` canonical; flat `fromPageId` keys and flat `"p0084"` strings also import instead of silently dropping — real Book 3 QA contained 30 flat-string merges the old importer silently ignored).
 - Existing authoritative `[[i]]…[[/i]]` markers must not create false re-import conflicts.
 - Additive punctuation corrections are idempotent only when anchored safely to the intended OCR item.
 - Successful cumulative QA creates/preserves Visual-QA authority evidence so Final Polish does not repeatedly ask about source conditions already inspected and approved.

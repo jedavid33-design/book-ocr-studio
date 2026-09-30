@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "242";
+  const BUILD_VERSION = "243";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -1656,6 +1656,28 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
     return true;
   }
 
+  // Build 243: normalize merge_across_pages from/to across the shapes seen
+  // in real QA packages. Canonical (Rule 4) is nested from:{pageId} /
+  // to:{pageId}; also tolerates flat fromPageId/toPageId keys and flat
+  // "p0084"-style strings so validated packages never silently drop merges.
+  function qaMergePageIds(op) {
+    const from = op?.from, to = op?.to;
+    const fromPageId = (from && typeof from === "object" ? from.pageId : null)
+      || (typeof from === "string" ? from : null)
+      || op?.fromPageId || "";
+    const toPageId = (to && typeof to === "object" ? to.pageId : null)
+      || (typeof to === "string" ? to : null)
+      || op?.toPageId || "";
+    return {fromPageId: String(fromPageId || ""), toPageId: String(toPageId || "")};
+  }
+
+  function qaMergeShapeKind(op) {
+    if (op?.from && typeof op.from === "object" && op.from.pageId && op?.to && typeof op.to === "object" && op.to.pageId) return "nested";
+    if (op?.fromPageId || op?.toPageId) return "flat-keys";
+    if (typeof op?.from === "string" || typeof op?.to === "string") return "flat-strings";
+    return "missing";
+  }
+
   function qaCollectBoundaryDecisions(chapters) {
     const decisions = new Map();
     const put = (fromPageId, toPageId, action, source) => {
@@ -1681,10 +1703,262 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
 
       for (const op of (chapterEntry?.structural?.operations || [])) {
         if (op?.type !== "merge_across_pages") continue;
-        put(op?.from?.pageId || op?.fromPageId, op?.to?.pageId || op?.toPageId, "merge_across_pages", op?.opId || "merge-operation");
+        const mergeIds = qaMergePageIds(op);
+        put(mergeIds.fromPageId, mergeIds.toPageId, "merge_across_pages", op?.opId || "merge-operation");
       }
     }
     return [...decisions.values()];
+  }
+
+  // Build 243: import-time QA package validator. Enforces the frozen
+  // STANDING-QA-RULES mechanical checklist (Rule 17) and the Rule 20
+  // output-integrity absolutes BEFORE any correction is applied, so a bad
+  // package can never partially corrupt the project. Returns
+  // {errors: [...], warnings: [...]}. The importer aborts on errors (no
+  // changes applied) and asks for explicit confirmation on warnings.
+  function validateQaCumulativePackage(payload) {
+    const errors = [];
+    const warnings = [];
+    const notices = [];
+    const SCHEMA = "book-ocr-studio-cumulative-chapter-qa-checkpoint-v1";
+    const err = (code, message) => errors.push({code, message});
+    const warn = (code, message) => warnings.push({code, message});
+    const note = (code, message) => notices.push({code, message});
+
+    if (!payload || typeof payload !== "object") {
+      err("not-object", "QA file is not a JSON object.");
+      return {errors, warnings, notices};
+    }
+    // Rule 20.1 — the importer requires the top-level `chapters` key.
+    if (!Array.isArray(payload.chapters) && Array.isArray(payload.sections)) {
+      err("chapters-renamed", "Top-level key is `sections`, not `chapters`. The importer requires `chapters` (Rule 20.1). Rename the key and re-import.");
+    }
+    if (payload.schema !== SCHEMA) {
+      err("schema-mismatch", "schema must be exactly \"" + SCHEMA + "\" (Rule 17).");
+    }
+    const pageCount = Number(payload?.sourceMap?.pageCount || 0);
+    if (!Number.isFinite(pageCount) || pageCount <= 0) {
+      err("pagecount-missing", "sourceMap.pageCount must be the full package page count (Rule 17).");
+    } else if (state.pages.length && pageCount !== state.pages.length) {
+      err("pagecount-mismatch", "QA file expects " + pageCount + " pages but the project has " + state.pages.length + " (Rule 17).");
+    }
+    if (!Array.isArray(payload.chapters) || !payload.chapters.length) {
+      err("chapters-missing", "No chapters array found in the QA package.");
+      return {errors, warnings, notices};
+    }
+    const chapters = payload.chapters;
+    const totalPages = Number.isFinite(pageCount) && pageCount > 0 ? pageCount : state.pages.length;
+    const covered = new Array(totalPages).fill(0);
+    const seenOpIds = new Map();
+    const seenSpanIds = new Map();
+
+    // Rule 20.2 helper: Levenshtein similarity ratio between matchText and
+    // replacementText. A genuine correction changes a few characters
+    // (Semi->Demi, lo:37->10:37, mio->mío all score >0.95); a substitution
+    // replaces the text with something unrelated and scores low. Empty
+    // replacements are artifact removals, covered by the Rule 8 check below.
+    const levenshteinRatio = (a, b) => {
+      const s = String(a || ""), t = String(b || "");
+      if (s === t) return 1;
+      if (!s.length || !t.length) return 0;
+      const prev = new Array(t.length + 1);
+      for (let j = 0; j <= t.length; j++) prev[j] = j;
+      for (let i = 1; i <= s.length; i++) {
+        let diag = prev[0];
+        prev[0] = i;
+        for (let j = 1; j <= t.length; j++) {
+          const tmp = prev[j];
+          prev[j] = Math.min(prev[j] + 1, prev[j - 1] + 1, diag + (s[i - 1] === t[j - 1] ? 0 : 1));
+          diag = tmp;
+        }
+      }
+      return 1 - prev[t.length] / Math.max(s.length, t.length);
+    };
+    const quoteChars = (text) => String(text || "").replace(/[^\u201c\u201d\u201e\u201f"'\u2018\u2019\u201a\u201b\u2032]/g, "");
+
+    chapters.forEach((entry, ci) => {
+      const ch = entry?.chapter || {};
+      const label = "ch" + (ch.number != null ? ch.number : "?") + " (index " + ci + ")";
+      // Chapters complete and ordered (Rule 17).
+      const num = Number(ch.number);
+      if (!Number.isFinite(num)) {
+        err("chapter-number-missing", label + ": chapter.number is missing.");
+      } else if (num !== ci + 1) {
+        err("chapter-order", label + ": expected chapter number " + (ci + 1) + " for ordered chapters (Rule 17).");
+      }
+      if (typeof ch.heading !== "string" || !ch.heading.trim()) {
+        warn("heading-missing", label + ": chapter.heading is empty (Rule 14: heading must be the source-faithful heading from pixels).");
+      }
+      // Reviewed page range (Rules 14, 17).
+      const sIdx = qaPageIndex(ch?.reviewedPageRange?.startPageId);
+      const eIdx = qaPageIndex(ch?.reviewedPageRange?.endPageId);
+      if (sIdx < 0 || eIdx < 0 || eIdx < sIdx) {
+        err("chapter-range-invalid", label + ": reviewedPageRange is invalid or its pages are not loaded.");
+      } else {
+        if (eIdx >= totalPages) err("chapter-range-overflow", label + ": reviewedPageRange exceeds the page count.");
+        for (let i = sIdx; i <= Math.min(eIdx, totalPages - 1); i++) covered[i]++;
+      }
+      // boundaryCheck.nextPageId (Rule 14).
+      const isLast = ci === chapters.length - 1;
+      const nextId = ch?.boundaryCheck?.nextPageId;
+      if (nextId == null) {
+        warn("boundarycheck-missing", label + ": chapter.boundaryCheck.nextPageId is missing (Rule 14).");
+      } else if (isLast && nextId !== "") {
+        err("last-chapter-nextpage", label + ": final chapter must have boundaryCheck.nextPageId \"\" (Rule 14).");
+      }
+      // Required arrays present in every chapter (Rule 17).
+      if (!Array.isArray(entry?.structural?.operations)) err("operations-missing", label + ": structural.operations array is missing.");
+      if (!Array.isArray(entry?.structural?.boundaryAudit)) err("boundaryaudit-missing", label + ": structural.boundaryAudit array is missing (Rule 12).");
+      if (!Array.isArray(entry?.typography?.confidentItalicSpans)) err("confident-spans-missing", label + ": typography.confidentItalicSpans array is missing (Rules 11, 17).");
+      if (!Array.isArray(entry?.typography?.uncertainSpans)) err("uncertain-spans-missing", label + ": typography.uncertainSpans array is missing (Rules 11, 17).");
+
+      const ops = Array.isArray(entry?.structural?.operations) ? entry.structural.operations : [];
+      // Boundary audit completeness (Rule 12): every within-chapter boundary audited.
+      const audits = Array.isArray(entry?.structural?.boundaryAudit) ? entry.structural.boundaryAudit : [];
+      const auditByPair = new Map();
+      for (const a of audits) {
+        if (a?.from && a?.to) auditByPair.set(a.from + ">" + a.to, a);
+        if (a && ["keep_separate", "merge_across_pages", "chapter_boundary"].indexOf(a.action) < 0) {
+          err("boundaryaction-invalid", label + ": boundaryAudit entry " + a?.from + ">" + a?.to + " has invalid action \"" + a?.action + "\" (Rule 4).");
+        }
+      }
+      if (sIdx >= 0 && eIdx >= sIdx) {
+        for (let i = sIdx; i < Math.min(eIdx, totalPages - 1); i++) {
+          const key = qaPageId(i) + ">" + qaPageId(i + 1);
+          if (!auditByPair.has(key)) {
+            err("boundary-not-audited", label + ": page boundary " + key + " has no boundaryAudit entry (Rule 12).");
+          }
+        }
+      }
+
+      for (const op of ops) {
+        const opLabel = (op?.opId || "op?") + " (" + label + ")";
+        // opId uniqueness (Rule 4).
+        if (op?.opId) {
+          if (seenOpIds.has(op.opId)) err("duplicate-opid", opLabel + ": duplicate opId, first seen in " + seenOpIds.get(op.opId) + " (Rule 4).");
+          else seenOpIds.set(op.opId, label);
+        } else {
+          warn("opid-missing", opLabel + ": operation has no opId (Rule 4).");
+        }
+        const type = op?.type;
+        if (type !== "replace_text" && type !== "merge_across_pages") {
+          err("bad-op-type", opLabel + ": unsupported operation type \"" + type + "\" (Rule 4: locked operation shapes).");
+          continue;
+        }
+        if (type === "merge_across_pages") {
+          // Locked nested from/to shape is canonical (Rule 4); parseable
+          // variants warn but still import via qaMergePageIds.
+          const shapeKind = qaMergeShapeKind(op);
+          const mergeIds = qaMergePageIds(op);
+          if (shapeKind === "missing" || !mergeIds.fromPageId || !mergeIds.toPageId) {
+            err("merge-shape", opLabel + ": merge_across_pages has no usable from/to pageIds (Rule 4).");
+            continue;
+          }
+          if (shapeKind !== "nested") {
+            note("merge-shape-variant", opLabel + ": merge uses \"" + shapeKind + "\" from/to shape instead of canonical nested from:{pageId} / to:{pageId} (Rule 4). It will still import.");
+          }
+          const audit = auditByPair.get(mergeIds.fromPageId + ">" + mergeIds.toPageId);
+          if (!audit || audit.action !== "merge_across_pages") {
+            err("merge-without-audit", opLabel + ": merge has no matching boundaryAudit merge_across_pages entry (Rule 12).");
+          }
+          continue;
+        }
+        // ---- replace_text checks ----
+        const pageIdx = qaPageIndex(op?.pageId);
+        if (pageIdx < 0 || pageIdx >= totalPages) {
+          err("op-page-invalid", opLabel + ": pageId \"" + op?.pageId + "\" is not a loaded page.");
+          continue;
+        }
+        const page = state.pages[pageIdx];
+        const ids = qaTargetItemIds(op);
+        if (!ids.length) {
+          err("op-no-itemid", opLabel + ": replace_text has no itemId/itemIds anchor (Rule 4).");
+          continue;
+        }
+        const rawItems = Array.isArray(page?.rawOcrItems) ? page.rawOcrItems : [];
+        const badIds = ids.filter(id => {
+          const ix = qaRawItemIndex(id);
+          return ix < 0 || ix >= rawItems.length;
+        });
+        if (badIds.length) {
+          err("op-itemid-unknown", opLabel + ": itemId(s) not found in OCR items: " + badIds.join(", ") + " (Rule 4: never invent IDs).");
+          continue;
+        }
+        // matchText byte-exact against the anchored OCR item text (Rule 4).
+        // Multi-item anchors accept space/newline/empty joins of item texts.
+        const itemTexts = ids.map(id => {
+          const it = rawItems[qaRawItemIndex(id)];
+          return String(it?.text ?? it?.value ?? it?.label ?? "");
+        });
+        const matchText = String(op?.matchText ?? "");
+        const candidates = itemTexts.length === 1
+          ? [itemTexts[0]]
+          : [itemTexts.join(" "), itemTexts.join("\n"), itemTexts.join("")];
+        if (candidates.indexOf(matchText) < 0) {
+          err("matchtext-drift", opLabel + ": matchText does not match the anchored OCR item text byte-for-byte (Rule 4). The OCR may have been re-run after this QA package was built.");
+          continue;
+        }
+        const replacementText = String(op?.replacementText ?? "");
+        // Rule 20.2 — replacement text substantially unrelated to matchText.
+        if (matchText.length >= 20 && replacementText.length > 0) {
+          const similarity = levenshteinRatio(matchText, replacementText);
+          if (similarity < 0.4) {
+            err("replacement-unrelated", opLabel + ": replacementText is substantially unrelated to matchText (similarity " + Math.round(similarity * 100) + "%) — a substitution, not a correction (Rule 20.2).");
+          } else if (similarity < 0.6) {
+            warn("replacement-unrelated", opLabel + ": replacementText differs heavily from matchText (similarity " + Math.round(similarity * 100) + "%); verify it is a minimal correction (Rule 20.2).");
+          }
+        }
+        // Rule 20.3 — never duplicate an interruption dash.
+        if (/——/.test(replacementText) && !/——/.test(matchText)) {
+          err("double-emdash", opLabel + ": replacementText contains —— where the source has a single dash (Rule 20.3).");
+        }
+        // Rule 20.4 — corrections adding quotation marks are routine (OCR
+        // drops quotes) and were pixel-verified during QA; count them as a
+        // notice in the import summary rather than gating the import.
+        const beforeQuotes = quoteChars(matchText);
+        const addedQuotes = quoteChars(replacementText).split("").filter(q => beforeQuotes.indexOf(q) < 0);
+        if (addedQuotes.length) {
+          note("quote-added", opLabel + ": adds quote character(s) " + [...new Set(addedQuotes)].join(" ") + " (Rule 20.4: pixel-verified during QA).");
+        }
+        // Rule 8 — silent content-loss heuristic.
+        if (matchText.length > 20 && replacementText.length < matchText.length * 0.5) {
+          warn("possible-content-loss", opLabel + ": replacementText is much shorter than matchText; confirm no valid prose was deleted (Rule 8).");
+        }
+      }
+
+      // Italic span ID uniqueness + segment anchors (Rules 4, 11).
+      const spans = (entry?.typography?.confidentItalicSpans || []).concat(entry?.typography?.uncertainSpans || []);
+      for (const span of spans) {
+        if (span?.spanId) {
+          if (seenSpanIds.has(span.spanId)) err("duplicate-spanid", label + ": duplicate spanId " + span.spanId + " (Rule 4).");
+          else seenSpanIds.set(span.spanId, label);
+        }
+        const segments = Array.isArray(span?.segments) ? span.segments : [];
+        for (const seg of segments) {
+          const segPageIdx = qaPageIndex(seg?.pageId);
+          if (segPageIdx < 0 || segPageIdx >= totalPages) {
+            err("span-page-invalid", label + ": italic segment references unknown pageId \"" + seg?.pageId + "\".");
+            continue;
+          }
+          const segIds = seg?.itemId ? [String(seg.itemId)] : (Array.isArray(seg?.itemIds) ? seg.itemIds.map(String) : []);
+          const segItems = state.pages[segPageIdx]?.rawOcrItems || [];
+          for (const id of segIds) {
+            const ix = qaRawItemIndex(id);
+            if (ix < 0 || ix >= segItems.length) {
+              err("span-itemid-unknown", label + ": italic segment itemId \"" + id + "\" not found in OCR items (Rule 4).");
+            }
+          }
+        }
+      }
+    });
+
+    // Page coverage: every page reviewed exactly once (Rule 17).
+    covered.forEach((n, i) => {
+      if (n === 0) err("page-not-covered", "Page " + qaPageId(i) + " is not inside any chapter reviewedPageRange (Rule 17).");
+      else if (n > 1) err("page-covered-twice", "Page " + qaPageId(i) + " is covered by " + n + " chapter ranges (ranges must not overlap).");
+    });
+
+    return {errors, warnings, notices};
   }
 
   async function importTypographyAnnotationsFile(file) {
@@ -1700,6 +1974,28 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
       const expectedPageCount = Number(payload?.sourceMap?.pageCount || 0);
       if (isCumulative && expectedPageCount && state.pages.length !== expectedPageCount) {
         throw new Error("QA file expects " + expectedPageCount + " OCR pages, but this project currently has " + state.pages.length + ". No changes were applied.");
+      }
+
+      // Build 243: validate the cumulative QA package against the frozen QA
+      // rulebook BEFORE applying anything. Errors abort the import with no
+      // changes applied; warnings require explicit confirmation. Notices are
+      // routine findings reported in the import summary.
+      let qaValidation = null;
+      if (isCumulative) {
+        qaValidation = validateQaCumulativePackage(payload);
+        if (qaValidation.errors.length) {
+          const shown = qaValidation.errors.slice(0, 12).map(e => "• [" + e.code + "] " + e.message);
+          const extra = qaValidation.errors.length > 12 ? "\n…plus " + (qaValidation.errors.length - 12) + " more." : "";
+          throw new Error("QA validation failed (" + qaValidation.errors.length + " error" + (qaValidation.errors.length === 1 ? "" : "s") + "). No changes were applied.\n\n" + shown.join("\n") + extra);
+        }
+        if (qaValidation.warnings.length) {
+          const shown = qaValidation.warnings.slice(0, 12).map(w => "• [" + w.code + "] " + w.message);
+          const extra = qaValidation.warnings.length > 12 ? "\n…plus " + (qaValidation.warnings.length - 12) + " more." : "";
+          if (!confirm("QA validation warnings (" + qaValidation.warnings.length + "):\n\n" + shown.join("\n") + extra + "\n\nImport anyway?")) {
+            setStatus("QA import cancelled: validation warnings not accepted.");
+            return;
+          }
+        }
       }
 
       let requested = 0, applied = 0, alreadyPresent = 0;
@@ -1761,8 +2057,9 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
         for (const chapterEntry of payload.chapters) {
           for (const op of (chapterEntry?.structural?.operations || [])) {
             if (op?.type === "merge_across_pages") {
-              const fromPageId = op?.from?.pageId || op?.fromPageId;
-              const toPageId = op?.to?.pageId || op?.toPageId;
+              const mergeIds = qaMergePageIds(op);
+              const fromPageId = mergeIds.fromPageId;
+              const toPageId = mergeIds.toPageId;
               if (qaBoundaryAction(fromPageId, toPageId, "merge_across_pages", workingPages)) {
                 structuralApplied++;
                 touchedPages.add(qaPageIndex(fromPageId));
@@ -2012,16 +2309,25 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
       updateNavigationControls();
 
       const missCount = misses.length;
+      const qaNotices = qaValidation?.notices || [];
+      const qaNoticeSummary = (() => {
+        if (!qaNotices.length) return "";
+        const counts = {};
+        for (const n of qaNotices) counts[n.code] = (counts[n.code] || 0) + 1;
+        return " Validation notes: " + Object.keys(counts).map(code => counts[code] + "× " + code).join(", ") + " (see console for detail).";
+      })();
       state.lastTypographyImportReport = {
         build:BUILD_VERSION, importedAt:new Date().toISOString(), requested, applied, alreadyPresent, misses,
-        structuralApplied, structuralAlreadyPresent, boundariesApplied, povApplied, structuralMisses, committed:true
+        structuralApplied, structuralAlreadyPresent, boundariesApplied, povApplied, structuralMisses, committed:true,
+        qaValidationNotices: qaNotices
       };
       const issueCount = missCount + structuralMisses.length;
       setStatus(isCumulative
-        ? "QA corrections imported: " + (structuralApplied + structuralAlreadyPresent) + " structural fixes verified (" + structuralApplied + " changed, " + structuralAlreadyPresent + " already correct), " + boundariesApplied + " authoritative page-boundary decision" + (boundariesApplied===1?"":"s") + ", " + applied + " italic segment" + (applied===1?"":"s") + ", " + povApplied + " chapter POV tag" + (povApplied===1?"":"s") + ", " + state.typographyUncertain.length + " uncertain typography item" + (state.typographyUncertain.length===1?"":"s") + ". Visual-QA baseline saved (" + qaBaselineCount + " source-approved polish condition" + (qaBaselineCount===1?"":"s") + "). " + (issueCount ? issueCount + " item(s) need review; see console." : "Preflight passed; import committed with no conflicts.")
+        ? "QA corrections imported: " + (structuralApplied + structuralAlreadyPresent) + " structural fixes verified (" + structuralApplied + " changed, " + structuralAlreadyPresent + " already correct), " + boundariesApplied + " authoritative page-boundary decision" + (boundariesApplied===1?"":"s") + ", " + applied + " italic segment" + (applied===1?"":"s") + ", " + povApplied + " chapter POV tag" + (povApplied===1?"":"s") + ", " + state.typographyUncertain.length + " uncertain typography item" + (state.typographyUncertain.length===1?"":"s") + ". Visual-QA baseline saved (" + qaBaselineCount + " source-approved polish condition" + (qaBaselineCount===1?"":"s") + "). " + (issueCount ? issueCount + " item(s) need review; see console." : "Preflight passed; import committed with no conflicts.") + qaNoticeSummary
         : "Typography annotations imported: " + applied + " confident italic span" + (applied===1?"":"s") + " applied, " + state.typographyUncertain.length + " uncertain left Roman for isolated-crop review, " + alreadyPresent + " already present, " + missCount + " unmatched.");
       if (misses.length) console.warn("Typography annotation import misses", misses);
       if (structuralMisses.length) console.warn("Structural QA import misses", structuralMisses);
+      if (qaNotices.length) console.info("QA validation notices", qaNotices);
     } catch (err) {
       console.error(err);
       setStatus("Could not import QA corrections: " + (err.message || err));
