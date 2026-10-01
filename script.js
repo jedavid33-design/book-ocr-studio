@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "243";
+  const BUILD_VERSION = "244";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -15,6 +15,7 @@
     coverUrl: "",
     paddle: null,
     stopRequested: false,
+    batchRunning: false,
     processing: false,
     currentPageIndex: -1,
     reviewMode: "all",
@@ -63,6 +64,10 @@
 
   let PaddleOCRClass = null;
   let paddleModulePromise = null;
+  // Build 244 (audit C11): session flag for the one-time imported-EPUB
+  // dropcap reload notice. Not persisted — a reload resets it, which is
+  // exactly when the notice becomes relevant again.
+  let importedEpubDropcapNoticeShown = false;
 
   async function loadPaddleModule() {
     if (PaddleOCRClass) return PaddleOCRClass;
@@ -131,6 +136,7 @@
     previewCanvas: $("previewCanvas"),
     previewDims: $("previewDims"),
     processBtn: $("processBtn"),
+    stopBatchBtn: $("stopBatchBtn"),
     freshPaddleBtn: $("freshPaddleBtn"),
     exportOcrBackupBtn: $("exportOcrBackupBtn"),
     importOcrBackupBtn: $("importOcrBackupBtn"),
@@ -220,10 +226,6 @@
     polishStatus: $("polishStatus"),
     repairLigatures: $("repairLigatures"),
     ligatureStatus: $("ligatureStatus"),
-    ligatureReviewDetails: $("ligatureReviewDetails"),
-    ligatureReviewSummaryToggle: $("ligatureReviewSummaryToggle"),
-    ligatureReviewSummary: $("ligatureReviewSummary"),
-    ligatureReviewList: $("ligatureReviewList"),
     rebuildParagraphs: $("rebuildParagraphs"),
     downloadLayoutDiagnostics: $("downloadLayoutDiagnostics"),
     paragraphStatus: $("paragraphStatus"),
@@ -397,6 +399,15 @@
     return state.files.map(file => normalizedStem(file?.name || ""));
   }
 
+  // Build 244 (audit C9): overlay entries used to be keyed by normalizedStem
+  // alone, so two files whose names differ only by extension/case folding
+  // (IMG_001.jpg vs IMG_001.PNG) overwrote each other's durable text. Keys
+  // now include the page index. Stem-only keys are still read as a legacy
+  // fallback so overlays saved by older builds keep applying.
+  function repairOverlayKey(pageIndex, fileName) {
+    return pageIndex + ":" + normalizedStem(fileName);
+  }
+
   function readRepairOverlay() {
     try {
       const raw = localStorage.getItem(REPAIR_OVERLAY_KEY);
@@ -422,7 +433,7 @@
         pages: {}
       };
       if (!existing.pages || typeof existing.pages !== "object") existing.pages = {};
-      const key = normalizedStem(file.name);
+      const key = repairOverlayKey(pageIndex, file.name);
       const prior = existing.pages[key] || {};
       const manualFlag = manualEdited == null
         ? !!(prior.manualEdited || page.manualEdited)
@@ -457,7 +468,9 @@
     state.pages.forEach((page, pageIndex) => {
       const file = state.files[pageIndex] || page?.file;
       if (!file) return;
-      const saved = overlay.pages[normalizedStem(file.name)];
+      const name = file?.name || "";
+      const saved = overlay.pages[repairOverlayKey(pageIndex, name)]
+        ?? overlay.pages[normalizedStem(name)];
       if (!saved || typeof saved.text !== "string") return;
       page.text = saved.text;
       page.manualEdited = !!saved.manualEdited;
@@ -512,6 +525,11 @@
   let projectCheckpointLastError = null;
   let projectCheckpointPendingPayload = null;
   let projectCheckpointDrainScheduled = false;
+  // Build 244 (audit C6): a payload that failed to write is kept for one retry
+  // on the next saveCheckpoint() instead of being silently dropped. While this
+  // flag is set the drain will not auto-restart itself after a failure, so a
+  // persistently failing store (quota, blocked IndexedDB) cannot spin.
+  let projectCheckpointRetryArmed = false;
 
   function openProjectDb() {
     return new Promise((resolve, reject) => {
@@ -569,6 +587,8 @@
     // boundaries call flushCheckpointSave(), which waits for this drain.
     projectCheckpointPendingPayload = payload;
     projectCheckpointLastError = null;
+    // A fresh snapshot is full-state, so it supersedes any kept failed payload.
+    projectCheckpointRetryArmed = false;
     if (projectCheckpointDrainScheduled) return true;
 
     projectCheckpointDrainScheduled = true;
@@ -577,8 +597,12 @@
       .then(async () => {
         while (projectCheckpointPendingPayload) {
           const nextPayload = projectCheckpointPendingPayload;
-          projectCheckpointPendingPayload = null;
           await writeProjectCheckpoint(nextPayload);
+          // Clear only the payload that was just written; a newer snapshot
+          // arriving mid-write supersedes it (snapshots are full-state).
+          if (projectCheckpointPendingPayload === nextPayload) {
+            projectCheckpointPendingPayload = null;
+          }
 
           // Build 237 migration: once the large checkpoint is safely in IndexedDB,
           // remove legacy whole-project localStorage copies so they cannot fill the
@@ -592,24 +616,41 @@
       })
       .catch(err => {
         projectCheckpointLastError = err;
-        projectCheckpointPendingPayload = null;
+        // Build 244: keep the newest unsaved payload for one retry on the next
+        // saveCheckpoint() instead of nulling it. A newer full-state snapshot
+        // arriving later supersedes it; the flag stops the drain from
+        // auto-restarting into a failing store.
+        projectCheckpointRetryArmed = true;
         console.warn("Could not save OCR project to IndexedDB", err);
+        setStatus("Warning: the last project snapshot could not be saved to browser storage. Your work is still live in this tab; export an OCR backup if you see this again.");
         return false;
       })
       .finally(() => {
         projectCheckpointDrainScheduled = false;
         // A payload can arrive in the tiny handoff window after the drain loop
-        // observed empty. Start another drain rather than dropping that save.
-        if (projectCheckpointPendingPayload) queueProjectCheckpointWrite(projectCheckpointPendingPayload);
+        // observed empty. Start another drain rather than dropping that save —
+        // unless the drain just failed, in which case the kept payload waits
+        // for the next explicit saveCheckpoint() (retry once, no spin).
+        if (projectCheckpointPendingPayload && !projectCheckpointRetryArmed) {
+          queueProjectCheckpointWrite(projectCheckpointPendingPayload);
+        }
       });
     return true;
   }
 
   async function flushCheckpointSave() {
     try {
+      // A kept failed payload (audit C6) gets exactly one retry at a durability
+      // boundary; after that the boundary reports the failure honestly instead
+      // of spinning on a persistently failing store.
+      let keptPayloadRetried = false;
       while (projectCheckpointDrainScheduled || projectCheckpointPendingPayload) {
         await projectCheckpointWriteChain;
         if (projectCheckpointPendingPayload && !projectCheckpointDrainScheduled) {
+          if (projectCheckpointRetryArmed) {
+            if (keptPayloadRetried) break;
+            keptPayloadRetried = true;
+          }
           queueProjectCheckpointWrite(projectCheckpointPendingPayload);
         }
       }
@@ -2004,9 +2045,11 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
       const touchedPages = new Set();
       const reviewedPageIndexes = new Set();
       const pendingUncertain = [];
-      const workingPages = isCumulative
-        ? state.pages.map(page => ({ ...page, layoutMeta:{ ...(page.layoutMeta || {}) } }))
-        : state.pages;
+      // Build 244 (audit C8): both import paths apply to a working copy and
+      // commit atomically. The legacy path used to mutate live state.pages
+      // while accumulating misses, so a file with misses left partial
+      // application — and a mid-import throw left half-applied state.
+      const workingPages = state.pages.map(page => ({ ...page, layoutMeta:{ ...(page.layoutMeta || {}) } }));
 
       if (isCumulative) {
         for (const chapterEntry of payload.chapters) {
@@ -2260,10 +2303,9 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
         qaBaselineCount = captureQaApprovedPolishEvidence(reviewedPageIndexes);
         console.info(`Captured ${qaBaselineCount} source-approved Final Polish condition${qaBaselineCount===1?"":"s"} from cumulative visual QA.`);
       } else {
-        state.typographyUncertain = [];
         for (const annotatedPage of payload.pages) {
           const pageIndex = qaPageIndex(annotatedPage?.pageId);
-          const page = state.pages[pageIndex];
+          const page = workingPages[pageIndex];
           if (!page) { misses.push({pageId:annotatedPage?.pageId,reason:"page-not-loaded"}); continue; }
 
           for (const span of (annotatedPage.uncertainSpans || [])) {
@@ -2272,7 +2314,7 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
             let box = null;
             if (Array.isArray(b) && b.length >= 4) box = {x:Number(b[0]),y:Number(b[1]),width:Number(b[2])-Number(b[0]),height:Number(b[3])-Number(b[1])};
             else if (b && typeof b === "object") box = {x:Number(b.x??b.left??0),y:Number(b.y??b.top??0),width:Number(b.width??((b.right??0)-(b.left??0))),height:Number(b.height??((b.bottom??0)-(b.top??0)))};
-            state.typographyUncertain.push({pageIndex,itemId:String(span?.itemId||""),text:String(span?.text||""),box,resolution:null});
+            pendingUncertain.push({pageIndex,itemId:String(span?.itemId||""),text:String(span?.text||""),box,resolution:null});
           }
 
           const current = parseItalicMarkedText(page.text || "");
@@ -2297,6 +2339,11 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
           page.chapterCandidate = chapterHeuristic(page.text);
           touchedPages.add(pageIndex);
         }
+        // Build 244 (audit C8): commit the working copy atomically, like the
+        // cumulative path. Misses are still reported below, but a mid-import
+        // throw can no longer leave half-applied page text behind.
+        state.pages = workingPages;
+        state.typographyUncertain = pendingUncertain;
       }
 
       touchedPages.forEach(pageIndex => {
@@ -2501,6 +2548,17 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
     state.finalPolishHasRun = false;
     state.qaApprovedPolishEvidence = [];
     state.currentPageIndex = -1;
+    // Build 244 (audit C12): EPUB/dropcap state and the Tesseract worker are
+    // session-only and must not survive a fresh restart. In the normal
+    // screenshot flow importedEpub is already null; this only matters if
+    // Restart is ever reachable mid-EPUB-repair.
+    state.importedEpub = null;
+    state.dropcapCandidates = [];
+    importedEpubDropcapNoticeShown = false;
+    if (state.tesseractWorker) {
+      try { await state.tesseractWorker.terminate(); } catch (_) {}
+      state.tesseractWorker = null;
+    }
 
     els.progressWrap.classList.add("hidden");
     els.progressBar.value = 0;
@@ -3464,8 +3522,10 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
   }
 
   function refreshDownstreamRepairState({ refreshPolish = false } = {}) {
+    // The old standalone ligature-review panel was removed in build 244:
+    // uncertain split-ligature candidates now surface only through the
+    // Repair Book review list (renderRepairReview), which owns those decisions.
     renderReview();
-    renderLigatureReview();
     renderRepairReview();
     if (refreshPolish) {
       try {
@@ -3731,8 +3791,12 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
   }
 
   function paragraphToEpubHtml(text) {
+    // NOTE (build 244): scene-break paragraphs are serialized as real
+    // <p class="scene-break">* * *</p> by buildEpub before this function is
+    // ever called, so there is intentionally no "* * *" branch here. Do not
+    // re-add an <hr/> branch — the project decision is real text content,
+    // not empty <hr/> elements.
     const raw = String(text || "");
-    if (raw.trim() === "* * *") return '<hr class="scene-break"/>';
     let out = "";
     let cursor = 0;
     const marker = /\[\[i\]\]([\s\S]*?)\[\[\/i\]\]/gi;
@@ -4714,6 +4778,12 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
     const bookProfile = buildBookLayoutProfile(eligible);
     state.bookLayoutProfile = bookProfile;
     let rebuiltCount = 0;
+    // Build 244 (audit C5): safePolishText normalizes standalone dash/dot/
+    // ornament divider paragraphs to the canonical "* * *" scene break. That
+    // also runs inside this rebuild, a path experienced as "rebuild structure,
+    // don't change my words" — count the conversions so the rebuild status
+    // says it happened instead of doing it silently.
+    let sceneMarkersNormalized = 0;
     state.pages.forEach(page => {
       // Manual Review edits are canonical. Keep scanning them, but never replace
       // their text wholesale from OCR/layout geometry.
@@ -4726,7 +4796,11 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
       // erase safe formatting cleanup the user already ran. Re-apply the same
       // conservative cleanup after reconstruction so button order is harmless.
       const safePolish = globalThis.BookOcrEpubPolish?.safePolishText;
-      if (typeof safePolish === "function") page.text = safePolish(page.text).text;
+      if (typeof safePolish === "function") {
+        const polished = safePolish(page.text);
+        page.text = polished.text;
+        sceneMarkersNormalized += Number(polished.sceneCount) || 0;
+      }
       page.text = applyProfileKnownOcrCleanup(page.text).text;
       page.layoutMeta = rebuilt.meta;
       page.chapterCandidate = chapterHeuristic(page.text);
@@ -4740,7 +4814,10 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
       ? ` Layout profile: body ${Math.round(bookProfile.bodyLeft)} / indent ${Math.round(bookProfile.indentLeft)} from ${bookProfile.learnedFromLines} OCR lines.`
       : " Used the best available body-margin profile.";
     const protectedManual = state.pages.filter(page => page.manualEdited).length;
-    setStatus(`Paragraph structure rebuilt on ${rebuiltCount} page${rebuiltCount === 1 ? "" : "s"} from saved OCR geometry. ${protectedManual ? `${protectedManual} manually edited page${protectedManual===1?" was":"s were"} protected from text rebuild. ` : ""}No OCR rerun was needed.${profileNote}`);
+    const sceneNote = sceneMarkersNormalized
+      ? ` ${sceneMarkersNormalized} standalone divider${sceneMarkersNormalized===1?"":"s"} normalized to "* * *" scene breaks during the polish step.`
+      : "";
+    setStatus(`Paragraph structure rebuilt on ${rebuiltCount} page${rebuiltCount === 1 ? "" : "s"} from saved OCR geometry. ${protectedManual ? `${protectedManual} manually edited page${protectedManual===1?" was":"s were"} protected from text rebuild. ` : ""}No OCR rerun was needed.${sceneNote}${profileNote}`);
     return rebuiltCount;
   }
 
@@ -4763,44 +4840,88 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
       return;
     }
 
+    // Build 244: stopRequested lets Julie halt a batch between pages via the
+    // Stop button. It is cleared here and set only while the batch loop runs;
+    // every completed page is already durable, so stopping mid-batch is as
+    // safe as closing the tab.
+    state.stopRequested = false;
+    state.batchRunning = true;
+    if (els.stopBatchBtn) {
+      els.stopBatchBtn.disabled = false;
+      els.stopBatchBtn.textContent = "Stop after this page";
+    }
+
+    const zeroTextPages = [];
     setStatus(`Batch OCR starting at page ${startIndex + 1} of ${state.files.length}…`);
     for (let index = startIndex; index < state.files.length; index++) {
+      if (state.stopRequested) {
+        state.stopRequested = false;
+        state.batchRunning = false;
+        if (els.stopBatchBtn) els.stopBatchBtn.disabled = true;
+        console.info(`Batch OCR stopped by request before page ${index + 1}.`);
+        setStatus(`Batch OCR stopped by request. Pages 1–${index} are safely saved. Tap Process all pages to resume.`);
+        showOcrBatchNotice("failure", `Stopped by request after page ${index} of ${state.files.length}. Completed pages are saved; tap Process all pages to resume.`);
+        renderReview();
+        return;
+      }
       try {
         await processSinglePage(index, { batch: true });
+        // Build 244: a page that produced no text at all (glare, thumb over
+        // the lens, an image that decodes but has no detectable lines) is
+        // saved and continued, but flagged at batch end so it can be re-shot
+        // instead of flowing silently into chapter detection and export.
+        if (!String(state.pages[index]?.text || "").trim()) zeroTextPages.push(index + 1);
         // Yield to iPadOS between pages so the UI can repaint and memory can settle.
         await new Promise(resolve => setTimeout(resolve, 60));
       } catch (err) {
         console.error(err);
+        state.batchRunning = false;
+        if (els.stopBatchBtn) els.stopBatchBtn.disabled = true;
         setStatus(`Batch OCR stopped on page ${index + 1}. Pages 1–${index} are safely saved. Tap Process all pages to resume.`);
         showOcrBatchNotice("failure", `Stopped on page ${index + 1} of ${state.files.length}. Completed pages are saved.`);
         renderReview();
         return;
       }
     }
+    state.batchRunning = false;
+    if (els.stopBatchBtn) els.stopBatchBtn.disabled = true;
 
     // Once the batch exists as a whole, learn one authoritative profile and
     // feed that exact object through rebuild, diagnostics, status, and export.
     // This prevents helper/profile drift between code paths.
-    state.bookLayoutProfile = buildBookLayoutProfile(state.pages);
-    let dualGuarded=0, rebuilt=0;
-    state.pages.forEach(page=>{
-      if(page.manualEdited||!Array.isArray(page.layoutLines)||!page.layoutLines.length)return;
-      const next=applyDualOcrStructuralGuard(page);
-      if(!next)return;
-      if(page.layoutMeta?.dualOcrGuard?.preserved==="paddle")dualGuarded++; else rebuilt++;
-      page.text=next; page.chapterCandidate=chapterHeuristic(page.text);
-    });
-    const detectedChapters = redetectAutomaticChapterStarts();
+    // Build 244 (audit C7): this book-level tail used to run outside any
+    // try/catch, so a throw became a silent unhandled rejection and the batch
+    // never reported complete. Pages are already durable per page; the catch
+    // reports the failure honestly instead of going silent.
+    try {
+      state.bookLayoutProfile = buildBookLayoutProfile(state.pages);
+      let dualGuarded=0, rebuilt=0;
+      state.pages.forEach(page=>{
+        if(page.manualEdited||!Array.isArray(page.layoutLines)||!page.layoutLines.length)return;
+        const next=applyDualOcrStructuralGuard(page);
+        if(!next)return;
+        if(page.layoutMeta?.dualOcrGuard?.preserved==="paddle")dualGuarded++; else rebuilt++;
+        page.text=next; page.chapterCandidate=chapterHeuristic(page.text);
+      });
+      redetectAutomaticChapterStarts();
 
-    state.currentPageIndex = 0;
-    state.reviewMode = "chapters";
-    saveCheckpoint();
-    await flushCheckpointSave();
-    renderReview();
-    refreshParagraphRebuildUi();
-    const chapters = state.pages.filter(page => page.chapterStart).length;
-    setStatus(`Batch OCR complete: ${state.pages.length} pages processed with Paddle + cached Tesseract evidence. Dual-OCR structural guard preserved ${dualGuarded} page${dualGuarded===1?"":"s"} where both engines agreed but reconstruction disagreed; ${rebuilt} page${rebuilt===1?"":"s"} used geometry reconstruction. Strict chapter detection found ${chapters} chapter start page${chapters===1?"":"s"} for review. Typography was left untouched.`);
-    showOcrBatchNotice("success", `${state.pages.length} of ${state.files.length} pages finished successfully.`);
+      state.currentPageIndex = 0;
+      state.reviewMode = "chapters";
+      saveCheckpoint();
+      await flushCheckpointSave();
+      renderReview();
+      refreshParagraphRebuildUi();
+      const chapters = state.pages.filter(page => page.chapterStart).length;
+      const zeroTextNote = zeroTextPages.length
+        ? ` ${zeroTextPages.length} page${zeroTextPages.length===1?"":"s"} produced no text (page${zeroTextPages.length===1?"":"s"} ${zeroTextPages.join(", ")}); check those screenshots for glare or coverage and re-run them individually if needed.`
+        : "";
+      setStatus(`Batch OCR complete: ${state.pages.length} pages processed with Paddle + cached Tesseract evidence. Dual-OCR structural guard preserved ${dualGuarded} page${dualGuarded===1?"":"s"} where both engines agreed but reconstruction disagreed; ${rebuilt} page${rebuilt===1?"":"s"} used geometry reconstruction. Strict chapter detection found ${chapters} chapter start page${chapters===1?"":"s"} for review. Typography was left untouched.${zeroTextNote}`);
+      showOcrBatchNotice("success", `${state.pages.length} of ${state.files.length} pages finished successfully.${zeroTextPages.length ? ` ${zeroTextPages.length} produced no text; see status.` : ""}`);
+    } catch (err) {
+      console.error(err);
+      setStatus(`Batch OCR processed all ${state.pages.length} pages, but the final book-level pass failed: ${err.message || err}. Pages 1–${state.pages.length} are safely saved; rerun the book-level pass (Rebuild paragraphs / Re-detect chapter starts) from the Advanced tools.`);
+      showOcrBatchNotice("failure", `All pages are saved, but the final book-level pass failed. See the status message.`);
+    }
     if(state.tesseractWorker){try{await state.tesseractWorker.terminate();}catch(_){} state.tesseractWorker=null;}
   }
 
@@ -5742,6 +5863,14 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
       candidate.text = clean;
       state.pages[candidate.pageIndex].text = Array.from(candidate.doc.dom.querySelectorAll("p"))
         .map(p => p.textContent.trim()).filter(Boolean).join("\n\n");
+      // Build 244 (audit C11): the in-memory ZIP + doc.changed flags do not
+      // survive a reload (only the repaired text is checkpointed), so the
+      // byte-preserving "export repaired EPUB" path can't run after one. Say
+      // it once, right where the first repair lands.
+      if (!importedEpubDropcapNoticeShown) {
+        importedEpubDropcapNoticeShown = true;
+        setStatus("Dropcap repair accepted and its text is checkpointed. Note: after a reload, re-import the original EPUB before exporting the repaired package — the in-memory original does not survive a reload.");
+      }
     } else {
       const applied = replaceLocalParagraph(candidate, clean);
       if (!applied) return false;
@@ -5854,6 +5983,7 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
 
   async function importEpub(file) {
     if (!file || !window.JSZip) return;
+    importedEpubDropcapNoticeShown = false;
     const zip = await JSZip.loadAsync(file);
     const containerFile = zip.file("META-INF/container.xml");
     if (!containerFile) throw new Error("This EPUB has no META-INF/container.xml file.");
@@ -10363,71 +10493,6 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
     };
   }
 
-  function renderLigatureReview() {
-    syncCurrentEditor();
-
-    const details = els.ligatureReviewDetails;
-    const toggle = els.ligatureReviewSummaryToggle;
-    if (!details || !toggle || !els.ligatureReviewList || !els.ligatureReviewSummary) return;
-
-    const candidates = collectUncertainLigatures();
-    details.classList.toggle("hidden", candidates.length === 0);
-    toggle.textContent = `Review uncertain (${candidates.length})`;
-
-    els.ligatureReviewSummary.textContent = candidates.length
-      ? `${candidates.length} uncertain candidate${candidates.length===1?"":"s"}. Nothing changes unless you press Repair. Keep as-is dismisses that candidate for this session.`
-      : "No uncertain split-ligature candidates remain.";
-    els.ligatureReviewList.innerHTML = "";
-
-    candidates.forEach((c) => {
-      const item = document.createElement("div");
-      item.className = "ligature-review-item";
-      const safeContext = escapeHtml(c.context);
-      const markedContext = safeContext.replace(
-        escapeHtml(c.original),
-        `<span class="ligature-candidate">${escapeHtml(c.original)}</span>`
-      );
-
-      item.innerHTML = `<strong>${escapeHtml(c.fileName)}</strong>
-        <p class="ligature-context">${markedContext}</p>
-        <p class="hint">Candidate: <b>${escapeHtml(c.original)}</b> → <b>${escapeHtml(c.joined)}</b> · ${escapeHtml(c.family || "ligature")} family</p>
-        <div class="actions">
-          <button class="button ghost keep" type="button">Keep as-is</button>
-          <button class="button secondary repair" type="button">Repair</button>
-        </div>`;
-
-      item.querySelector(".keep").addEventListener("click", (event) => {
-        event.preventDefault();
-        rememberIgnoredLigature(c, c.pageIndex, c.context);
-        saveCheckpoint();
-        refreshDownstreamRepairState();
-        setStatus(`Kept “${c.original}” as-is. Repair review now owns that resolved decision.`);
-      });
-
-      item.querySelector(".repair").addEventListener("click", (event) => {
-        event.preventDefault();
-        const page = state.pages[c.pageIndex];
-        const text = page?.text || "";
-        const exactAtIndex = text.slice(c.index, c.index + c.original.length) === c.original;
-        const pos = exactAtIndex ? c.index : text.indexOf(c.original);
-        if (pos >= 0) {
-          const nextText = text.slice(0, pos) + c.joined + text.slice(pos + c.original.length);
-          commitPageText(c.pageIndex, nextText);
-          refreshDownstreamRepairState();
-          setStatus(`Repaired uncertain split-ligature candidate “${c.original}” → “${c.joined}”. Kindle Ready will use the repaired text on its next check.`);
-        } else {
-          setStatus(`Could not locate “${c.original}” again; rerun split-ligature inspection.`);
-        }
-      });
-
-      els.ligatureReviewList.appendChild(item);
-    });
-  }
-
-  function updateLigatureReviewButton() {
-    renderLigatureReview();
-  }
-
   function runSplitLigaturePolish(pageIndexes = null) {
     const repair = globalThis.BookOcrEpubPolish?.repairSplitLigatures;
     if (!repair) {
@@ -10467,7 +10532,8 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
     const fixedLabel = `${fixedCount} high-confidence split ligature${fixedCount === 1 ? "" : "s"} repaired`;
     const ambiguousLabel = `${ambiguousCount} uncertain candidate${ambiguousCount === 1 ? "" : "s"} left unchanged`;
     els.ligatureStatus.textContent = `${fixedCount} fixed · ${ambiguousCount} review`;
-    updateLigatureReviewButton();
+    // Uncertain candidates surface through the live Repair Book review list.
+    renderRepairReview();
     setStatus(`${fixedLabel}; ${ambiguousLabel}. No OCR was run.`);
     return { fixedCount, ambiguousCount };
   }
@@ -11238,6 +11304,15 @@ ${coverSpine}${spine.join("\n")}
   els.processBtn.addEventListener("click", async () => {
     setPostOcrSectionsVisible(true);
     await processAllPages();
+  });
+  // Build 244: user-requested batch stop. The loop checks stopRequested between
+  // pages; the button disables itself immediately so a double tap is harmless.
+  els.stopBatchBtn?.addEventListener("click", () => {
+    if (!state.batchRunning || state.stopRequested) return;
+    state.stopRequested = true;
+    els.stopBatchBtn.disabled = true;
+    els.stopBatchBtn.textContent = "Stopping…";
+    setStatus("Stopping after the current page finishes. Completed pages are already saved.");
   });
   els.prevPageBtn.addEventListener("click", goToPreviousPage);
   els.nextPageBtn.addEventListener("click", goToNextPage);

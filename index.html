@@ -113,9 +113,10 @@
 </section>
 <section class="card">
 <h2>4. OCR</h2>
-<p class="hint">Version 2.0 uses PaddleOCR (PP-OCRv5) in your browser. Tap <strong>Process all pages</strong> and PaddleOCR will work through the book sequentially, saving after every page. The first OCR run may take longer while the models load.</p>
+<p class="hint">Version 2.0 uses PaddleOCR (PP-OCRv5) in your browser. Tap <strong>Process all pages</strong> and PaddleOCR will work through the book sequentially, saving after every page. The first OCR run may take longer while the models load. <strong>Stop after this page</strong> pauses a batch mid-run; every finished page is already saved, so tap Process all pages again to resume. Closing the tab mid-batch is equally safe.</p>
 <div class="actions production-actions">
 <button class="button primary" disabled="" id="processBtn" type="button">Process all pages</button>
+<button class="button ghost" disabled="" id="stopBatchBtn" type="button">Stop after this page</button>
 <button class="button secondary" id="exportOcrBackupBtn" type="button">Export OCR backup</button>
 <button class="button secondary" id="importOcrBackupBtn" type="button">Import OCR backup</button>
 <button class="button secondary" id="exportTypographyTestBtn" type="button">Export Typography Test</button>
@@ -372,7 +373,7 @@
 </dialog>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="epub-polish.js?v=58"></script>
-<script src="script-loader.js?v=241"></script>
+<script src="script-loader.js?v=244"></script>
 <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
