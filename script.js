@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "248";
+  const BUILD_VERSION = "249";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -1591,9 +1591,35 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
         return { ...trimmedCandidates[0], alreadyPresent:false, mode:"whitespace-tolerant-match" };
       }
     }
-    // Build 246: accept deletions. An empty replacementText is a valid
-    // instruction to delete the matched text (e.g. drop-cap OCR garbage).
-    // If we found the source but the replacement is empty, that's not an error.
+    // Build 249: accept deletions and whitespace-only differences.
+    if (replacementText === "") {
+      const anchored = qaPickAnchoredCandidate(sourceCandidates, anchor, expected);
+      if (anchored) return { ...anchored, alreadyPresent:false, mode:"deletion" };
+      const tm = matchText.trim();
+      if (tm) {
+        const tc = qaCandidateSet(source, tm);
+        if (tc.length >= 1) {
+          const ta = qaPickAnchoredCandidate(tc, anchor, expected) || tc[0];
+          return { ...ta, alreadyPresent:false, mode:"deletion-trimmed" };
+        }
+      }
+      if (sourceCandidates.length >= 1) {
+        const sa = qaPickAnchoredCandidate(sourceCandidates, anchor, expected) || sourceCandidates[0];
+        return { ...sa, alreadyPresent:false, mode:"deletion-fallback" };
+      }
+    }
+    {
+      const tm = matchText.trim();
+      if (tm && tm !== matchText) {
+        const tc = qaCandidateSet(source, tm);
+        if (tc.length === 0) {
+          const idx = source.indexOf(tm);
+          if (idx >= 0) {
+            return { start:idx, end:idx+tm.length, alreadyPresent:false, mode:"whitespace-indexof" };
+          }
+        }
+      }
+    }
     return { error:"text-not-found", sourceCount:0, replacementCount:0, anchorFound:!!anchor };
   }
 
