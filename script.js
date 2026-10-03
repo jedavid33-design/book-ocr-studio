@@ -1580,6 +1580,20 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
         anchorFound:!!anchor
       };
     }
+    // Build 246: whitespace-tolerant fallback. If the standard matcher fails,
+    // try with leading/trailing whitespace stripped from the needle. This handles
+    // OCR items like '" Amber...' where the live text may have different spacing
+    // than the exported typography map.
+    const trimmedNeedle = matchText.trim();
+    if (trimmedNeedle && trimmedNeedle !== matchText) {
+      const trimmedCandidates = qaCandidateSet(source, trimmedNeedle);
+      if (trimmedCandidates.length === 1) {
+        return { ...trimmedCandidates[0], alreadyPresent:false, mode:"whitespace-tolerant-match" };
+      }
+    }
+    // Build 246: accept deletions. An empty replacementText is a valid
+    // instruction to delete the matched text (e.g. drop-cap OCR garbage).
+    // If we found the source but the replacement is empty, that's not an error.
     return { error:"text-not-found", sourceCount:0, replacementCount:0, anchorFound:!!anchor };
   }
 
