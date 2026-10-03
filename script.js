@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "247";
+  const BUILD_VERSION = "248";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -1956,7 +1956,10 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
           const trimmedMatch = matchText.trim();
           const trimmedCandidates = candidates.map(c => c.trim());
           if (trimmedCandidates.indexOf(trimmedMatch) < 0) {
-            err("matchtext-drift", opLabel + ": matchText does not match the anchored OCR item text byte-for-byte (Rule 4). The OCR may have been re-run after this QA package was built.");
+            // Build 248: diagnostic - show actual vs expected
+            const actualPreview = candidates[0] ? JSON.stringify(candidates[0].substring(0, 80)) : "(empty)";
+            const expectedPreview = JSON.stringify(matchText.substring(0, 80));
+            err("matchtext-drift", opLabel + ": matchText does not match (Rule 4). Expected " + expectedPreview + " but OCR has " + actualPreview + ".");
             continue;
           }
         }
