@@ -6,7 +6,7 @@
 
 ## Current state
 
-- **Current build:** 244
+- **Current build:** 245
 - **Status:** stable / feature-complete for the current OCR workflow. Leave the app alone unless real-book use exposes a concrete problem.
 - **Primary repo:** `jedavid33-design/book-ocr-studio`
 - **Branch:** `main`
