@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "246";
+  const BUILD_VERSION = "247";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -1950,8 +1950,15 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
           ? [itemTexts[0]]
           : [itemTexts.join(" "), itemTexts.join("\n"), itemTexts.join("")];
         if (candidates.indexOf(matchText) < 0) {
-          err("matchtext-drift", opLabel + ": matchText does not match the anchored OCR item text byte-for-byte (Rule 4). The OCR may have been re-run after this QA package was built.");
-          continue;
+          // Build 247: whitespace-tolerant validation. Try trimmed matchText
+          // against trimmed candidates before reporting drift. The importer
+          // already accepts these via whitespace-tolerant-match.
+          const trimmedMatch = matchText.trim();
+          const trimmedCandidates = candidates.map(c => c.trim());
+          if (trimmedCandidates.indexOf(trimmedMatch) < 0) {
+            err("matchtext-drift", opLabel + ": matchText does not match the anchored OCR item text byte-for-byte (Rule 4). The OCR may have been re-run after this QA package was built.");
+            continue;
+          }
         }
         const replacementText = String(op?.replacementText ?? "");
         // Rule 20.2 — replacement text substantially unrelated to matchText.
