@@ -2530,12 +2530,15 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
   }
 
   async function restartFreshWithPaddle() {
-    if (!state.files.length || state.processing) return;
+    if (state.processing) return;
 
+    const hasFiles = state.files.length > 0;
     const ok = confirm(
-      "Start this book over with PaddleOCR?\\n\\n" +
-      "This clears saved OCR text from the current and older versions. " +
-      "Your selected screenshots stay loaded, and existing chapter markers are preserved where possible."
+      "Clear this book's OCR and QA state to start clean?\n\n" +
+      "This clears saved OCR text, QA corrections, and repair state. " +
+      (hasFiles
+        ? "Your selected screenshots stay loaded, and existing chapter markers are preserved where possible. You can then re-run Process all pages."
+        : "Re-attach your screenshots (or import an OCR backup) to continue.")
     );
     if (!ok) return;
 
@@ -2569,7 +2572,7 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
     els.freshPaddleBtn.disabled = false;
 
     renderReview();
-    setStatus("Old OCR cleared. Ready to process page 1 fresh with PaddleOCR.");
+    setStatus(hasFiles ? "Old OCR cleared. Ready to process page 1 fresh with PaddleOCR." : "OCR and QA state cleared. Re-attach screenshots or import an OCR backup to continue.");
   }
 
   function signatureFileName(entry) {
@@ -3910,7 +3913,7 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
       : "Select the whole batch. Files are sorted naturally by filename.";
 
     if (els.processBtn) els.processBtn.disabled = state.processing || !attached || !total || processed >= total;
-    if (els.freshPaddleBtn) els.freshPaddleBtn.disabled = state.processing || !attached || !total;
+    if (els.freshPaddleBtn) els.freshPaddleBtn.disabled = state.processing || !state.pages.length;
     if (els.exportTypographyTestBtn) els.exportTypographyTestBtn.disabled = !attached || !state.pages.length;
     if (els.typographyFirstReadBtn) els.typographyFirstReadBtn.disabled = !attached || !state.typographyUncertain.length;
     if (els.typographyReviewBtn) els.typographyReviewBtn.disabled = !attached || !state.pages.length;
