@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "252";
+  const BUILD_VERSION = "253";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -10970,7 +10970,7 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
   <link rel="stylesheet" type="text/css" href="style.css"/>
 </head>
 <body>
-  <section epub:type="titlepage" class="title-page">
+  <section epub:type="titlepage" class="title-page" data-opal-narration="skip">
     <h1 class="book-title">${escapeXml(title)}</h1>
     <p class="book-author">${escapeXml(author)}</p>
   </section>
