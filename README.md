@@ -1,5 +1,10 @@
 # Book OCR Studio 2.7.2
 
+Current production build: **253**.
+
+## Build 253
+- Exported title pages now carry `data-opal-narration="skip"` on the visible title-page section. The title and author remain in the EPUB exactly as before, but Opal Reader can treat that page as display metadata instead of narration.
+
 ## New in 2.7.1
 - Adds **Guided Repair**: one button runs paragraph rebuild, conservative Auto Italics, Safe Text Cleanup, split-ligature repair, then Dropcap Rescue. High-confidence dropcaps are accepted automatically; uncertain candidates remain for review.
 - Adds **Run Regression Check**, a read-only integrity pass for page continuity, duplicate pages, paragraph size, cleanup normalization, scene breaks, split ligatures, layout geometry, dropcaps, and italic sanity.
