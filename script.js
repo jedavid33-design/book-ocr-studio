@@ -6680,15 +6680,13 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
     try{
       const db=await openItalicLearningDb();
       const stableKey="typeface:"+italicMeasurementCacheSignature();
-      const legacySig=`v122:${state.sourceProfile||"default"}:${state.pages.length}:`+state.pages.map((p,i)=>{const f=p.file||state.files[i];return [String(f?.name||"").replace(/\s*\(\d+\)(?=\.[^.]+$)/,""),Number(f?.size||0),Number(p?.layoutLines?.length||0)].join(":");}).join("|");
       const read=key=>new Promise((resolve,reject)=>{const tx=db.transaction(ITALIC_LEARNING_DB_STORE,"readonly"),req=tx.objectStore(ITALIC_LEARNING_DB_STORE).get(key);req.onsuccess=()=>resolve(req.result||null);req.onerror=()=>reject(req.error);});
-      let cached=await read(stableKey),migrated=false;
-      if(!cached){cached=await read("typeface:"+legacySig);migrated=!!cached;}
+      // Build 252 intentionally does not migrate pre-schema2 measurements:
+      // older caches can contain chapter-title specimens that are now excluded.
+      const cached=await read(stableKey);
       if(!cached||!Array.isArray(cached.pages)||cached.pages.length!==state.pages.length)return false;
       cached.pages.forEach((p,i)=>(p||[]).forEach((m,j)=>{const line=state.pages[i]?.layoutLines?.[j];if(line&&m){line.italicMeta=m.italicMeta||null;line.italicWordMeta=m.italicWordMeta||[];line.italicRunMeta=m.italicRunMeta||[];line.italicText=m.italicText||null;line.italicAuto=!!m.italicAuto;}}));
-      const restored=state.pages.some(p=>(p.layoutLines||[]).some(l=>l.italicWordMeta?.length));
-      if(restored&&migrated){try{await new Promise((resolve,reject)=>{const tx=db.transaction(ITALIC_LEARNING_DB_STORE,"readwrite");tx.objectStore(ITALIC_LEARNING_DB_STORE).put({...cached,version:124,cacheSchema:1},stableKey);tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);});}catch(_){}}
-      return restored;
+      return state.pages.some(p=>(p.layoutLines||[]).some(l=>l.italicWordMeta?.length));
     }catch(err){console.warn("Could not restore cached typeface measurements",err);return false;}
   }
   async function cacheItalicMeasurements(){
