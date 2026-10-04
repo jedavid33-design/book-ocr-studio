@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "249";
+  const BUILD_VERSION = "250";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -5942,8 +5942,21 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
   }
 
   function candidateImageUrl(candidate) {
-    const file = candidate.page?.file;
-    return file ? pageImageUrl(file) : "";
+    const pageIndex = Number(candidate?.pageIndex);
+    const directFile = candidate?.page?.file;
+    const attachedFile = Number.isInteger(pageIndex) ? state.files?.[pageIndex] : null;
+    const file = isRealSourceFile(directFile)
+      ? directFile
+      : isRealSourceFile(attachedFile)
+        ? attachedFile
+        : null;
+    if (!file) return "";
+    try {
+      return pageImageUrl(file);
+    } catch (err) {
+      console.warn("Dropcap source preview unavailable", err, candidate?.pageIndex);
+      return "";
+    }
   }
 
   function renderDropcapResults() {
