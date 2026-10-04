@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "250";
+  const BUILD_VERSION = "251";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -1607,6 +1607,19 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
         const sa = qaPickAnchoredCandidate(sourceCandidates, anchor, expected) || sourceCandidates[0];
         return { ...sa, alreadyPresent:false, mode:"deletion-fallback" };
       }
+
+      // Build 251: cumulative QA imports must be idempotent for deletions too.
+      // Rule 4 validation has already proven that matchText is byte-exact to the
+      // referenced raw OCR item. If that approved artifact is no longer present
+      // in authoritative page text, the requested empty replacement is already
+      // satisfied. Treat re-import as a no-op instead of a structural conflict.
+      return {
+        start:0,
+        end:0,
+        alreadyPresent:true,
+        mode:"deletion-already-absent",
+        anchorMode:anchor?.mode || ""
+      };
     }
     {
       const tm = matchText.trim();
