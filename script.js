@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "251";
+  const BUILD_VERSION = "252";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -5251,9 +5251,12 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
     for (let index = 0; index < Math.min(texts.length, 12); index++) {
       const fullText = texts[index];
       if (!fullText) continue;
+      // Build 252: headings win classification before damaged-opening heuristics.
+      // A chapter title should never be "repaired" as prose merely because one
+      // decorative glyph resembles a missing initial.
+      if (isOpeningPrelude(fullText)) continue;
       const startOffset = damagedOpeningOffset(fullText);
       if (startOffset >= 0) return { index, startOffset };
-      if (isOpeningPrelude(fullText)) continue;
       return { index, startOffset: 0 };
     }
     const fallback = texts.findIndex(text => text.length > 12);
@@ -5330,15 +5333,61 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
       /^['’]m\b/i.test(text);
   }
 
+  const VALID_PROSE_I_WORDS = new Set([
+    "it", "it's", "it’s", "its", "itself",
+    "in", "if", "is", "into", "inside", "instead"
+  ]);
+
+  function stripInlineTypographyMarkers(text) {
+    return String(text || "")
+      .replace(/\[\[\/?i\]\]/gi, "")
+      .trim();
+  }
+
+  function chapterHeaderKey(text) {
+    return stripInlineTypographyMarkers(text)
+      .toLocaleUpperCase()
+      .replace(/[^A-Z0-9]+/g, "");
+  }
+
+  function chapterHeaderLineKeys(page, pageIndex) {
+    const keys = new Set();
+    if (!(page?.chapterStart || page?.chapterCandidate || pageIndex === 0)) return keys;
+
+    const entries = pageParagraphEntries(page?.text || "");
+    const selected = selectProseOpening(entries.map(entry => entry.text));
+    const stop = selected ? selected.index : Math.min(entries.length, 8);
+
+    entries.slice(0, stop).forEach(entry => {
+      const key = chapterHeaderKey(entry?.text || "");
+      if (key) keys.add(key);
+    });
+
+    const savedTitle = chapterHeaderKey(page?.chapterTitle || "");
+    if (savedTitle) keys.add(savedTitle);
+    return keys;
+  }
+
+  function isChapterHeaderLineForTypography(page, pageIndex, text, knownKeys = null) {
+    const key = chapterHeaderKey(text);
+    if (!key) return false;
+    const keys = knownKeys || chapterHeaderLineKeys(page, pageIndex);
+    return keys.has(key);
+  }
+
   function legacyBadIOpening(text) {
     const info = firstWordInfo(text);
     if (!info || !/^I\p{Ll}/u.test(info.word)) return false;
+    if (VALID_PROSE_I_WORDS.has(info.word.toLocaleLowerCase())) return false;
     const withoutBadI = `${text.slice(0, info.start)}${info.word.slice(1)}${text.slice(info.end)}`;
     return knownDamagedOpening(withoutBadI);
   }
 
   function isOpeningPrelude(text) {
-    const value = String(text || "").trim();
+    // Build 252: classification must ignore Studio's inline typography markers.
+    // Otherwise an italic-marked chapter subtitle/time-jump label can masquerade
+    // as body prose and become a false Dropcap Rescue candidate.
+    const value = stripInlineTypographyMarkers(text);
     if (!value) return true;
     const months = "January|February|March|April|May|June|July|August|September|October|November|December";
     const holidays = "New Year(?:'s)?(?: Eve| Day)?|Valentine(?:'s)? Day|Easter|Memorial Day|Independence Day|Fourth of July|Labor Day|Halloween|Thanksgiving|Christmas(?: Eve| Day)?";
@@ -5609,7 +5658,7 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
     // Dropcap Rescue 2.2.0 could incorrectly glue an ordinary prose “I” to
     // the damaged opening. Recognize only known repair shapes so that valid
     // words beginning with I are never broadly rewritten.
-    if (!legacyRetry && /^I\p{Ll}/u.test(info.word)) {
+    if (!legacyRetry && legacyBadIOpening(opening.text)) {
       const withoutBadI = `${opening.text.slice(0, info.start)}${info.word.slice(1)}${opening.text.slice(info.end)}`;
       if (knownDamagedOpening(withoutBadI)) {
         const recovered = buildDropcapCandidate({ ...opening, text: withoutBadI }, id, { legacyRetry: true });
@@ -6625,7 +6674,7 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
   function italicMeasurementCacheSignature(){
     // v123: cache the measurement schema, not the app build. Hunt-only deploys
     // should not force a full-book pixel remeasurement.
-    return `schema1:${state.sourceProfile||"default"}:${state.pages.length}:`+state.pages.map((p,i)=>{const f=p.file||state.files[i];return [String(f?.name||"").replace(/\s*\(\d+\)(?=\.[^.]+$)/,""),Number(f?.size||0),Number(p?.layoutLines?.length||0)].join(":");}).join("|");
+    return `schema2:${state.sourceProfile||"default"}:${state.pages.length}:`+state.pages.map((p,i)=>{const f=p.file||state.files[i];return [String(f?.name||"").replace(/\s*\(\d+\)(?=\.[^.]+$)/,""),Number(f?.size||0),Number(p?.layoutLines?.length||0)].join(":");}).join("|");
   }
   async function restoreCachedItalicMeasurements(){
     try{
@@ -6675,6 +6724,7 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
         const img = await loadImageFromFile(file);
         const canvas = makeCroppedCanvas(img);
         const lineScores = page.layoutLines.map(line => italicSlantScore(canvas, line.box));
+        const chapterHeaderKeys = chapterHeaderLineKeys(page, index);
         for (let lineIndex = 0; lineIndex < page.layoutLines.length; lineIndex++) {
           const line = page.layoutLines[lineIndex];
           scannedLines++;
@@ -6685,6 +6735,10 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
           line.italicRunMeta = [];
           const text = String(line.text || "").trim();
           if (text.length < 2 || isSceneMarkerText(text)) continue;
+          // Build 252: chapter headers/subtitles/POV labels are display typography,
+          // not prose italic evidence. Exclude them from automatic detection and
+          // from every downstream supervised/diagnostic pool built from this scan.
+          if (isChapterHeaderLineForTypography(page, index, text, chapterHeaderKeys)) continue;
 
           const lineResult = lineScores[lineIndex];
           line.italicMeta = lineResult;
@@ -11722,8 +11776,10 @@ ${coverSpine}${spine.join("\n")}
       setVisualItalicStatus(`Visual Italic · page ${pi+1} of ${state.pages.length}… · ${results.length} specimens scored`);
       const img=await loadImageFromFile(file), canvas=makeCroppedCanvas(img);
       const raw=Array.isArray(page.rawOcrItems)&&page.rawOcrItems.length?page.rawOcrItems:(Array.isArray(page.layoutLines)?page.layoutLines:[]);
+      const chapterHeaderKeys=chapterHeaderLineKeys(page,pi);
       for(let li=0;li<raw.length;li++){
         const line=raw[li]; if(!line?.box||!line?.text) continue;
+        if(isChapterHeaderLineForTypography(page,pi,line.text,chapterHeaderKeys)) continue;
         // Paddle's stored geometry can be line-level. Split only when individual word boxes exist;
         // otherwise score the detected region honestly as one visual specimen.
         // Visual Italic is a word-crop classifier. Paddle's persisted OCR is line-level,
