@@ -3993,7 +3993,7 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
       : "Select the whole batch. Files are sorted naturally by filename.";
 
     if (els.processBtn) els.processBtn.disabled = state.processing || !attached || !total || processed >= total || (processed===0 && !cropPreflight.isApproved());
-    if (els.runCropPreflight) els.runCropPreflight.disabled = state.processing || !attached || !total;
+    if (els.runCropPreflight) els.runCropPreflight.disabled = state.processing || state.cropPreflightRunning || !attached || !total;
     if (els.freshPaddleBtn) els.freshPaddleBtn.disabled = state.processing || !state.pages.length;
     if (els.exportTypographyTestBtn) els.exportTypographyTestBtn.disabled = !attached || !state.pages.length;
     if (els.typographyFirstReadBtn) els.typographyFirstReadBtn.disabled = !attached || !state.typographyUncertain.length;
