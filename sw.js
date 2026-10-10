@@ -1,7 +1,8 @@
-const CACHE_NAME = "book-ocr-studio-shell-v79";
+const CACHE_NAME = "book-ocr-studio-shell-v80";
 const APP_SHELL = [
-  "./styles.css?v=60",
+  "./styles.css?v=61",
   "./epub-polish.js?v=58",
+  "./crop-preflight.js?v=254",
   "./manifest.webmanifest",
   "./icon-192.png",
   "./icon-512.png",
