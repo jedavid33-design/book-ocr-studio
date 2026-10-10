@@ -1101,3 +1101,17 @@ select{width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid var(-
   background: rgba(150,58,58,.12);
   color: #8b3131;
 }
+
+/* Build 254: page ranges and sample crop preflight. */
+.crop-range-tools,.crop-preflight {border:1px solid var(--line);border-radius:16px;padding:14px;margin-top:16px;background:rgba(255,255,255,.55);}
+.crop-range-row {display:grid;grid-template-columns:repeat(5,minmax(0,1fr)) auto;gap:8px;align-items:end;padding:10px 0;border-top:1px solid var(--line);}
+.crop-range-row label>span {font-size:.76rem;}
+.crop-range-row input {padding:8px 5px;text-align:center;min-width:0;}
+.crop-range-row button {align-self:end;}
+.crop-preflight-approve {margin-top:12px;display:flex;align-items:start;gap:10px;font-size:.94rem;font-weight:700;}
+.crop-preflight-approve input {width:20px;height:20px;flex:none;accent-color:var(--accent);}
+.crop-preflight-samples {display:flex;gap:6px;flex-wrap:wrap;margin-top:12px;}
+.crop-sample-button {border:1px solid #a6b6a6;background:#f2f8f1;border-radius:12px;padding:8px 10px;font-weight:700;color:#274428;cursor:pointer;}
+.crop-sample-warning {border-color:#db9f65;background:#fff0de;color:#7f4318;}
+#previewCanvas {max-width:100%;height:auto;max-height:620px;object-fit:contain;}
+@media(max-width:760px) {.crop-range-row{grid-template-columns:repeat(3,minmax(0,1fr));}.crop-range-row button{grid-column:3;}}
