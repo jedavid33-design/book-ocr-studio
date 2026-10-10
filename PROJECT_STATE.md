@@ -6,12 +6,13 @@
 
 ## Current state
 
-- **Current build:** 253
+- **Current build:** 254
 - **Status:** stable / feature-complete for the current OCR workflow. Leave the app alone unless real-book use exposes a concrete problem.
 - **Primary repo:** `jedavid33-design/book-ocr-studio`
 - **Branch:** `main`
 - **Cloudflare Worker:** none. No Cloudflare-side deployment work is required for this project.
-- **Current production flow:** Book Info → Screenshots → Crop → OCR / QA → Review → Guided Repair → Final Polish → Kindle Ready → Export.
+- **Current production flow:** Book Info → Screenshots → Default Crop + Page-Range Overrides → Crop Preflight (human approval) → OCR / QA → Review → Guided Repair → Final Polish → Kindle Ready → Export.
+- Build 254 adds inclusive 1-based page-range crop overrides and samples at book-wide intervals and span boundaries. The preview overlays removed portions of the original image, with advisory cut-line ink warnings and explicit approval before new full-book OCR. The effective crop applies to OCR and visual QA. Ranges persist in IndexedDB checkpoints; changing settings after an OCR batch begins blocks mixed-crop resume.
 - Build 253 marks the generated EPUB title page with `data-opal-narration="skip"`. This preserves the visible title/author page while allowing Opal Reader to exclude it from TTS import. No OCR text, QA, Repair, Polish, chapter content, or typography behavior changes.
 - Build 238 cleaned the production UI without changing OCR/QA/Repair/Polish/export behavior.
 - Build 239 fixes a recovered-project edge case: if Studio auto-restores the last source-free project and the user selects a different screenshot batch, Studio offers to start a new book instead of trapping the user behind an attachment mismatch.
@@ -21,7 +22,7 @@
 
 1. Select source profile and book metadata.
 2. Add the full screenshot batch.
-3. Confirm crop preset / crop preview.
+3. Choose default crop and optional nonoverlapping page-range overrides. Run the crop preflight and approve after reviewing samples.
 4. Run PaddleOCR sequentially.
 5. Export an OCR backup whenever a portable checkpoint is useful.
 6. Export Typography Test for independent visual QA.
