@@ -13,7 +13,7 @@
 <link href="manifest.webmanifest" rel="manifest"/>
 <link href="apple-touch-icon.png" rel="apple-touch-icon"/>
 <link href="icon-192.png" rel="icon" sizes="192x192" type="image/png"/>
-<link href="styles.css?v=60" rel="stylesheet"/>
+<link href="styles.css?v=61" rel="stylesheet"/>
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
 </head>
 <body>
@@ -97,10 +97,22 @@
 <input id="cropSides" inputmode="numeric" min="0" type="number" value="0"/>
 </label>
 </div>
-<p class="hint">Presets are based on your 1488 × 2266 screenshots: CloudLibrary removes 75 px from the bottom; Kindle removes 130 px from the top. You can adjust either value.</p>
+<p class="hint">These are the default crop values. CloudLibrary removes 75 px from the bottom; Kindle removes 130 px from the top. Use page-range overrides if the header position changes partway through the book.</p>
+<div class="crop-range-tools">
+<div class="section-head"><strong>Page-range crop overrides</strong><button class="button secondary" id="addCropRange" type="button">+ Add page range</button></div>
+<p class="hint">Page numbers refer to screenshot order, starting with page 1. Leave “Through” blank to include the last page. Ranges must not overlap; uncovered pages use the default above.</p>
+<div id="cropRangeList"></div>
+</div>
+<div class="crop-preflight">
+<div class="section-head"><strong>Crop preflight · before OCR</strong><button class="button secondary" id="runCropPreflight" type="button">Check sample pages</button></div>
+<p class="hint">Check samples from across the book and around each range boundary. The original screenshot preview shades anything that will be cropped away. Warnings are advisory, so review the original image even when no warning appears.</p>
+<div class="status-box subtle" aria-live="polite" id="cropPreflightStatus">Add screenshots, then check the crop before OCR.</div>
+<div class="crop-preflight-samples" id="cropPreflightSamples"></div>
+<label class="crop-preflight-approve"><input type="checkbox" id="cropPreflightApprove" disabled> I've reviewed the crop samples and approve starting OCR.</label>
+</div>
 <div class="preview-panel">
 <div class="preview-head">
-<strong>Crop preview · representative mid-book sample</strong>
+<strong>Original screenshot · crop boundary preview</strong>
 <span id="previewDims"></span>
 </div>
 <div class="preview-sample-row">
@@ -373,7 +385,8 @@
 </dialog>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="epub-polish.js?v=58"></script>
-<script src="script-loader.js?v=253"></script>
+<script src="crop-preflight.js?v=254"></script>
+<script src="script-loader.js?v=254"></script>
 <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
