@@ -6,6 +6,7 @@
       state.cropRanges ||= [];
       state.cropPreflightCheckedSig = null;
       state.cropPreflightApprovedSig = null;
+      state.cropPreflightRunning = false;
       function values(){
         return {top:Number(els.cropTop.value)||0,bottom:Number(els.cropBottom.value)||0,sides:Number(els.cropSides.value)||0};
       }
@@ -114,9 +115,10 @@
         c.width=1;c.height=1;return warnings;
       }
       async function run(){
-        if(!state.files.length||!sourceFilesAttached())return;
+        if(state.cropPreflightRunning||!state.files.length||!sourceFilesAttached())return;
         const error=validated();if(error){els.cropPreflightStatus.textContent=error;return;}
         const sig=signature(),samples=sampleIndices(),button=els.runCropPreflight,old=button.textContent;
+        state.cropPreflightRunning=true;
         button.disabled=true;button.textContent="Checking…";
         invalidate();els.cropPreflightSamples.replaceChildren();
         let warnings=0;
@@ -148,7 +150,7 @@
             (warnings?warnings+" possible cut-line warning(s). Inspect ⚠ pages before approval.":"No cut-line ink warnings found.")+
             " Visual inspection is required; this is not a guarantee that text was preserved.";
         }catch(err){invalidate();els.cropPreflightStatus.textContent="Preflight failed: "+(err.message||err);}
-        finally{button.disabled=false;button.textContent=old;}
+        finally{state.cropPreflightRunning=false;button.disabled=false;button.textContent=old;refreshSourceAttachmentUi();}
       }
       function init(){
         renderRanges();
