@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "253";
+  const BUILD_VERSION = "254";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -34,6 +34,8 @@
     guidedRepairChapterIndex: 0,
     sourceProfile: "cloud-iowan",
     cropPreviewIndex: 0,
+    cropRanges: [],
+    cropConfigAtOcrStart: null,
     thumbnailsExpanded: false,
     italicCalibrationReviewSet: [],
     italicCalibrationLabels: {},
@@ -129,6 +131,12 @@
     cropTop: $("cropTop"),
     cropBottom: $("cropBottom"),
     cropSides: $("cropSides"),
+    addCropRange: $("addCropRange"),
+    cropRangeList: $("cropRangeList"),
+    runCropPreflight: $("runCropPreflight"),
+    cropPreflightStatus: $("cropPreflightStatus"),
+    cropPreflightSamples: $("cropPreflightSamples"),
+    cropPreflightApprove: $("cropPreflightApprove"),
     sourceProfile: $("sourceProfile"),
     previewPrev: $("previewPrev"),
     previewNext: $("previewNext"),
@@ -493,6 +501,8 @@
         cropTop: Number(els.cropTop.value) || 0,
         cropBottom: Number(els.cropBottom.value) || 0,
         cropSides: Number(els.cropSides.value) || 0,
+        cropRanges: state.cropRanges.map(r=>({...r})),
+        cropConfigAtOcrStart: state.cropConfigAtOcrStart || null,
         sourceProfile: state.sourceProfile || "cloud-iowan",
         currentPageIndex: state.currentPageIndex,
         bookTitle: els.bookTitle?.value || "",
@@ -2609,6 +2619,8 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
     await clearCheckpoint();
 
     state.pages = [];
+    state.cropConfigAtOcrStart=null;
+    cropPreflight.invalidate();
     state.bookLayoutProfile = null;
     state.repairBookHasRun = false;
     state.finalPolishHasRun = false;
@@ -2679,6 +2691,7 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
     if (Number.isFinite(saved.cropTop)) els.cropTop.value = saved.cropTop;
     if (Number.isFinite(saved.cropBottom)) els.cropBottom.value = saved.cropBottom;
     if (Number.isFinite(saved.cropSides)) els.cropSides.value = saved.cropSides;
+    cropPreflight.restore(saved);
     if (typeof saved.sourceProfile === "string") {
       state.sourceProfile = saved.sourceProfile;
       if (els.sourceProfile) els.sourceProfile.value = saved.sourceProfile;
@@ -3312,10 +3325,11 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
     });
   }
 
-  function getCropSettings(img) {
-    const top = clamp(Number(els.cropTop.value) || 0, 0, img.height - 1);
-    const bottom = clamp(Number(els.cropBottom.value) || 0, 0, img.height - top - 1);
-    const sides = clamp(Number(els.cropSides.value) || 0, 0, Math.floor((img.width - 1) / 2));
+  function getCropSettings(img,index=0) {
+    const v=cropPreflight.selected(index);
+    const top = clamp(v.top, 0, img.height - 1);
+    const bottom = clamp(v.bottom, 0, img.height - top - 1);
+    const sides = clamp(v.sides, 0, Math.floor((img.width - 1) / 2));
     return {
       sx: sides,
       sy: top,
@@ -3324,8 +3338,8 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
     };
   }
 
-  function makeCroppedCanvas(img) {
-    const { sx, sy, sw, sh } = getCropSettings(img);
+  function makeCroppedCanvas(img,index=0) {
+    const { sx, sy, sw, sh } = getCropSettings(img,index);
     const canvas = document.createElement("canvas");
     canvas.width = sw;
     canvas.height = sh;
@@ -3373,16 +3387,19 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
     state.cropPreviewIndex = clamp(Number(state.cropPreviewIndex) || 0, 0, state.files.length - 1);
     const file = state.files[state.cropPreviewIndex];
     const img = await loadImageFromFile(file);
-    const crop = getCropSettings(img);
-    const maxW = 1000;
-    const scale = Math.min(1, maxW / crop.sw);
-    const c = els.previewCanvas;
-    c.width = Math.round(crop.sw * scale);
-    c.height = Math.round(crop.sh * scale);
-    const ctx = c.getContext("2d", { alpha: false });
-    ctx.drawImage(img, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, c.width, c.height);
-    els.previewDims.textContent = `${crop.sw} × ${crop.sh} px`;
-    if (els.previewSample) els.previewSample.textContent = `Sample ${state.cropPreviewIndex + 1} of ${state.files.length} · ${file.name}`;
+    const crop=getCropSettings(img,state.cropPreviewIndex),v=cropPreflight.selected(state.cropPreviewIndex);
+    const scale=Math.min(1,900/img.width),c=els.previewCanvas;
+    c.width=Math.round(img.width*scale);c.height=Math.round(img.height*scale);
+    const ctx=c.getContext("2d",{alpha:false});ctx.drawImage(img,0,0,c.width,c.height);
+    ctx.fillStyle="rgba(125,50,50,.32)";
+    for(const rect of [[0,0,img.width,crop.sy],[0,crop.sy,crop.sx,crop.sh],
+      [crop.sx+crop.sw,crop.sy,img.width-crop.sx-crop.sw,crop.sh],
+      [0,crop.sy+crop.sh,img.width,img.height-crop.sy-crop.sh]])
+      if(rect[2]>0&&rect[3]>0)ctx.fillRect(...rect.map(n=>n*scale));
+    ctx.strokeStyle="#d12545";ctx.lineWidth=Math.max(2,3*scale);
+    ctx.strokeRect(crop.sx*scale,crop.sy*scale,crop.sw*scale,crop.sh*scale);
+    els.previewDims.textContent=`Keep ${crop.sw} × ${crop.sh} px · ${v.label} · T${v.top}/B${v.bottom}/S${v.sides}`;
+    if(els.previewSample)els.previewSample.textContent=`Page ${state.cropPreviewIndex+1} of ${state.files.length} · ${file.name}`;
   }
 
   function renderThumbs() {
@@ -3975,7 +3992,8 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
       ? "Select the original batch to reconnect this project, or choose a different batch to start a new book."
       : "Select the whole batch. Files are sorted naturally by filename.";
 
-    if (els.processBtn) els.processBtn.disabled = state.processing || !attached || !total || processed >= total;
+    if (els.processBtn) els.processBtn.disabled = state.processing || !attached || !total || processed >= total || (processed===0 && !cropPreflight.isApproved());
+    if (els.runCropPreflight) els.runCropPreflight.disabled = state.processing || !attached || !total;
     if (els.freshPaddleBtn) els.freshPaddleBtn.disabled = state.processing || !state.pages.length;
     if (els.exportTypographyTestBtn) els.exportTypographyTestBtn.disabled = !attached || !state.pages.length;
     if (els.typographyFirstReadBtn) els.typographyFirstReadBtn.disabled = !attached || !state.typographyUncertain.length;
@@ -4627,7 +4645,7 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
     if (!page) return;
 
     const img = await loadImageFromFile(page.file);
-    const canvas = makeCroppedCanvas(img);
+    const canvas = makeCroppedCanvas(img,index);
     setStatus(`PaddleOCR is re-reading message page ${index + 1}…`);
 
     const { text, layoutLines, layoutMeta, result } = await paddleRecognizeCanvas(canvas, { messageMode: true });
@@ -4706,7 +4724,7 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
       const file = state.files[index];
       setStatus(`PaddleOCR processing page ${index + 1} of ${state.files.length}: ${file.name}`);
       const img = await loadImageFromFile(file);
-      const canvas = makeCroppedCanvas(img);
+      const canvas = makeCroppedCanvas(img,index);
       const paddleResult = await paddleRecognizeCanvas(canvas, { messageMode: false });
       const text = cleanBodyText(paddleResult.text || "");
       const tesseractEvidence = await captureTesseractEvidence(canvas,index);
@@ -4891,6 +4909,8 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
   async function processAllPages() {
     if (!state.files.length || state.processing) return;
     const startIndex = state.pages.length;
+    const cropError=cropPreflight.checkReady(startIndex);
+    if(cropError){setStatus(cropError);return;}
     if (startIndex < state.files.length && !sourceFilesAttached()) {
       setStatus(`OCR is paused at page ${startIndex + 1}. Attach the original ${state.files.length} screenshots to continue; restored OCR work is unchanged.`);
       refreshSourceAttachmentUi();
@@ -4910,6 +4930,7 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
     // Stop button. It is cleared here and set only while the batch loop runs;
     // every completed page is already durable, so stopping mid-batch is as
     // safe as closing the tab.
+    if(startIndex===0)state.cropConfigAtOcrStart=cropPreflight.configSig();
     state.stopRequested = false;
     state.batchRunning = true;
     if (els.stopBatchBtn) {
@@ -5096,7 +5117,7 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
           setStatus(`Dropcap Rescue geometry ${i + 1}/${targets.length} · reading raw Paddle detections from page ${pageIndex + 1}…`);
         }
         const img = await loadImageFromFile(file);
-        const canvas = makeCroppedCanvas(img);
+        const canvas = makeCroppedCanvas(img,pageIndex);
         const paddle = await paddleRecognizeCanvas(canvas, { messageMode: false });
         page.rawOcrItems = normalizePaddleItems(paddle.result?.items);
         canvas.width = 1;
@@ -6720,7 +6741,7 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
           setStatus(`Automatic italic scan ${BUILD_VERSION} ${state.sourceProfile === "cloud-iowan" ? "CloudLibrary/Iowan" : "profile"}: page ${index + 1} of ${state.pages.length}…`);
         }
         const img = await loadImageFromFile(file);
-        const canvas = makeCroppedCanvas(img);
+        const canvas = makeCroppedCanvas(img,index);
         const lineScores = page.layoutLines.map(line => italicSlantScore(canvas, line.box));
         const chapterHeaderKeys = chapterHeaderLineKeys(page, index);
         for (let lineIndex = 0; lineIndex < page.layoutLines.length; lineIndex++) {
@@ -8439,7 +8460,7 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
     if (!file) return;
     try {
       const img = await loadImageFromFile(file);
-      const source = makeCroppedCanvas(img);
+      const source = makeCroppedCanvas(img,pageIndex);
       const b = run.reviewBox;
       // Candidate only: no neighboring words, page number, chapter, or line context.
       const padX = Math.max(3, Math.round(Number(b.h || 20) * 0.12));
@@ -10738,7 +10759,7 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
       const file=state.pages?.[pi]?.file||state.files?.[pi];if(!file){failed+=list.length;continue;}
       const approx=wordBoxesForPage(pi);
       try{
-        const img=await loadImageFromFile(file),pageCanvas=makeCroppedCanvas(img);
+        const img=await loadImageFromFile(file),pageCanvas=makeCroppedCanvas(img,pi);
         for(const x of list){
           const physical=italicExamplePhysicalKey(x),parts=physical.split(":").map(Number),line=parts[1],startWord=parts[2],endWord=Number.isFinite(Number(x.endWordIndex))?Number(x.endWordIndex):startWord;
           let b=x.reviewBox||state.italicValidationEvidenceByPhysical?.get(physical)?.reviewBox||liveByPhysical.get(physical)||null,geometry="exact";
@@ -11167,6 +11188,7 @@ ${coverSpine}${spine.join("\n")}
       }
     }
     syncCropPresetUi();
+    cropPreflight.persistChange();
     updatePreview().catch(err => console.warn("Could not refresh profile crop preview", err));
     if (state.files.length) saveCheckpoint();
   }
@@ -11210,15 +11232,18 @@ ${coverSpine}${spine.join("\n")}
         els.cropSides.value = 0;
       }
       syncCropPresetUi();
-  updatePreview();
+      cropPreflight.persistChange();
+      updatePreview();
     });
   });
 
   [els.cropTop, els.cropBottom, els.cropSides].forEach(input => input.addEventListener("input", () => {
     syncCropPresetUi();
-  updatePreview();
+    cropPreflight.persistChange();
+    updatePreview();
   }));
 
+  const cropPreflight=window.OcrCropPreflight.create({state,els,loadImageFromFile,sourceFilesAttached,checkpointSignature,refreshSourceAttachmentUi,updatePreview,saveCheckpoint});
   syncCropPresetUi();
 
   [els.bookTitle, els.bookAuthor].forEach(input => input?.addEventListener("input", () => {
@@ -11295,6 +11320,7 @@ ${coverSpine}${spine.join("\n")}
         state.typographyUncertainPosition = 0;
         state.files = selected;
         state.pages = [];
+        cropPreflight.onNewBatch();
         state.currentPageIndex = -1;
         state.guidedRepairChapterIndex = 0;
         state.cropPreviewIndex = defaultPreviewIndex();
@@ -11324,6 +11350,7 @@ ${coverSpine}${spine.join("\n")}
         if (attached) page.file = attached;
       });
       state.cropPreviewIndex = defaultPreviewIndex();
+      cropPreflight.invalidate();
       saveCheckpoint();
       await flushCheckpointSave();
       refreshSourceAttachmentUi();
@@ -11347,6 +11374,7 @@ ${coverSpine}${spine.join("\n")}
     state.ignoredFinalPolishIssues = new Set();
     state.files = selected;
     state.pages = [];
+    cropPreflight.onNewBatch();
     state.currentPageIndex = -1;
     state.cropPreviewIndex = defaultPreviewIndex();
     const restored = state.files.length ? await restoreCheckpointIfMatching() : 0;
@@ -11383,6 +11411,7 @@ ${coverSpine}${spine.join("\n")}
     await clearCheckpoint();
     state.files = [];
     state.pages = [];
+    cropPreflight.onNewBatch();
     state.currentPageIndex = -1;
     state.repairBookHasRun = false;
     state.ignoredLigatureCandidates = new Set();
@@ -11548,7 +11577,7 @@ ${coverSpine}${spine.join("\n")}
     const prob=f=>{if(!modelReady)return null;let si=0,sr=0;for(const m of model.features){const v=Number(f[m.name]);for(const [lab,stat] of [["i",m.italic],["r",m.roman]]){const sd=Math.max(1e-6,Number(stat?.sd||0)),z=(v-Number(stat?.mean||0))/sd,val=-.5*z*z-Math.log(sd);if(lab==="i")si+=val;else sr+=val;}}const d=Math.max(-30,Math.min(30,si-sr));return 1/(1+Math.exp(-d));};
     const byPage=new Map();for(const r of runs)if(r.reviewBox){if(!byPage.has(r.pageIndex))byPage.set(r.pageIndex,[]);byPage.get(r.pageIndex).push(r);}
     let measured=0;
-    for(const [pi,list] of byPage){const file=state.pages?.[pi]?.file||state.files?.[pi];if(!file)continue;try{const img=await loadImageFromFile(file),canvas=makeCroppedCanvas(img);for(const r of list){const f=measure(canvas,r.reviewBox);if(f){measured++;r.pixelFeatures=f;r.pixelItalicProbability=prob(f);}}canvas.width=1;canvas.height=1;}catch(_){}}
+    for(const [pi,list] of byPage){const file=state.pages?.[pi]?.file||state.files?.[pi];if(!file)continue;try{const img=await loadImageFromFile(file),canvas=makeCroppedCanvas(img,pi);for(const r of list){const f=measure(canvas,r.reviewBox);if(f){measured++;r.pixelFeatures=f;r.pixelItalicProbability=prob(f);}}canvas.width=1;canvas.height=1;}catch(_){}}
     return {measured,modelApplied:modelReady};
   }
 
@@ -11772,7 +11801,7 @@ ${coverSpine}${spine.join("\n")}
       const page=state.pages[pi], file=state.files[pi]||page.file;
       if(!file) continue;
       setVisualItalicStatus(`Visual Italic · page ${pi+1} of ${state.pages.length}… · ${results.length} specimens scored`);
-      const img=await loadImageFromFile(file), canvas=makeCroppedCanvas(img);
+      const img=await loadImageFromFile(file), canvas=makeCroppedCanvas(img,pi);
       const raw=Array.isArray(page.rawOcrItems)&&page.rawOcrItems.length?page.rawOcrItems:(Array.isArray(page.layoutLines)?page.layoutLines:[]);
       const chapterHeaderKeys=chapterHeaderLineKeys(page,pi);
       for(let li=0;li<raw.length;li++){
@@ -11862,7 +11891,7 @@ ${coverSpine}${spine.join("\n")}
     const cropW=Number(r.cropWidth??r.box?.w??r.box?.width??0),cropH=Number(r.cropHeight??r.box?.h??r.box?.height??0),cropAspect=cropH>0?cropW/cropH:0;
     const geometryType=r.geometryType||((Array.isArray(sourceLine?.words)&&sourceLine.words.length)?"word/run":"line-level");
     const file=state.files[r.pageIndex], img=file?await loadImageFromFile(file):null;
-    let src="";if(img){const canvas=makeCroppedCanvas(img),crop=cropCanvasRegion(canvas,r.box),out=document.createElement("canvas");out.width=Math.max(360,crop.width*3);out.height=Math.max(100,crop.height*3);const x=out.getContext("2d");x.fillStyle="#fff";x.fillRect(0,0,out.width,out.height);const scale=Math.min((out.width-24)/crop.width,(out.height-24)/crop.height);x.imageSmoothingEnabled=false;x.drawImage(crop,(out.width-crop.width*scale)/2,(out.height-crop.height*scale)/2,crop.width*scale,crop.height*scale);src=out.toDataURL("image/png");canvas.width=1;canvas.height=1;}
+    let src="";if(img){const canvas=makeCroppedCanvas(img,r.pageIndex),crop=cropCanvasRegion(canvas,r.box),out=document.createElement("canvas");out.width=Math.max(360,crop.width*3);out.height=Math.max(100,crop.height*3);const x=out.getContext("2d");x.fillStyle="#fff";x.fillRect(0,0,out.width,out.height);const scale=Math.min((out.width-24)/crop.width,(out.height-24)/crop.height);x.imageSmoothingEnabled=false;x.drawImage(crop,(out.width-crop.width*scale)/2,(out.height-crop.height*scale)/2,crop.width*scale,crop.height*scale);src=out.toDataURL("image/png");canvas.width=1;canvas.height=1;}
     host.innerHTML=visualItalicPopulationSummary()+`<div class="review-card"><div style="display:flex;justify-content:space-between;gap:12px;align-items:center"><strong>Visual Italic Review · ${i+1} / ${q.length}</strong><span class="pill">raw ${(r.visualItalicProbability*100).toFixed(3)}% · span ${(r.visualItalicSpanScore*100).toFixed(3)}%</span></div><div class="muted" style="text-align:center;margin-top:8px">crop ${Math.round(cropW)} × ${Math.round(cropH)} px · aspect ${cropAspect.toFixed(2)} · ${geometryType}</div>${src?`<div style="margin:12px 0"><img src="${src}" alt="spoiler-safe visual italic crop" style="display:block;max-width:100%;max-height:150px;margin:auto;object-fit:contain"></div>`:""}<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center"><button class="button secondary" data-vilabel="ITALIC">Italic</button><button class="button secondary" data-vilabel="ROMAN">Roman</button><button class="button secondary" data-vilabel="GLYPH">Glyph / Decorative</button><button class="button secondary" data-vilabel="FRAGMENT">Fragment tag</button><button class="button secondary" data-vilabel="UNSURE">Unsure</button><button class="button secondary" data-viprev ${i?"":"disabled"}>← Previous</button><button class="button secondary" data-vinext ${i+1<q.length?"":"disabled"}>Next →</button><label class="muted">Rank <input data-virank type="number" min="1" max="${q.length}" value="${i+1}" style="width:86px"></label><button class="button secondary" data-vigorank>Go</button><label class="muted">Score <input data-viscore type="number" min="0" max="1" step="0.01" placeholder="0.60" style="width:86px"></label><button class="button secondary" data-vigoscore>Nearest</button></div><div class="muted" style="text-align:center;margin-top:8px">Independent validation only · does not train either italic system · ${visualItalicLabelCounts()}</div></div>`;
     host.querySelectorAll("[data-vilabel]").forEach(b=>b.addEventListener("click",()=>{const chosen=b.dataset.vilabel,idx=state.visualItalicLabels.findIndex(x=>Number(x.visualItalicRank)===Number(r.visualItalicRank)),prior=idx>=0?state.visualItalicLabels[idx]:null,base={visualItalicRank:r.visualItalicRank,pageIndex:r.pageIndex,lineIndex:r.lineIndex,wordIndex:r.wordIndex,raw:r.visualItalicProbability,span:r.visualItalicSpanScore,cropWidth:cropW,cropHeight:cropH,cropAspect,geometryType};let rec;if(chosen==="FRAGMENT"){rec={...(prior||base),...base,label:prior?.label||"UNSURE",fragment:!prior?.fragment};}else{rec={...(prior||base),...base,label:chosen,fragment:!!prior?.fragment};}if(idx>=0)state.visualItalicLabels[idx]=rec;else state.visualItalicLabels.push(rec);if(chosen!=="FRAGMENT"){const t=visualItalicNormalizedText(r);if(t)(state.visualItalicDiversitySeenTexts||(state.visualItalicDiversitySeenTexts=new Set())).add(t);state.visualItalicReviewIndex=visualItalicNextDiverseIndex(i);}renderVisualItalicReview();void cacheVisualItalicResults().then(ok=>{if(!ok)setVisualItalicStatus("Visual Italic label changed in memory but could not be saved to cache.");});}));
     host.querySelector("[data-viprev]")?.addEventListener("click",()=>{state.visualItalicReviewIndex=Math.max(0,i-1);renderVisualItalicReview();}); host.querySelector("[data-vinext]")?.addEventListener("click",()=>{state.visualItalicReviewIndex=Math.min(q.length-1,i+1);renderVisualItalicReview();}); host.querySelector("[data-vigorank]")?.addEventListener("click",()=>{const n=Math.max(1,Math.min(q.length,Number(host.querySelector("[data-virank]")?.value)||1));state.visualItalicReviewIndex=n-1;visualItalicResetDiversityBand(q[state.visualItalicReviewIndex]);renderVisualItalicReview();}); host.querySelector("[data-virank]")?.addEventListener("keydown",e=>{if(e.key==="Enter")host.querySelector("[data-vigorank]")?.click();}); host.querySelector("[data-vigoscore]")?.addEventListener("click",()=>{let v=Number(host.querySelector("[data-viscore]")?.value);if(!Number.isFinite(v))return;if(v>1)v/=100;let best=0,dist=Infinity;q.forEach((x,j)=>{const d=Math.abs(x.visualItalicProbability-v);if(d<dist){dist=d;best=j;}});state.visualItalicReviewIndex=best;visualItalicResetDiversityBand(q[best]);renderVisualItalicReview();}); host.querySelector("[data-viscore]")?.addEventListener("keydown",e=>{if(e.key==="Enter")host.querySelector("[data-vigoscore]")?.click();});
@@ -12150,7 +12179,7 @@ ${coverSpine}${spine.join("\n")}
       const page=state.pages?.[pageIndex]; if(!page){outOfRange+=items.length;continue;}
       const file=page.file||state.files?.[pageIndex]; if(!file){missingFiles+=items.length;continue;}
       let canvas=null;
-      try{const img=await loadImageFromFile(file);canvas=makeCroppedCanvas(img);}catch(_){missingFiles+=items.length;continue;}
+      try{const img=await loadImageFromFile(file);canvas=makeCroppedCanvas(img,pageIndex);}catch(_){missingFiles+=items.length;continue;}
       const lineCache=new Map();
       for(const item of items){
         const line=page.layoutLines?.[item.lineIndex]; if(!line){missingLines++;continue;}
@@ -12185,7 +12214,7 @@ ${coverSpine}${spine.join("\n")}
     const rows=[],groups=new Map();for(const t of targets){if(!groups.has(t.pageIndex))groups.set(t.pageIndex,[]);groups.get(t.pageIndex).push(t);}
     for(const [pageIndex,items] of groups){
       const file=state.pages?.[pageIndex]?.file||state.files?.[pageIndex];if(!file)continue;
-      try{const img=await loadImageFromFile(file),canvas=makeCroppedCanvas(img);for(const t of items){const f=measure(canvas,t.box);if(f)rows.push({label:t.label,pageIndex:t.pageIndex,features:f,example:t.example});}}catch(err){console.warn("v102 pixel diagnostic skipped page",pageIndex,err);}
+      try{const img=await loadImageFromFile(file),canvas=makeCroppedCanvas(img,pageIndex);for(const t of items){const f=measure(canvas,t.box);if(f)rows.push({label:t.label,pageIndex:t.pageIndex,features:f,example:t.example});}}catch(err){console.warn("v102 pixel diagnostic skipped page",pageIndex,err);}
       await new Promise(resolve=>setTimeout(resolve,0));
     }
     const keys=["centroidLean","leftContourLean","rightContourLean","contourAsymmetry","leanConsistency","inkOccupancy","upperLowerInkRatio"];
@@ -12330,7 +12359,7 @@ ${coverSpine}${spine.join("\n")}
   }
   async function candidateCanvasForRun(run){
     const file=state.files?.[Number(run.pageIndex)];if(!file||!run.reviewBox)return null;
-    const img=await loadImageFromFile(file),page=makeCroppedCanvas(img),b=run.reviewBox;
+    const img=await loadImageFromFile(file),page=makeCroppedCanvas(img,Number(run.pageIndex)),b=run.reviewBox;
     return cropCanvasRegion(page,{x:Number(b.x||0),y:Number(b.y||0),w:Number(b.w||b.width||0),h:Number(b.h||b.height||0)});
   }
   function iowanDeltaMask(romanMask,italicMask){
@@ -12376,7 +12405,7 @@ ${coverSpine}${spine.join("\n")}
     for(const [pageIndex,items] of byPage){
       const page=state.pages?.[pageIndex];if(!page){outOfRange+=items.length;continue;}
       const file=page.file||state.files?.[pageIndex];if(!file){missingFiles+=items.length;continue;}
-      let canvas;try{const img=await loadImageFromFile(file);canvas=makeCroppedCanvas(img);}catch(_){missingFiles+=items.length;continue;}
+      let canvas;try{const img=await loadImageFromFile(file);canvas=makeCroppedCanvas(img,pageIndex);}catch(_){missingFiles+=items.length;continue;}
       const lineCache=new Map();
       for(const item of items){
         const line=page.layoutLines?.[item.lineIndex];if(!line){missingLines++;continue;}
@@ -12460,7 +12489,7 @@ ${coverSpine}${spine.join("\n")}
       for(let pos=0;pos<sample.length;pos++){
         const index=sample[pos];
         setStatus(`Tesseract sidecar full-book diagnostic: page ${pos+1} of ${sample.length}…`);
-        const img=await loadImageFromFile(state.files[index]),canvas=makeCroppedCanvas(img);
+        const img=await loadImageFromFile(state.files[index]),canvas=makeCroppedCanvas(img,index);
         const r=await worker.recognize(canvas,{}, {text:true,blocks:true,hocr:true,tsv:true});
         const data=r?.data||{},words=data.words||[],layout=tesseractWordsToLayout(words);
         const bookProfile=layout.length?buildBookLayoutProfile([{layoutLines:layout}]):null;
