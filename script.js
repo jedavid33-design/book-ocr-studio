@@ -11124,6 +11124,10 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
     // Repair/Polish edits. Re-project accepted italic evidence onto the latest
     // authoritative wording immediately before serialization.
     ensureItalicEvidenceProjected();
+    const invalidMessagePages = state.pages.flatMap((page,index) =>
+      window.OcrMessageBubbles.validate(page).stale.length ? [index + 1] : []);
+    if (invalidMessagePages.length) throw new Error(
+      `Re-review text bubbles on page${invalidMessagePages.length===1?"":"s"} ${invalidMessagePages.join(", ")}. Saved bubble marks no longer match the current OCR wording.`);
     if (!state.pages.some(p => normalizedPageText(p.text))) throw new Error("There is no OCR text to export.");
 
     const title = (els.bookTitle.value || "Untitled Book").trim();
