@@ -1,11 +1,11 @@
 "use strict";
-// Build 255: Reader-aware export regression test (Node, no browser).
+// Reader-aware export regression, Build 255+ (Node, no browser).
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const source = fs.readFileSync(path.join(__dirname, "..", "script.js"), "utf8");
 
-assert.ok(source.includes('const BUILD_VERSION = "255"'));
+assert.ok(/const BUILD_VERSION = "(?:25[5-9]|2[6-9][0-9]|[3-9][0-9]{2})"/.test(source));
 const exportStart = source.indexOf("async function buildEpub()");
 const exportEnd = source.indexOf("async function downloadEpub()", exportStart);
 assert.ok(exportStart >= 0 && exportEnd > exportStart, "EPUB exporter exists");
@@ -20,7 +20,7 @@ assert.ok(!exporter.includes('class="scene-break" data-opal-narration="skip"'),
 const readyStart = source.indexOf("function kindleReadyChecks()");
 const readyEnd = source.indexOf("function renderKindleReady", readyStart);
 assert.ok(readyStart >= 0 && readyEnd > readyStart);
-const makeCheck = new Function("state", "els", "sections", `
+const makeCheck = new Function("state", "els", "sections", "window", `
   const syncCurrentEditor=()=>{}, ensureItalicEvidenceProjected=()=>{},
         normalizedPageText=s=>String(s||"").trim(),
         chapterSections=()=>sections,
@@ -34,7 +34,7 @@ const state = {pages:[
   {text:"Chapter one",chapterStart:true}
 ], coverFile:{name:"cover.jpg"}};
 const els = {bookTitle:{value:"Test book"},bookAuthor:{value:"Test author"}};
-const status = chapters => makeCheck(state, els, chapters)
+const status = chapters => makeCheck(state, els, chapters, {OcrMessageBubbles:{validate:()=>({stale:[],marked:0})}})
   .find(x => x.name === "Reader POV metadata")?.status;
 assert.equal(status([
   {title:"Prologue",nav:true,pov:"Lily"},
