@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "257";
+  const BUILD_VERSION = "258";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -205,6 +205,9 @@
     reviewSection: $("reviewSection"),
     reviewList: $("reviewList"),
     reviewProgress: $("reviewProgress"),
+    runChapterAudit: $("runChapterAudit"),
+    chapterAuditStatus: $("chapterAuditStatus"),
+    chapterAuditResults: $("chapterAuditResults"),
     reviewAllBtn: $("reviewAllBtn"),
     reviewChaptersBtn: $("reviewChaptersBtn"),
     prevPageBtn: $("prevPageBtn"),
@@ -4051,6 +4054,7 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
     els.prevPageBtn.disabled = state.processing || !hasCurrent || pos <= 0;
     els.messageOcrBtn.disabled = state.processing || !hasCurrent || !currentHasSource;
     els.pageDropcapBtn.disabled = state.processing || !hasCurrent;
+    if (els.runChapterAudit) els.runChapterAudit.disabled = state.processing || !processed;
     if (els.markItalicBtn) els.markItalicBtn.disabled = state.processing || !hasCurrent;
     if (els.clearItalicBtn) els.clearItalicBtn.disabled = state.processing || !hasCurrent;
     els.nextPageBtn.disabled = state.processing || !hasCurrent || pos < 0 || pos >= indices.length - 1;
@@ -4068,6 +4072,70 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
     els.kindleReadySection?.classList[method]("hidden");
     els.exportSection?.classList[method]("hidden");
   }
+
+
+  // Build 258: visible chapter inventory is advisory, never an OCR correction.
+  function showChapterOpeningAudit() {
+    if (!els.chapterAuditResults || !window.OcrChapterAudit) return;
+    syncCurrentEditor();
+    const report=window.OcrChapterAudit.audit(state.pages);
+    const root=els.chapterAuditResults;
+    root.replaceChildren();
+    root.classList.remove("hidden");
+    els.chapterAuditStatus.textContent=report.chapterCount+" chapter start"+(report.chapterCount===1?"":"s")
+      +" · "+report.flaggedChapters+" to review · "+report.candidateCount+" possible unmarked";
+    const hint=document.createElement("p");
+    hint.className="hint";
+    hint.textContent="Read-only snapshot. Compare warnings with screenshots. Run again after edits; no text or QA corrections are applied.";
+    root.appendChild(hint);
+    const jump=(entry)=>{
+      setReviewMode("all");
+      state.currentPageIndex=entry.pageIndex;
+      renderReview();
+      els.reviewSection?.scrollIntoView({behavior:"smooth",block:"start"});
+      setStatus("Reviewing page "+(entry.pageIndex+1)+" from the chapter-opening inventory.");
+    };
+    function entryRow(entry) {
+      const line=document.createElement("div");
+      line.className="chapter-audit-row";
+      const link=document.createElement("button");
+      link.type="button";
+      link.className="button secondary compact-button";
+      link.textContent="Page "+(entry.pageIndex+1);
+      link.addEventListener("click",()=>jump(entry));
+      const body=document.createElement("div");
+      const title=document.createElement("strong");
+      title.textContent=entry.title+(entry.pov?" · "+entry.pov:"");
+      body.appendChild(title);
+      const detail=document.createElement("p");
+      detail.className="chapter-audit-detail";
+      detail.textContent=entry.issues.length?entry.issues.join(" • "):"No opening warnings.";
+      body.appendChild(detail);
+      if(entry.opening) {
+        const preview=document.createElement("small");
+        preview.textContent="Opening: "+entry.opening;
+        body.appendChild(preview);
+      }
+      line.append(link,body);
+      return line;
+    }
+    const list=document.createElement("div");
+    list.className="chapter-audit-list";
+    for(const row of report.rows) list.appendChild(entryRow(row));
+    if(!report.rows.length) {
+      const noChapters=document.createElement("p");
+      noChapters.textContent="No confirmed chapter starts yet. Mark chapter boundaries in Review first.";
+      list.appendChild(noChapters);
+    }
+    if(report.candidates.length) {
+      const title=document.createElement("h4");
+      title.textContent="Possible unmarked chapter starts (verify manually)";
+      list.appendChild(title);
+      for(const row of report.candidates)list.appendChild(entryRow(row));
+    }
+    root.appendChild(list);
+  }
+  els.runChapterAudit?.addEventListener("click", showChapterOpeningAudit);
 
   function renderReview() {
     els.reviewList.innerHTML = "";
