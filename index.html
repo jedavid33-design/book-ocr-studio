@@ -62,6 +62,28 @@
 <div class="cover-preview hidden" id="coverPreviewWrap">
 <img alt="Selected cover preview" id="coverPreview"/>
 </div>
+<details class="scene-art-tools" id="sceneArtTools">
+<summary>Illustrated scene breaks · optional</summary>
+<p class="hint">Save a source-approved scene ornament once and reuse it. Artwork replaces only confirmed <code>* * *</code> paragraph dividers when you explicitly enable it for this book. No art is guessed from prose, and Opal Reader's scene pause is preserved.</p>
+<label><span>Illustration library</span>
+<select id="sceneArtSelect"><option value="">No illustration selected</option></select></label>
+<div class="actions">
+<label class="file-field scene-art-upload"><span>Upload a cropped ornament</span><input id="sceneArtUpload" type="file" accept="image/png,image/jpeg,image/webp"></label>
+<button class="button ghost" type="button" id="sceneArtDelete">Delete selected library illustration</button>
+</div>
+<div id="sceneArtPreviewWrap" class="scene-art-preview hidden"><img id="sceneArtPreview" alt="Selected scene ornament preview"/><span id="sceneArtPreviewName"></span></div>
+<label class="scene-art-apply"><input type="checkbox" id="sceneArtApply"> Use this ornament on all confirmed <code>* * *</code> scene breaks in this book</label>
+<details id="sceneArtCropDetails" class="scene-art-crop-details">
+<summary>Crop an illustration from a book screenshot</summary>
+<p class="hint">Choose its 1-based source page, load the screenshot, then drag a tight box around just the illustration. On iPhone/iPad, drag with your finger. Review that no prose is included before saving.</p>
+<div class="scene-crop-controls"><label><span>Source page</span><input id="sceneArtCropPage" type="number" min="1" inputmode="numeric" value="1"></label>
+<button class="button secondary" id="sceneArtCropLoad" type="button">Load source page</button></div>
+<canvas id="sceneArtCropCanvas" aria-label="Drag to choose a scene ornament crop"></canvas>
+<p class="hint" id="sceneArtCropHint">Attach the original source screenshots to crop artwork.</p>
+<button class="button primary" id="sceneArtCropSave" type="button" disabled>Save selected crop to library</button>
+</details>
+<div id="sceneArtStatus" class="status-box subtle" aria-live="polite">No scene illustration selected. Plain scene dividers will be preserved.</div>
+</details>
 </section>
 <section class="card">
 <h2>2. Add screenshots</h2>
@@ -387,6 +409,7 @@
 <script src="epub-polish.js?v=58"></script>
 <script src="crop-preflight.js?v=254"></script>
 <script src="message-bubbles.js?v=256"></script>
+<script src="scene-ornaments.js?v=257"></script>
 <script src="script-loader.js?v=256"></script>
 <script>
     if ("serviceWorker" in navigator) {
