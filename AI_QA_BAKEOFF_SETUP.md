@@ -1,4 +1,4 @@
-# Book OCR Studio · AI QA Bake-off (Build 264)
+# Book OCR Studio · AI QA Bake-off (Build 266, pilot originated in 264)
 
 ## Purpose
 Audition a vision model against previously human-verified source screenshots before enabling any live-book AI corrections.
@@ -29,10 +29,11 @@ Model prices, providers and eligibility can change. Test real prices/usage and t
 2. Create a small Cloudflare Worker under your own Cloudflare account (free tier may be sufficient for a short synchronous test).
 3. Deploy the repo file `cloudflare/openrouter-qa-relay.js` as the Worker's source.
 4. Set Worker **Secrets** `OPENROUTER_API_KEY` (your actual OpenRouter API key) and `QA_ACCESS_TOKEN` (a separate long random token you generate). Set Worker **plain variable** `ALLOWED_ORIGIN` to the **exact origin** where Studio runs, e.g. `https://example.github.io` or your custom domain, no trailing slash or path. Never commit secret values.
-5. Deploy the Worker, confirm its `/health` endpoint answers `{"ok":true,...}`. **This health check is not proof that OpenRouter is connected.**
-6. Open Studio → Review → AI QA Bake-off. Load the two ZIPs *locally*. Paste the Worker's HTTPS base URL into **Private QA Worker base URL**. Paste the separate **QA_ACCESS_TOKEN** into **Worker access token**. **Never paste the OpenRouter key here.**
-7. Start with the default **Gemini 3.1 Flash Lite** for three pages and inspect substantive OCR hits and false positives. Then run identical pages for **Gemini 3.8 Flash** and **Claude Sonnet 4.6**. Export one results JSON file per model for comparison.
-8. When ready, tap **Run next 3 pages** repeatedly. Every completed page is stored locally (per benchmark+model) to help survive a browser reload, but exporting the JSON is still recommended on mobile.
+5. If you've already deployed an older relay, replace its entire code from `cloudflare/openrouter-qa-relay.js` in GitHub and redeploy it. Worker code is manually managed; a GitHub push does **not** update an existing Cloudflare Worker. In Studio, use **Check OpenRouter key · No charge** BEFORE starting paid page QA. The check authenticates the Worker and queries `GET /api/v1/key`; it never transmits screenshots or OCR or generates paid output. A successful key check does not prove a model meets privacy routing or that your account has sufficient paid credits. Failed model requests now show the numeric upstream HTTP status with a privacy-safe explanation (401 key invalid; 402 insufficient credits/limit; 503 no provider meeting strict ZDR/parameter requirements).
+6. Deploy the Worker, confirm its `/health` endpoint answers `{"ok":true,...}`. **This health check is not proof that OpenRouter is connected.**
+7. Open Studio → Review → AI QA Bake-off. Load the two ZIPs *locally*. Paste the Worker's HTTPS base URL into **Private QA Worker base URL**. Paste the separate **QA_ACCESS_TOKEN** into **Worker access token**. **Never paste the OpenRouter key here.**
+8. Start with the default **Gemini 3.1 Flash Lite** for three pages and inspect substantive OCR hits and false positives. Then run identical pages for **Gemini 3.8 Flash** and **Claude Sonnet 4.6**. Export one results JSON file per model for comparison.
+9. When ready, tap **Run next 3 pages** repeatedly. Every completed page is stored locally (per benchmark+model) to help survive a browser reload, but exporting the JSON is still recommended on mobile.
 
 **Privacy:** the image and OCR snippet go to your configured Worker and then to OpenRouter and the selected model provider, so external third-party handling applies. The Worker enforces `provider: {data_collection:"deny", zdr:true, require_parameters:true}`, and will fail rather than silently switch to providers without those constraints. Provider policies should still be reviewed independently. The Worker never transmits the gold reference or corrected EPUB and stores no page content. The browser's local results checkpoint may contain model-corrected text.
 
