@@ -20,6 +20,7 @@ jobs:
           node --check ocr-first-pass.js
           node --check epub-visual-preview.js
           node --check prioritized-qa-queue.js
+          node --check qa-review-inspection.js
           node --check qa-bakeoff-core.js
           node --check qa-bakeoff-ui.js
           node --check cloudflare/openrouter-qa-relay.js
@@ -36,4 +37,5 @@ jobs:
           node tests/ocr-first-pass.test.js
           node tests/epub-visual-preview.test.js
           node tests/prioritized-qa-queue.test.js
+          node tests/qa-review-inspection.test.js
           node tests/qa-bakeoff.test.js
