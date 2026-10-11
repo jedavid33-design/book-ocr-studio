@@ -17,6 +17,11 @@ assert.equal(first.rows[1].label,"RANDY");
 assert.equal(first.rows[1].suggested,true);
 const selected=bubble.setAnnotation([],first.rows[1],"outgoing",true);
 assert.equal(bubble.rows(text,selected).rows[1].useLabel,true);
+const labeled=bubble.labeledSuggestions(bubble.rows(text,[]),"Randy");
+assert.equal(labeled.length,2);
+assert.equal(labeled[0].side,"outgoing");
+assert.equal(labeled[1].side,"incoming");
+assert.equal(bubble.labeledSuggestions(bubble.rows(text,[]),"").length,0);
 assert.equal(bubble.rows(text.replace("Do u","Would u"),selected).stale.length,1);
 assert.equal(bubble.rows(text.replace("RANDY","MILLER"),selected).stale.length,1);
 assert.equal(bubble.rows(text, bubble.setAnnotation(selected, first.rows[1],"",false)).marked,0);
@@ -79,5 +84,5 @@ assert.ok(checkpoint.includes("messageBubbles:"));
 assert.ok(restoration.includes("messageBubbles:"));
 const ready=section("function kindleReadyChecks()","function renderKindleReady");
 assert.ok(ready.includes('add("Reviewed text bubbles", staleBubbles ? "fail"'));
-testExport().then(()=>console.log("Build 256: 15 bubble/export/retention checks passed"))
+testExport().then(()=>console.log("Build 256: 18 bubble/export/retention checks passed"))
 .catch(error=>{console.error(error);process.exitCode=1;});
