@@ -1,6 +1,9 @@
 # Book OCR Studio 2.7.2
 
-Current production build: **264**.
+Current production build: **265**.
+
+## Build 265: AI QA first-run error visibility
+- A failed paid OpenRouter request now **keeps its failure reason** on screen instead of replacing it with a misleading “0 pages completed” message. Prior failed attempts from the browser's saved benchmark state now show the most recent page and error, plus HTTP status when available. This is a Studio-only UI change and **does not require Cloudflare Worker redeployment**, does not retry requests, and does not spend credits. Shell cache v91 and Build 265 loader ensure iOS refreshes the diagnostic script.
 
 ## Build 264: OpenRouter AI QA audition (pilot only)
 - **Review → AI QA Bake-off** is an opt-in experiment, separate from the real book editor and final export. It accepts a local **blind screenshot/OCR anchors ZIP** and local **private answer-key ZIP**, and runs up to three pages per explicit paid API confirmation using a private Cloudflare Worker configured separately by the owner. All correction scoring stays on the device; the polished EPUB and gold answer key are never sent to OpenRouter.
