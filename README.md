@@ -1,6 +1,19 @@
 # Book OCR Studio 2.7.2
 
-Current production build: **253**.
+Current production build: **255**.
+
+## Build 255: Reader-aware EPUB export (Pucked Over follow-up)
+- Scene-break paragraphs remain visible as `* * *` but now carry `data-opal-scene-break="true"`. Opal Reader v1.4.90+ inserts a brief non-spoken scene pause at those dividers instead of narrating three asterisks or merging straight across them.
+- The existing `data-opal-pov` metadata remains chapter-wide. Text messages retain the chapter narrator's voice, with no sender-based voice switching.
+- Kindle Ready reports incomplete chapter POV casting as a **warning** if any narratable section has a narrator and others do not. Books without individual POV labels remain valid.
+- Adds no-browser regression checks in `tests/reader-ready-export.test.js`. Run `node tests/reader-ready-export.test.js`.
+- No OCR data, recognized text, imported QA, dropcaps, source images, or previously exported EPUB is altered. No Cloudflare Worker.
+
+### Next book-polish steps (not part of Build 255)
+1. **Text-message bubbles:** source-verified sender and grouping metadata, styled blue/gray bubbles in EPUB. Do not infer an author/sender just from pronouns; require review for ambiguous messages.
+2. **Illustrated scene breaks:** optional user-chosen reusable ornament/image on semantic dividers. Never guess that a screenshot ornament is prose or automatically embed unauthorized guesses.
+3. **Heading & drop-cap QA:** pre-export chapter-start inventory compared against source page labels, including Prologue/Epilogue and detached initials.
+4. **Readability QA:** catch residual cross-item splits, broken word joins, and odd quote/paragraph structures without rewriting verified print text.
 
 ## Build 253
 - Exported title pages now carry `data-opal-narration="skip"` on the visible title-page section. The title and author remain in the EPUB exactly as before, but Opal Reader can treat that page as display metadata instead of narration.
