@@ -39,6 +39,10 @@
   ui.export.disabled=!blind||!current().results.length||running;
   ui.run.disabled=!blind||running;
   ui.stop.disabled=!running;
+  ui.model.disabled=running;
+  ui.blind.disabled=running;
+  ui.gold.disabled=running;
+  ui.import.disabled=running;
   if(!blind)return;
   const obj=current();
   const p=document.createElement("p");
