@@ -1,4 +1,4 @@
-// Build 264: opt-in, secret-backed, stateless Cloudflare relay.
+// Build 266: authenticated OpenRouter relay with free key verification and safe provider diagnostics.
 // Secrets: OPENROUTER_API_KEY, QA_ACCESS_TOKEN; var: ALLOWED_ORIGIN.
 // NEVER put the OpenRouter key in GitHub, browser JS, or a project checkpoint.
 const MODELS=new Set([
@@ -30,6 +30,25 @@ function cors(origin,allowed){
 function respond(obj,status,headers={}){
  return new Response(JSON.stringify(obj),{status,headers:{"Content-Type":"application/json","Cache-Control":"no-store",...headers}});
 }
+function safeErrorType(data){
+ const type=data?.error?.metadata?.error_type;
+ return typeof type==="string"&&/^[a-z_]{1,64}$/.test(type)?type:null;
+}
+function upstreamError(code,data,headers){
+ const errorByStatus={
+  400:"OpenRouter rejected the request parameters.",
+  401:"OpenRouter rejected the API key.",
+  402:"OpenRouter reports insufficient credits or a spending limit.",
+  403:"OpenRouter blocked the request due to permissions or guardrails.",
+  404:"The model or provider route was not found.",
+  408:"OpenRouter timed out.",
+  429:"OpenRouter rate limit reached.",
+  502:"The model provider failed to respond correctly.",
+  503:"No model provider meets the privacy and parameter restrictions."
+ };
+ return respond({error:errorByStatus[code]||"OpenRouter could not complete the request.",
+   upstreamStatus:code,errorType:safeErrorType(data)},502,headers);
+}
 async function sameSecret(a,b){
  if(!a||!b)return false;
  const enc=new TextEncoder();
@@ -43,19 +62,37 @@ export default {
  async fetch(request,env){
    const url=new URL(request.url);
    if(url.pathname==="/health" && request.method==="GET")
-     return respond({ok:true,service:"ocr-ai-qa-relay",version:264},200);
+     return respond({ok:true,service:"ocr-ai-qa-relay",version:266},200);
    const origin=request.headers.get("Origin")||"";
    const allowed=env.ALLOWED_ORIGIN||"";
    const headers=cors(origin,allowed);
    if(!origin||origin!==allowed)return respond({error:"This origin is not allowed."},403);
    if(request.method==="OPTIONS")return new Response(null,{status:204,headers});
-   if(url.pathname!=="/qa"||request.method!=="POST")
+   if(!["/qa","/key-check"].includes(url.pathname)||request.method!=="POST")
      return respond({error:"Not found."},404,headers);
    if(!env.OPENROUTER_API_KEY||!env.QA_ACCESS_TOKEN)
      return respond({error:"Relay secrets are not configured."},503,headers);
    const provided=request.headers.get("X-QA-Token")||"";
    if(!await sameSecret(provided,env.QA_ACCESS_TOKEN))
      return respond({error:"Unauthorized."},401,headers);
+   if(url.pathname==="/key-check"){
+     // No book pages, OCR snippets or paid generation is sent during this check.
+     try{
+       const check=await fetch("https://openrouter.ai/api/v1/key",{
+         method:"GET",headers:{"Authorization":"Bearer "+env.OPENROUTER_API_KEY}
+       });
+       if(!check.ok)return upstreamError(check.status,null,headers);
+       const data=await check.json();
+       if(!data?.data||typeof data.data!=="object")
+         return respond({error:"Unexpected OpenRouter key-check response."},502,headers);
+       const remain=data.data.limit_remaining;
+       return respond({ok:true,keyAuthenticated:true,
+         limitRemaining:typeof remain==="number"&&Number.isFinite(remain)?remain:null,
+         note:"Key authenticated. This does not confirm account balance, model routing, or future charges."},200,headers);
+     }catch{
+       return respond({error:"Could not contact OpenRouter for the free key check."},502,headers);
+     }
+   }
    const max=5_500_000;
    if(Number(request.headers.get("Content-Length")||0)>max)
      return respond({error:"Page payload too large."},413,headers);
@@ -100,9 +137,13 @@ export default {
      });
      if(!response.ok){
        // Avoid returning request data, credentials, or provider response bodies.
-       return respond({error:"OpenRouter request failed.",status:response.status},502,headers);
+       let errData=null;
+       try{errData=await response.json();}catch{}
+       return upstreamError(response.status,errData,headers);
      }
      const data=await response.json();
+     // Providers may fail after the HTTP 200 response starts.
+     if(data?.error)return upstreamError(Number(data.error.code)||502,data,headers);
      let content=data?.choices?.[0]?.message?.content;
      if(Array.isArray(content))content=content.filter(x=>x.type==="text").map(x=>x.text||"").join("");
      const parsed=JSON.parse(content);
