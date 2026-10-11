@@ -58,7 +58,8 @@ for(const id of ["qaBakeoffBlind","qaBakeoffGold","qaBakeoffModel","qaBakeoffEnd
  assert.ok(html.includes('id="'+id+'"'),"Missing UI "+id);
 assert.ok(html.includes("qa-bakeoff-core.js?v=264")&&html.includes("qa-bakeoff-ui.js?v=266"));
 assert.ok(sw.includes("qa-bakeoff-core.js?v=264")&&sw.includes("qa-bakeoff-ui.js?v=266"));
-assert.ok(script.includes('const BUILD_VERSION = "266"'));
+const appVersion=script.match(/const BUILD_VERSION = "([0-9]+)"/);
+assert.ok(appVersion&&Number(appVersion[1])>=266,"Build 266 bake-off requirements survive later releases");
 assert.ok(worker.includes('env.OPENROUTER_API_KEY'));
 assert.ok(worker.includes('env.QA_ACCESS_TOKEN'));
 assert.ok(worker.includes('url.pathname==="/key-check"'), "Authenticated key-check route must exist");
