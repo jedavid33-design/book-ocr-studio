@@ -69,8 +69,10 @@ for(const id of ["qaQueueRun","qaQueueNext","qaQueueFilter","qaQueueSort","qaQue
  assert.ok(index.includes('id="'+id+'"'),"missing UI "+id);
 assert.ok(index.includes('prioritized-qa-queue.js?v=263'));
 assert.ok(sw.includes("./prioritized-qa-queue.js?v=263"));
-assert.ok(loader.includes("script.js?v=263"));
-assert.ok(script.includes('const BUILD_VERSION = "263"'));
+const loaderBuild=loader.match(/script\.js\?v=([0-9]+)/);
+assert.ok(loaderBuild&&Number(loaderBuild[1])>=263,"Priority QA needs loader Build 263+");
+const runningBuild=script.match(/const BUILD_VERSION = "([0-9]+)"/);
+assert.ok(runningBuild&&Number(runningBuild[1])>=263,"Priority QA needs Build 263+");
 assert.ok(script.includes('window.OcrPrioritizedQaQueue.build('));
 assert.ok(script.includes('suppressQaApproved:true,respectIgnored:true'),"avoid resurfacing approved Polish flags");
 assert.ok(script.includes('maxFindings:20000,maxPerPage:500'),"aggregate broad whole-book word coverage");
