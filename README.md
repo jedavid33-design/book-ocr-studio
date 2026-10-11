@@ -1,6 +1,16 @@
 # Book OCR Studio 2.7.2
 
-Current production build: **256**.
+Current production build: **257**.
+
+## Build 257: Source-approved illustrated scene breaks
+- **Book info → Illustrated scene breaks** contains a reusable on-device ornament library. Add a tightly cropped PNG/JPG/WebP or crop directly from an *attached source screenshot* using a finger/mouse rectangle and a source page number. The original source screenshot is never changed.
+- Artwork is stored as a resized PNG (up to 900×500 pixels, under 800 KB) in an independent local IndexedDB library. It remains available when starting another book **in the same browser**. Each project's selected artwork is separately snapshotted into the OCR project checkpoint and portable OCR backup, so restoring a project doesn't depend on the local library entry.
+- Selecting artwork does **not** alter the book. Check **Use this ornament on all confirmed `* * *` scene breaks** and approve the confirmation before it is applied. This is a book-wide choice for books using the *same illustration on all dividers*. Books with different ornaments can leave other dividers as the existing plain symbols until a future per-divider feature.
+- On export, the single approved PNG is embedded once at `EPUB/images/scene-ornament.png` with a proper OPF manifest image entry, and eligible scene-break paragraphs display it at reflowable reader-friendly dimensions. They retain `data-opal-scene-break="true"`, allowing Opal Reader 1.4.90+ to pause at the image without reading it aloud. Disabled artwork leaves the existing semantic `* * *` text unchanged.
+- Only canonical standalone paragraph dividers are candidates. Uncertain OCR blobs, decorative image fragments and prose aren't automatically converted into scene breaks; explicit visual QA remains required. The authorial text, italics, chapter labels, message bubbles, and Chapter POV narrators are never rewritten by this feature.
+- **Kindle Ready** reports and blocks invalid/missing enabled artwork, and direct EPUB export enforces the same validation. Screenshot/PNG evidence remains source-authoritative.
+- **Regression tests:** `node tests/scene-ornaments.test.js`, `node tests/message-bubbles.test.js` and `node tests/reader-ready-export.test.js`.
+- No Cloudflare Worker. No re-OCR. Existing EPUBs and original screenshots are not mutated. On-device visual verification in Apple Books/Reader remains required before a book is signed off.
 
 ## Build 256: Reviewed message bubbles
 - Review any OCR page and expand **Text bubbles** beneath the source screenshot/editor. Only likely messages are shown initially; toggle **Show every paragraph** for unusual message layouts.
