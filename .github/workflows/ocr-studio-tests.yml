@@ -15,6 +15,7 @@ jobs:
         run: |
           node --check script.js
           node --check chapter-opening-audit.js
+          node --check word-boundary-audit.js
           node --check message-bubbles.js
           node --check scene-ornaments.js
       - name: Run production regression fixtures
@@ -23,3 +24,4 @@ jobs:
           node tests/message-bubbles.test.js
           node tests/scene-ornaments.test.js
           node tests/chapter-opening-audit.test.js
+          node tests/word-boundary-audit.test.js
