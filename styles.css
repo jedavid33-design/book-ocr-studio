@@ -1257,3 +1257,17 @@ select{width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid var(-
 .qa-bakeoff-metrics small{color:var(--muted)}
 .qa-bakeoff-warning{color:#8d342a;font-weight:650}
 .qa-bakeoff-import-label{cursor:pointer}
+
+/* Build 267: review-page controls stay sticky ONLY inside the page editor area.
+   Previous placement let the bar cover audits and the AI results above the editor. */
+.review-working-area{position:relative;isolation:isolate;min-width:0}
+.qa-queue-actions{display:flex;flex:0 0 auto;flex-direction:column;align-items:stretch;gap:6px}
+.qa-queue-actions>.button{width:138px;max-width:100%;white-space:normal}
+.qa-inspection-label{font-weight:700;margin-bottom:6px}
+.qa-queue-row{align-items:flex-start}
+.qa-queue-body{flex:1}
+@media(max-width:600px){
+ .qa-queue-row{flex-direction:column;align-items:stretch}
+ .qa-queue-actions{flex-direction:row;flex-wrap:wrap}
+ .qa-queue-actions>.button{flex:1 1 125px;width:auto}
+}
