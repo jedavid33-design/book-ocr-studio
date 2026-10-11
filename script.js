@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "256";
+  const BUILD_VERSION = "257";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -13,6 +13,8 @@
     pages: [],
     coverFile: null,
     coverUrl: "",
+    sceneOrnament: null,
+    useSceneOrnament: false,
     paddle: null,
     stopRequested: false,
     batchRunning: false,
@@ -64,6 +66,7 @@
     tesseractWorker: null,
   };
 
+  let sceneArtUI = null;
   let PaddleOCRClass = null;
   let paddleModulePromise = null;
   // Build 244 (audit C11): session flag for the one-time imported-EPUB
@@ -124,6 +127,19 @@
     coverInput: $("coverInput"),
     coverPreviewWrap: $("coverPreviewWrap"),
     coverPreview: $("coverPreview"),
+    sceneArtSelect: $("sceneArtSelect"),
+    sceneArtUpload: $("sceneArtUpload"),
+    sceneArtDelete: $("sceneArtDelete"),
+    sceneArtPreviewWrap: $("sceneArtPreviewWrap"),
+    sceneArtPreview: $("sceneArtPreview"),
+    sceneArtPreviewName: $("sceneArtPreviewName"),
+    sceneArtApply: $("sceneArtApply"),
+    sceneArtStatus: $("sceneArtStatus"),
+    sceneArtCropCanvas: $("sceneArtCropCanvas"),
+    sceneArtCropPage: $("sceneArtCropPage"),
+    sceneArtCropLoad: $("sceneArtCropLoad"),
+    sceneArtCropSave: $("sceneArtCropSave"),
+    sceneArtCropHint: $("sceneArtCropHint"),
     imageInput: $("imageInput"),
     fileCount: $("fileCount"),
     clearImages: $("clearImages"),
@@ -507,6 +523,9 @@
         currentPageIndex: state.currentPageIndex,
         bookTitle: els.bookTitle?.value || "",
         bookAuthor: els.bookAuthor?.value || "",
+        sceneOrnament: state.sceneOrnament && window.OcrSceneOrnaments.validate(state.sceneOrnament)
+          ? window.OcrSceneOrnaments.snapshot(state.sceneOrnament) : null,
+        useSceneOrnament: !!state.useSceneOrnament,
         bookLayoutProfile: state.bookLayoutProfile || null,
         repairBookHasRun: !!state.repairBookHasRun,
         finalPolishHasRun: !!state.finalPolishHasRun,
@@ -2693,6 +2712,10 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
     if (Number.isFinite(saved.cropBottom)) els.cropBottom.value = saved.cropBottom;
     if (Number.isFinite(saved.cropSides)) els.cropSides.value = saved.cropSides;
     cropPreflight.restore(saved);
+    state.sceneOrnament = window.OcrSceneOrnaments.validate(saved.sceneOrnament)
+      ? window.OcrSceneOrnaments.snapshot(saved.sceneOrnament) : null;
+    state.useSceneOrnament = !!(state.sceneOrnament && saved.useSceneOrnament);
+    sceneArtUI?.sync();
     if (typeof saved.sourceProfile === "string") {
       state.sourceProfile = saved.sourceProfile;
       if (els.sourceProfile) els.sourceProfile.value = saved.sourceProfile;
@@ -11057,7 +11080,7 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
         ? `${openItalic} semantic italic run${openItalic===1?"":"s"} will export as <em>.`
         : `Italic markers are unbalanced (${openItalic} opens / ${closeItalic} closes).`);
 
-    const sceneBreaks = state.pages.reduce((n, p) => n + ((String(p.text || "").match(/^\s*\* \* \*\s*$/gm) || []).length), 0);
+    const sceneBreaks = window.OcrSceneOrnaments.sceneCount(state.pages);
     const bubbles = state.pages.map((page,index) =>
       ({index, report:window.OcrMessageBubbles.validate(page)}));
     const staleBubbles = bubbles.reduce((n,x) => n + x.report.stale.length, 0);
@@ -11071,6 +11094,17 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
 
     add("Scene breaks", "pass",
       sceneBreaks ? `${sceneBreaks} semantic scene break${sceneBreaks===1?"":"s"} will export as visible EPUB separators and nonspoken Opal Reader pause markers.` : "No semantic scene breaks are present in this batch.");
+
+    const ornamentValid = window.OcrSceneOrnaments.validate(state.sceneOrnament);
+    const ornamentCount = state.useSceneOrnament && ornamentValid ? sceneBreaks : 0;
+    add("Illustrated scene breaks", state.useSceneOrnament && (!ornamentValid || !sceneBreaks) ? "fail" : "pass",
+      state.useSceneOrnament && !ornamentValid
+        ? "Scene artwork is enabled, but the saved PNG is invalid. Re-select a library illustration."
+        : state.useSceneOrnament && !sceneBreaks
+          ? "Scene artwork is enabled, but there are no canonical * * * breaks. Review the scene dividers before export."
+          : ornamentCount
+            ? `${ornamentCount} verified semantic divider${ornamentCount===1?"":"s"} will display “${state.sceneOrnament.name}” while preserving Reader pause markers.`
+            : "Scene artwork disabled. Ordinary * * * separators remain unchanged.");
 
     add("Kindle-safe structure", "pass",
       "Exporter uses a reflowable EPUB 3 package with nav.xhtml, ordered spine entries, semantic paragraphs/emphasis, and simple relative CSS suitable for Send to Kindle.");
@@ -11128,6 +11162,10 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
       window.OcrMessageBubbles.validate(page).stale.length ? [index + 1] : []);
     if (invalidMessagePages.length) throw new Error(
       `Re-review text bubbles on page${invalidMessagePages.length===1?"":"s"} ${invalidMessagePages.join(", ")}. Saved bubble marks no longer match the current OCR wording.`);
+    if (state.useSceneOrnament && !window.OcrSceneOrnaments.validate(state.sceneOrnament))
+      throw new Error("Selected scene artwork is invalid or unavailable. Re-select an approved illustration.");
+    if (state.useSceneOrnament && !window.OcrSceneOrnaments.sceneCount(state.pages))
+      throw new Error("Scene artwork is enabled, but there are no confirmed * * * dividers to illustrate.");
     if (!state.pages.some(p => normalizedPageText(p.text))) throw new Error("There is no OCR text to export.");
 
     const title = (els.bookTitle.value || "Untitled Book").trim();
@@ -11136,6 +11174,8 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
     const identifier = `urn:uuid:${crypto.randomUUID ? crypto.randomUUID() : Date.now()}`;
     const modified = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
     const sections = chapterSections();
+    const renderSceneArtwork = !!(state.useSceneOrnament && state.sceneOrnament);
+    const sceneArtworkPath = "images/scene-ornament.png";
 
     const zip = new JSZip();
     zip.file("mimetype", "application/epub+zip", { compression: "STORE" });
@@ -11170,12 +11210,20 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
     ];
     const spine = ['    <itemref idref="title-page"/>'];
     const navItems = [];
+    if (renderSceneArtwork) {
+      zip.file("EPUB/"+sceneArtworkPath, window.OcrSceneOrnaments.bytes(state.sceneOrnament));
+      manifest.push('    <item id="scene-ornament" href="'+sceneArtworkPath+'" media-type="image/png"/>');
+    }
 
     sections.forEach((section, sectionIndex) => {
       const fileName = `chapter-${String(sectionIndex + 1).padStart(3, "0")}.xhtml`;
       const itemId = `chapter-${sectionIndex + 1}`;
       const bodyParagraphs = sectionParagraphs(section).map(({ text, pageIndex, paragraphIndex, side, speakerLabel }) => {
-        if (String(text || "").trim() === "* * *") return `<p id="p-${pageIndex + 1}-${paragraphIndex + 1}" class="scene-break" data-opal-scene-break="true">* * *</p>`;
+        if (String(text || "").trim() === "* * *") {
+          return renderSceneArtwork
+            ? `<p id="p-${pageIndex + 1}-${paragraphIndex + 1}" class="scene-break illustrated" data-opal-scene-break="true"><img src="${sceneArtworkPath}" alt="" role="presentation"/></p>`
+            : `<p id="p-${pageIndex + 1}-${paragraphIndex + 1}" class="scene-break" data-opal-scene-break="true">* * *</p>`;
+        }
         const html = paragraphToEpubHtml(text);
         if (side === "incoming" || side === "outgoing") {
           const sender = speakerLabel ? `<span class="message-sender" data-opal-narration="skip">${escapeXml(speakerLabel)}</span>` : "";
@@ -11273,6 +11321,14 @@ em{
   text-align:center;
   text-indent:0;
   margin:1.5em 0;
+}
+.scene-break.illustrated img{
+  display:inline-block;
+  width:auto;
+  height:auto;
+  max-width:72%;
+  max-height:6em;
+  vertical-align:middle;
 }
 .message-group{
   display:table;
@@ -11524,6 +11580,9 @@ ${coverSpine}${spine.join("\n")}
         state.typographyUncertainPosition = 0;
         state.files = selected;
         state.pages = [];
+        state.sceneOrnament = null;
+        state.useSceneOrnament = false;
+        sceneArtUI?.sync();
         cropPreflight.onNewBatch();
         state.currentPageIndex = -1;
         state.guidedRepairChapterIndex = 0;
@@ -11578,6 +11637,9 @@ ${coverSpine}${spine.join("\n")}
     state.ignoredFinalPolishIssues = new Set();
     state.files = selected;
     state.pages = [];
+    state.sceneOrnament = null;
+    state.useSceneOrnament = false;
+    sceneArtUI?.sync();
     cropPreflight.onNewBatch();
     state.currentPageIndex = -1;
     state.cropPreviewIndex = defaultPreviewIndex();
@@ -11615,6 +11677,9 @@ ${coverSpine}${spine.join("\n")}
     await clearCheckpoint();
     state.files = [];
     state.pages = [];
+    state.sceneOrnament = null;
+    state.useSceneOrnament = false;
+    sceneArtUI?.sync();
     cropPreflight.onNewBatch();
     state.currentPageIndex = -1;
     state.repairBookHasRun = false;
@@ -12782,6 +12847,9 @@ ${coverSpine}${spine.join("\n")}
       note:"Build 156 laboratory repair. heldOutValidation is the honest baseline. trainingSetReplayDiagnostics is deliberately separated and labeled as optimistic historical replay. No detector was added and no labels or OCR results were reset."};
     downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),`italic-held-out-validation-v${BUILD_VERSION}.json`);
     setStatus(`Exported honest held-out italic baseline for build ${BUILD_VERSION}. Send back italic-held-out-validation-v${BUILD_VERSION}.json.`);
+  });
+  sceneArtUI = window.OcrSceneOrnaments.controller({
+    state,els,sourceFilesAttached,loadImageFromFile,saveCheckpoint
   });
   restoreLatestProjectWithoutSources()
     .then(restored => {
