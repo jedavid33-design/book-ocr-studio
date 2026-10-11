@@ -1,6 +1,13 @@
 # Book OCR Studio 2.7.2
 
-Current production build: **263**.
+Current production build: **264**.
+
+## Build 264: OpenRouter AI QA audition (pilot only)
+- **Review → AI QA Bake-off** is an opt-in experiment, separate from the real book editor and final export. It accepts a local **blind screenshot/OCR anchors ZIP** and local **private answer-key ZIP**, and runs up to three pages per explicit paid API confirmation using a private Cloudflare Worker configured separately by the owner. All correction scoring stays on the device; the polished EPUB and gold answer key are never sent to OpenRouter.
+- A secure, stateless `cloudflare/openrouter-qa-relay.js` accepts only authenticated, size-limited image+OCR-anchor requests for three allowed model IDs. The OpenRouter key must be set as a **Worker secret**, never pasted into Studio or committed to GitHub; a separate Worker access token is entered for the session. Data-collection-deny, ZDR and structured response requirements are enforced; incompatible providers are rejected.
+- Reports distinguish **substantive OCR fixes**, **typography-only fixes**, and **false edits to unchanged controls**. Partial model results are checkpointed locally after every page and can be exported/re-imported. Model responses are diagnostic only: no auto-import, rewritten book text, or success/verified claim is made.
+- Pilot files: **Pucked Over, Prologue + Chapters 1–4, 41 matched screenshots (cover excluded)**, 894 source OCR snippets/controls. Benchmark is *anchor based*, not whole-page QA; even perfect scores will not establish 100% visual QA.
+- See [AI_QA_BAKEOFF_SETUP.md](AI_QA_BAKEOFF_SETUP.md) for setup, privacy, limits, and model comparison process. Source ZIPs and private corrected book data are NOT tracked in this repository. Loader 264 / CSS 70 / offline shell v90; 10 regression suites.
 
 ## Build 263: Prioritized QA inspection queue
 - Under **Review → Prioritized QA Review**, choose **Build priority queue** to sort the processed screenshot pages by existing audit evidence. **High attention** includes blank OCR pages, unresolved source-backed drop-cap concerns, stale approved text-bubble anchors, suspicious chapter openings and unconfirmed decorative dividers. **Review suggested** includes other chapter/POV, paragraph, text-boundary and unresolved typography warnings. **No patterns flagged** is a neutral category, *not* proof of completed visual QA.
