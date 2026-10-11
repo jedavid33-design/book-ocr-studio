@@ -24,6 +24,9 @@
   function repair(input) {
     let text=String(input??"");
     const changes=[];
+    // This stage is only for raw OCR. If it is accidentally handed already
+    // formatted/QA text, bail out rather than rewrite an approved italic span.
+    if(/\[\[\/?i\]\]/i.test(text))return {text,changed:0,changes};
     for(const rule of RULES){
       const regex=new RegExp(rule.pattern.source,rule.pattern.flags);
       text=text.replace(regex,(match,...args)=>{
