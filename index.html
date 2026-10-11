@@ -13,7 +13,7 @@
 <link href="manifest.webmanifest" rel="manifest"/>
 <link href="apple-touch-icon.png" rel="apple-touch-icon"/>
 <link href="icon-192.png" rel="icon" sizes="192x192" type="image/png"/>
-<link href="styles.css?v=64" rel="stylesheet"/>
+<link href="styles.css?v=65" rel="stylesheet"/>
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
 </head>
 <body>
@@ -236,6 +236,15 @@
 <div class="actions"><button class="button secondary" id="runChapterAudit" type="button">Scan chapter openings</button><span class="progress-pill" id="chapterAuditStatus">Not scanned</span></div>
 <div id="chapterAuditResults" class="hidden" aria-live="polite"></div>
 </details>
+<details class="word-audit-panel"><summary>Residual word-boundary review</summary>
+<p class="hint">Find possible OCR split and joined words remaining in the corrected text. This is a separate advisory audit, not an automatic repair.</p>
+<div class="actions">
+<button class="button secondary" id="runWordAudit" type="button">Scan word boundaries</button>
+<button class="button ghost" id="downloadWordAudit" type="button" disabled>Export findings JSON</button>
+<span class="progress-pill" id="wordAuditStatus">Not scanned</span>
+</div>
+<div id="wordAuditResults" class="hidden" aria-live="polite"></div>
+</details>
 <div class="review-list" id="reviewList"></div>
 <div class="nav-row">
 <button class="button ghost" disabled="" id="prevPageBtn" type="button">Previous page</button>
@@ -416,7 +425,8 @@
 <script src="message-bubbles.js?v=256"></script>
 <script src="scene-ornaments.js?v=257"></script>
 <script src="chapter-opening-audit.js?v=258"></script>
-<script src="script-loader.js?v=258"></script>
+<script src="word-boundary-audit.js?v=259"></script>
+<script src="script-loader.js?v=259"></script>
 <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
