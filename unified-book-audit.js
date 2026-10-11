@@ -48,8 +48,8 @@
       format:"book-ocr-studio-unified-audit-v1",stage,
       scannedPages:source.length,pagesWithText:complete,
       summary:{reviewLeads,shownLeads:groups.reduce((sum,g)=>sum+g.items.length,0),
-        exportBlockers:stage==="afterQa"?blockers.length:null,
-        exportWarnings:stage==="afterQa"?warnings.length:null,
+        exportBlockers:stage==="afterQa"&&preflightReport?blockers.length:null,
+        exportWarnings:stage==="afterQa"&&preflightReport?warnings.length:null,
         exportReady:stage==="afterQa"&&preflightReport?blockers.length===0:null},
       groups,preflightChecks,
       notes:[
