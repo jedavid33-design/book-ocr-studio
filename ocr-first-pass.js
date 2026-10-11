@@ -10,7 +10,7 @@
         return candidates[left.toLowerCase()]===right.toLowerCase()
           ? left+right.toLowerCase():null;
       }},
-    {id:"exact-split-ligature",pattern:/\b(fi)[ \t]+(rst|nally)\b|\b(fl)[ \t]+(owers|oor)\b/g,
+    {id:"exact-split-ligature",pattern:/\b([Ff]i)[ \t]+(rst|nally)\b|\b([Ff]l)[ \t]+(owers|oor)\b/g,
       replacement(parts){
         const [a,b,c,d]=parts;
         const left=a||c,right=b||d;
