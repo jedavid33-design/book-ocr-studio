@@ -53,10 +53,16 @@
       label: useLabel && row.label ? row.label : ""});
     return next;
   }
+  function labeledSuggestions(report, chapterPov) {
+    const narrator = String(chapterPov || "").trim().toUpperCase();
+    if (!narrator) return [];
+    return (report?.rows || []).filter(row => row.suggested && row.label && !row.side)
+      .map(row => ({row,side:row.label.toUpperCase() === narrator ? "outgoing" : "incoming"}));
+  }
   function validate(page) {
     return rows(page?.text || "",page?.messageBubbles);
   }
-  const api=Object.freeze({paragraphs,speakerLabel,rows,setAnnotation,validate});
+  const api=Object.freeze({paragraphs,speakerLabel,rows,setAnnotation,validate,labeledSuggestions});
   if(typeof module !== "undefined" && module.exports)module.exports=api;
   if(typeof globalThis !== "undefined")globalThis.OcrMessageBubbles=api;
 })();
