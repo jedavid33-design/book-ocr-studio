@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "260";
+  const BUILD_VERSION = "261";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -4461,6 +4461,25 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
     }
     title.append(left);
 
+    // Build 261: small source-checkable ledger for OCR-era safe fixes.
+    // It is metadata only. Inspecting the list cannot change approved text.
+    let firstPassLedger=null;
+    const firstPass=page.layoutMeta?.ocrFirstPass;
+    if(Array.isArray(firstPass?.changes) && firstPass.changes.length){
+      firstPassLedger=document.createElement("details");
+      firstPassLedger.className="ocr-first-pass-ledger";
+      const summary=document.createElement("summary");
+      summary.textContent=firstPass.changes.length+
+        " first-pass OCR correction"+(firstPass.changes.length===1?"":"s")+" · verify against screenshot";
+      firstPassLedger.appendChild(summary);
+      for(const change of firstPass.changes){
+        const row=document.createElement("div");
+        row.className="ocr-first-pass-change";
+        row.textContent=change.before+" → "+change.after+" · "+change.rule;
+        firstPassLedger.appendChild(row);
+      }
+    }
+
     const chapterControls = document.createElement("div");
     chapterControls.className = "chapter-controls";
 
@@ -4655,7 +4674,9 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
     text.addEventListener("change", () => { if (messageReview.open) refreshBubbleReview(); });
     refreshBubbleReview();
     body.append(sourceView, text);
-    item.append(title, chapterControls, body, messageReview);
+    item.append(title);
+    if(firstPassLedger)item.appendChild(firstPassLedger);
+    item.append(chapterControls, body, messageReview);
     els.reviewList.appendChild(item);
 
     updateNavigationControls();
@@ -5213,7 +5234,14 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
       const img = await loadImageFromFile(file);
       const canvas = makeCroppedCanvas(img,index);
       const paddleResult = await paddleRecognizeCanvas(canvas, { messageMode: false });
-      const text = cleanBodyText(paddleResult.text || "");
+      const rawRecognizedText = cleanBodyText(paddleResult.text || "");
+      // Only new OCR pages receive first-pass cleanup. Existing projects,
+      // QA imports, repaired pages and previously processed/re-OCRed pages
+      // never get silently rewritten by this new feature.
+      const firstPass = index >= state.pages.length
+        ? window.OcrFirstPassRepair.repair(rawRecognizedText)
+        : {text:rawRecognizedText,changed:0,changes:[]};
+      const text = firstPass.text;
       const tesseractEvidence = await captureTesseractEvidence(canvas,index);
       const isChapter = chapterHeuristic(text);
       const rememberedChapter = rememberedChapterFor(file, index);
@@ -5228,7 +5256,12 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
         chapterPov: rememberedChapter?.chapterPov || "",
         layoutLines: paddleResult.layoutLines || [],
         rawOcrItems: normalizePaddleItems(paddleResult.result?.items),
-        layoutMeta: paddleResult.layoutMeta || null,
+        layoutMeta: {
+          ...(paddleResult.layoutMeta || {}),
+          ...(firstPass.changed ? {ocrFirstPass:{
+            build:BUILD_VERSION,changes:firstPass.changes,changed:firstPass.changed
+          }} : {})
+        },
         tesseractEvidence,
       };
 
@@ -5250,7 +5283,8 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
       const pct = Math.round(((index + 1) / state.files.length) * 100);
       els.progressBar.value = pct;
       els.progressPercent.textContent = `${pct}%`;
-      if (!batch) setStatus(`Finished page ${index + 1} of ${state.files.length}.`);
+      if (!batch) setStatus(`Finished page ${index + 1} of ${state.files.length}.`+
+        (firstPass.changed ? ` ${firstPass.changed} high-confidence OCR spacing/word fix${firstPass.changed===1?"":"es"} applied before QA (see Review for the change log).` : ""));
     } catch (err) {
       console.error(err);
       saveCheckpoint();
