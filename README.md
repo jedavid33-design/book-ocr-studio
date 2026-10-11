@@ -1,6 +1,11 @@
 # Book OCR Studio 2.7.2
 
-Current production build: **265**.
+Current production build: **266**.
+
+## Build 266: Free credential check + provider error diagnosis
+- **Review → AI QA Bake-off → Check OpenRouter key · No charge** calls the authenticated Cloudflare relay's `/key-check` route, which only GETs OpenRouter's `/api/v1/key`. It does not transmit OCR, upload screenshots, generate tokens, or run paid model requests. Shows confirmation and any returned per-key remaining limit (not necessarily account credit).
+- The Worker now reports **sanitized upstream HTTP status and error type** for failed model requests (e.g., invalid API key, insufficient credits, provider routing constraints), without returning raw third-party messages or private page data. Studio displays the upstream status and preserves the result. **The Cloudflare Worker must be manually updated from the latest GitHub file and deployed**; pushing Studio code alone will not update the owner-managed Worker.
+- Default privacy restrictions remain unchanged: ZDR, data collection denied, all requested parameters required, exact origin, password protection. Browser cache v92 / loader 266. Existing failed calls remain recorded but do not count as completed pages.
 
 ## Build 265: AI QA first-run error visibility
 - A failed paid OpenRouter request now **keeps its failure reason** on screen instead of replacing it with a misleading “0 pages completed” message. Prior failed attempts from the browser's saved benchmark state now show the most recent page and error, plus HTTP status when available. This is a Studio-only UI change and **does not require Cloudflare Worker redeployment**, does not retry requests, and does not spend credits. Shell cache v91 and Build 265 loader ensure iOS refreshes the diagnostic script.
