@@ -1149,3 +1149,14 @@ select{width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid var(-
 .scene-crop-controls input{width:100%;min-width:0;}
 #sceneArtCropCanvas{display:block;max-width:100%;height:auto;margin:10px auto;border:1px solid var(--line);border-radius:10px;touch-action:none;cursor:crosshair;background:#fafafa;}
 #sceneArtCropSave{margin:8px 0;}
+
+/* Build 258: compact read-only chapter audit; screenshots remain authoritative. */
+.chapter-audit-panel {border:1px solid var(--line);border-radius:14px;padding:12px;margin:10px 0;background:rgba(255,255,255,.55)}
+.chapter-audit-panel>summary {cursor:pointer;font-weight:700}
+.chapter-audit-panel .actions {display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:10px 0}
+.chapter-audit-list {max-height:520px;overflow:auto;margin-top:10px}
+.chapter-audit-row {display:flex;align-items:flex-start;gap:12px;padding:10px 0;border-bottom:1px solid var(--line)}
+.chapter-audit-row>.button {flex:none}
+.chapter-audit-row>div {min-width:0;overflow-wrap:anywhere}
+.chapter-audit-detail {margin:4px 0;line-height:1.4}
+.chapter-audit-row small {display:block;color:var(--muted);white-space:normal;overflow-wrap:anywhere}
