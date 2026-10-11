@@ -1,4 +1,4 @@
-const CACHE_NAME = "book-ocr-studio-shell-v94";
+const CACHE_NAME = "book-ocr-studio-shell-v95";
 const APP_SHELL = [
   "./styles.css?v=71",
   "./epub-polish.js?v=58",
@@ -9,6 +9,7 @@ const APP_SHELL = [
   "./word-boundary-audit.js?v=259",
   "./unified-book-audit.js?v=260",
   "./ocr-first-pass.js?v=261",
+  "./ocr-hyphen-guard.js?v=268",
   "./epub-visual-preview.js?v=262",
   "./prioritized-qa-queue.js?v=263",
   "./qa-review-inspection.js?v=267",

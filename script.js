@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "267";
+  const BUILD_VERSION = "268";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -3113,7 +3113,11 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
       if (!text) continue;
       if (!out) { out = text; continue; }
       if (/[A-Za-z]{2,}-$/.test(out) && /^[a-z]/.test(text)) {
-        out = out.slice(0, -1) + text;
+        // Pucked Over source QA confirmed a small set of real compound hyphens
+        // lost by unconditional line-wrap dehyphenation. Retain only exact
+        // source-verified compounds; leave all other joins unchanged.
+        const keepPrintedHyphen = window.OcrHyphenGuard?.shouldPreserveHyphen?.(out, text) === true;
+        out = (keepPrintedHyphen ? out : out.slice(0, -1)) + text;
       } else {
         out += ` ${text}`;
       }

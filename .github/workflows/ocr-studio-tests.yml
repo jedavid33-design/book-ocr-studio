@@ -18,6 +18,7 @@ jobs:
           node --check word-boundary-audit.js
           node --check unified-book-audit.js
           node --check ocr-first-pass.js
+          node --check ocr-hyphen-guard.js
           node --check epub-visual-preview.js
           node --check prioritized-qa-queue.js
           node --check qa-review-inspection.js
@@ -39,3 +40,4 @@ jobs:
           node tests/prioritized-qa-queue.test.js
           node tests/qa-review-inspection.test.js
           node tests/qa-bakeoff.test.js
+          node tests/source-verified-hyphen-wrap.test.js
