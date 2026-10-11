@@ -257,6 +257,7 @@
 </div>
 <p class="hint">Models receive one page image and its OCR snippets per request, with no polished EPUB or QA gold data. Worker setup and OpenRouter account are required for paid calls. Privacy routing requires zero data retention and provider data-collection denial. Run only if you are authorized to transmit these pages.</p>
 <div class="actions">
+<button class="button secondary" id="qaBakeoffCheckKey" type="button">Check OpenRouter key · No charge</button>
 <button class="button primary" id="qaBakeoffRun" type="button" disabled>Run next 3 pages · Paid API</button>
 <button class="button ghost" id="qaBakeoffStop" type="button" disabled>Stop after current page</button>
 <button class="button secondary" id="qaBakeoffExport" type="button" disabled>Export results JSON</button>
@@ -531,8 +532,8 @@
 <script src="epub-visual-preview.js?v=262"></script>
 <script src="prioritized-qa-queue.js?v=263"></script>
 <script src="qa-bakeoff-core.js?v=264"></script>
-<script src="qa-bakeoff-ui.js?v=265"></script>
-<script src="script-loader.js?v=265"></script>
+<script src="qa-bakeoff-ui.js?v=266"></script>
+<script src="script-loader.js?v=266"></script>
 <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
