@@ -1195,3 +1195,30 @@ select{width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid var(-
 .ocr-first-pass-ledger{margin:8px 0 12px;padding:8px 12px;border:1px solid var(--line);border-radius:10px;background:rgba(255,255,255,.45)}
 .ocr-first-pass-ledger>summary{font-size:.87rem;font-weight:650;cursor:pointer}
 .ocr-first-pass-change{margin:7px 0;padding:6px 3px;border-top:1px solid var(--line);font-size:.85rem;overflow-wrap:anywhere}
+
+/* Build 262: device-sized preview of actual generated EPUB archive. */
+.epub-preview-launch{margin:12px 0 0;border-top:1px solid var(--line);padding-top:12px}
+.epub-preview-launch .hint{margin:8px 0 0}
+.epub-preview-dialog{box-sizing:border-box;width:min(96vw,1060px);max-width:1060px;height:min(95dvh,1050px);max-height:95dvh;margin:auto;padding:0;border:1px solid var(--line);border-radius:16px;color:var(--text);background:var(--card,#fff)}
+.epub-preview-dialog::backdrop{background:rgba(10,20,37,.7)}
+.epub-preview-shell{height:100%;min-height:0;display:flex;flex-direction:column;padding:14px;gap:10px;box-sizing:border-box}
+.epub-preview-heading{display:flex;justify-content:space-between;gap:10px;align-items:start}
+.epub-preview-heading h2{margin:0 0 6px;font-size:1.2rem}
+.epub-preview-heading .hint{margin:0}
+.epub-preview-controls{display:flex;flex-wrap:wrap;align-items:end;gap:8px}
+.epub-preview-controls label{display:flex;flex-direction:column;gap:3px;font-size:.85rem;font-weight:650}
+.epub-preview-controls select{max-width:min(70vw,290px);min-height:38px}
+.epub-preview-status{font-size:.85rem;margin:0;font-weight:600}
+.epub-preview-frame-wrap{flex:1;min-height:200px;display:flex;align-items:stretch;justify-content:center;background:#e8e9ee;border:1px solid var(--line);border-radius:9px;overflow:auto;padding:10px}
+.epub-preview-frame-wrap iframe{box-sizing:border-box;flex:none;width:360px;max-width:100%;height:100%;min-height:200px;background:#fff;border:1px solid #b5bac1;box-shadow:0 3px 14px rgba(0,0,0,.1);border-radius:4px}
+.epub-preview-metrics{font-size:.83rem;overflow-wrap:anywhere}
+.epub-preview-metrics p{margin:2px 0}
+.epub-preview-warning{color:#99422e;font-weight:650}
+.epub-preview-shell>.hint{margin:0;font-size:.75rem}
+@media(max-width:580px){
+ .epub-preview-dialog{width:100vw;max-width:100vw;height:100dvh;max-height:100dvh;border-radius:0}
+ .epub-preview-shell{padding:10px;gap:8px}
+ .epub-preview-controls{gap:6px}
+ .epub-preview-controls select{font-size:.85rem}
+ .epub-preview-frame-wrap{padding:5px}
+}
