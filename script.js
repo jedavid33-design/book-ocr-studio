@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "259";
+  const BUILD_VERSION = "260";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -205,6 +205,11 @@
     reviewSection: $("reviewSection"),
     reviewList: $("reviewList"),
     reviewProgress: $("reviewProgress"),
+    unifiedAuditAfterOcr: $("unifiedAuditAfterOcr"),
+    unifiedAuditAfterQa: $("unifiedAuditAfterQa"),
+    unifiedAuditExport: $("unifiedAuditExport"),
+    unifiedAuditStatus: $("unifiedAuditStatus"),
+    unifiedAuditResults: $("unifiedAuditResults"),
     runChapterAudit: $("runChapterAudit"),
     chapterAuditStatus: $("chapterAuditStatus"),
     chapterAuditResults: $("chapterAuditResults"),
@@ -4058,6 +4063,8 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
     els.prevPageBtn.disabled = state.processing || !hasCurrent || pos <= 0;
     els.messageOcrBtn.disabled = state.processing || !hasCurrent || !currentHasSource;
     els.pageDropcapBtn.disabled = state.processing || !hasCurrent;
+    if (els.unifiedAuditAfterOcr) els.unifiedAuditAfterOcr.disabled = state.processing || !processed;
+    if (els.unifiedAuditAfterQa) els.unifiedAuditAfterQa.disabled = state.processing || !processed;
     if (els.runChapterAudit) els.runChapterAudit.disabled = state.processing || !processed;
     if (els.runWordAudit) els.runWordAudit.disabled = state.processing || !processed;
     if (els.markItalicBtn) els.markItalicBtn.disabled = state.processing || !hasCurrent;
@@ -4078,6 +4085,198 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
     els.exportSection?.classList[method]("hidden");
   }
 
+
+  // Build 260: independent pre-QA/post-QA scan with canonical read-only preflight.
+  // Review editor changes are saved through the normal input handler, not by
+  // this audit. No scan calls syncCurrentEditor or a repair/export function.
+  let latestUnifiedAudit=null;
+  let unifiedBookIdentity="";
+  let unifiedSnapshots={afterOcr:null,afterQa:null};
+  function unifiedAuditBookKey(){
+    return String(els.bookTitle?.value||"")+"|"+state.pages.length+"|"+
+      state.pages.map(p=>String(p.fileName||p.file?.name||"")).join("|");
+  }
+  function showUnifiedBookAudit(stage) {
+    if(!state.pages.length || state.processing || !window.OcrUnifiedBookAudit ||
+      !window.OcrChapterAudit || !window.OcrWordBoundaryAudit) return;
+    try {
+      const signature=unifiedAuditBookKey();
+      if(signature!==unifiedBookIdentity){
+        unifiedBookIdentity=signature;
+        unifiedSnapshots={afterOcr:null,afterQa:null};
+      }
+      // No write-back even if a browser has not dispatched textarea input yet:
+      // both stages read the current value in the open page as a snapshot.
+      const active=state.currentPageIndex;
+      const textarea=els.reviewList?.querySelector("textarea");
+      const changed=textarea && state.pages[active] && textarea.value!==state.pages[active].text;
+      const pages=state.pages.map((page,i)=>
+        changed && i===active?{...page,text:textarea.value}:page);
+      const chapter=window.OcrChapterAudit.audit(pages);
+      const words=window.OcrWordBoundaryAudit.audit(pages);
+      // Existing full-book Final Polish audit is read-only. Its normal QA
+      // approvals and explicit ignored decisions are respected after QA.
+      const polish=finalPolishAudit({
+        suppressQaApproved:stage==="afterQa",respectIgnored:stage==="afterQa"
+      });
+      // Never run normal Kindle Ready here: that path may project italics
+      // and save pending editor text. This is a non-mutating preflight.
+      const preflight=stage==="afterQa" && !changed
+        ? kindleReadyChecks({readOnly:true}):null;
+      const report=window.OcrUnifiedBookAudit.assemble({
+        stage,pages,chapterReport:chapter,wordReport:words,
+        polishReport:polish,preflightReport:preflight
+      });
+      if(changed && stage==="afterQa"){
+        report.notes.push("Your open editor has unsaved changes. Export blockers were not calculated. Finish or save the edit, then scan again.");
+      }
+      report.bookTitle=String(els.bookTitle?.value||"");
+      report.build=BUILD_VERSION;
+      report.scannedAt=new Date().toISOString();
+      report.exportPreflightEvaluated=stage==="afterQa" && !changed;
+      latestUnifiedAudit=report;
+      unifiedSnapshots[stage]=report;
+      renderUnifiedBookAudit(report);
+      els.unifiedAuditStatus.textContent=(stage==="afterOcr"?"After OCR":"After QA")+
+        " · "+report.summary.reviewLeads+" review"+
+        (report.summary.exportBlockers!==null?" · "+report.summary.exportBlockers+" blockers":"");
+      if(els.unifiedAuditExport)els.unifiedAuditExport.disabled=false;
+      setStatus("Unified "+(stage==="afterOcr"?"after-OCR":"after-QA")+
+        " audit complete. No OCR wording, approved QA, or EPUB output was changed.");
+    }catch(error){
+      console.error("Unified book audit failed",error);
+      if(els.unifiedAuditStatus)els.unifiedAuditStatus.textContent="Scan failed";
+      setStatus("Unified audit could not finish: "+(error?.message||String(error)));
+    }
+  }
+  function renderUnifiedBookAudit(report){
+    const root=els.unifiedAuditResults;
+    if(!root)return;
+    root.replaceChildren();
+    root.classList.remove("hidden");
+    const intro=document.createElement("p");
+    intro.className="hint";
+    intro.textContent=report.stage==="afterOcr"
+      ?"Checkpoint 1: review leads before visual QA. These are NOT export blockers."
+      :"Checkpoint 2: review leads plus existing Kindle Ready statuses. Final Kindle Ready is still the export authority.";
+    root.appendChild(intro);
+    const summary=document.createElement("p");
+    summary.className="unified-audit-summary";
+    const nums=report.summary;
+    summary.textContent=report.scannedPages+" pages scanned · "+nums.reviewLeads+" review leads"+(
+      nums.exportBlockers===null?" · export preflight not run":
+      " · "+nums.exportBlockers+" export blockers · "+nums.exportWarnings+" export notes"
+    );
+    root.appendChild(summary);
+    if(unifiedSnapshots.afterOcr&&unifiedSnapshots.afterQa){
+      const comparison=document.createElement("p");
+      comparison.className="hint";
+      comparison.textContent="Checkpoint comparison: after OCR "+unifiedSnapshots.afterOcr.summary.reviewLeads+
+        " review leads → after QA "+unifiedSnapshots.afterQa.summary.reviewLeads+
+        ". Different scan rules/QA approvals can affect the counts; this is not a verified error-fix total.";
+      root.appendChild(comparison);
+    }
+    if(report.stage==="afterQa"){
+      const ready=document.createElement("div");
+      ready.className="unified-audit-readiness";
+      const heading=document.createElement("strong");
+      heading.textContent=report.exportPreflightEvaluated
+        ? (nums.exportReady?"No export blockers in this read-only preflight":"Export blockers need attention")
+        :"Export blockers not evaluated";
+      ready.appendChild(heading);
+      const preflightGroup=document.createElement("details");
+      preflightGroup.open=!!nums.exportBlockers;
+      const preflightTitle=document.createElement("summary");
+      preflightTitle.textContent="Kindle Ready checks · "+(report.preflightChecks||[]).length;
+      preflightGroup.appendChild(preflightTitle);
+      if(!report.preflightChecks.length){
+        const info=document.createElement("p");
+        info.textContent="Save the current edit, then rescan for a reliable export preflight.";
+        preflightGroup.appendChild(info);
+      }
+      for(const check of report.preflightChecks){
+        if(check.status==="pass")continue;
+        const row=document.createElement("div");
+        row.className="unified-audit-check "+check.status;
+        const name=document.createElement("strong");
+        name.textContent=(check.status==="fail"?"Blocker: ":"Note: ")+check.name;
+        const desc=document.createElement("span");
+        desc.textContent=check.detail||"";
+        row.append(name,desc);
+        preflightGroup.appendChild(row);
+      }
+      ready.appendChild(preflightGroup);
+      root.appendChild(ready);
+    }
+    for(const group of report.groups){
+      const details=document.createElement("details");
+      details.className="unified-audit-group";
+      details.open=(group.id==="chapter"||group.id==="empty")&&group.count>0;
+      const title=document.createElement("summary");
+      title.textContent=group.label+" · "+group.count;
+      details.appendChild(title);
+      if(!group.count){
+        const empty=document.createElement("p");
+        empty.textContent="No matches in this scan.";
+        details.appendChild(empty);
+      }
+      for(const item of group.items){
+        const row=document.createElement("div");
+        row.className="unified-audit-item";
+        if(Number.isInteger(item.pageIndex)&&item.pageIndex>=0&&item.pageIndex<state.pages.length){
+          const link=document.createElement("button");
+          link.type="button";
+          link.className="button secondary compact-button";
+          link.textContent="Page "+(item.pageIndex+1);
+          link.addEventListener("click",()=>{
+            setReviewMode("all");
+            state.currentPageIndex=item.pageIndex;
+            renderReview();
+            els.reviewSection?.scrollIntoView({behavior:"smooth",block:"start"});
+            setStatus("Reviewing unified audit finding on page "+(item.pageIndex+1)+". Verify the source screenshot.");
+          });
+          row.appendChild(link);
+        }
+        const body=document.createElement("div");
+        const label=document.createElement("strong");
+        label.textContent=item.title;
+        const context=document.createElement("p");
+        context.textContent=item.excerpt||"";
+        const detail=document.createElement("small");
+        detail.textContent=item.detail||"";
+        body.append(label);
+        if(context.textContent)body.appendChild(context);
+        body.appendChild(detail);
+        row.appendChild(body);
+        details.appendChild(row);
+      }
+      if(group.count>group.items.length){
+        const omitted=document.createElement("p");
+        omitted.className="hint";
+        omitted.textContent=(group.count-group.items.length)+
+          " additional candidates not shown. The full per-category audit can be run separately.";
+        details.appendChild(omitted);
+      }
+      root.appendChild(details);
+    }
+    const note=document.createElement("p");
+    note.className="hint";
+    note.textContent=report.notes.join(" ");
+    root.appendChild(note);
+  }
+  els.unifiedAuditAfterOcr?.addEventListener("click",()=>showUnifiedBookAudit("afterOcr"));
+  els.unifiedAuditAfterQa?.addEventListener("click",()=>showUnifiedBookAudit("afterQa"));
+  els.unifiedAuditExport?.addEventListener("click",()=>{
+    if(!latestUnifiedAudit)return;
+    const payload={...latestUnifiedAudit,
+      checkpointSummaries:Object.fromEntries(Object.entries(unifiedSnapshots)
+        .filter(([,value])=>value).map(([key,value])=>[key,{
+          scannedAt:value.scannedAt,summary:value.summary
+        }]))};
+    downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),
+      cleanFilename(els.bookTitle?.value||"book")+
+      "-unified-audit-"+latestUnifiedAudit.stage+"-build-"+BUILD_VERSION+".json");
+  });
 
   // Build 258: visible chapter inventory is advisory, never an OCR correction.
   function showChapterOpeningAudit() {
@@ -10917,8 +11116,8 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
     return found;
   }
 
-  function getRepairReviewState() {
-    const pageIndexes = state.guidedRepairMode === "chapter" ? guidedRepairPageIndexes() : null;
+  function getRepairReviewState({wholeBook=false} = {}) {
+    const pageIndexes = !wholeBook && state.guidedRepairMode === "chapter" ? guidedRepairPageIndexes() : null;
     const allowed = pageIndexes ? new Set(pageIndexes) : null;
     const ligatures = collectUncertainLigatures(pageIndexes);
     const dropcaps = (state.dropcapCandidates || []).filter(c =>
@@ -11146,11 +11345,13 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
   }
 
 
-  function kindleReadyChecks() {
-    syncCurrentEditor();
-    // Final authority pass: accepted geometry-derived emphasis must be present
-    // in page.text before preflight counts what the EPUB will serialize.
-    ensureItalicEvidenceProjected();
+  function kindleReadyChecks({readOnly=false} = {}) {
+    if (!readOnly) {
+      syncCurrentEditor();
+      // The normal Kindle Ready path projects accepted italic geometry; audit
+      // snapshots expressly bypass this text-changing path.
+      ensureItalicEvidenceProjected();
+    }
 
     const checks = [];
     const add = (name, status, detail) => checks.push({ name, status, detail });
@@ -11196,7 +11397,9 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
 
     // Repair Book owns repair resolution. Kindle Ready consumes that canonical
     // stage state instead of running a separate repair-discovery/counting path.
-    const repairState = getRepairReviewState();
+    // Export blockers must cover the entire book, even if Guided Repair is
+    // currently scoped to one chapter.
+    const repairState = getRepairReviewState({wholeBook:true});
     const dropcapAudit = state.lastDropcapAudit;
     if (dropcapAudit) {
       const complete = dropcapAudit.evaluated === dropcapAudit.expected && !dropcapAudit.missedPages.length;
