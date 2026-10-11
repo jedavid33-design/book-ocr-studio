@@ -1,6 +1,13 @@
 # Book OCR Studio 2.7.2
 
-Current production build: **257**.
+Current production build: **260**.
+
+## Build 260: Unified Book Audit with two checkpoints
+- In **Review → Unified Book Audit**, choose **1 · Scan after OCR** for a non-mutating, full-book queue of chapter/drop-cap warnings, Final Polish paragraph/punctuation/scene-break candidates, residual word-boundary warnings, and empty-text pages. These are leads for visual QA, not validated defects or EPUB blockers.
+- Run **2 · Scan after QA** on the same project. It reuses those detectors while respecting the existing visual-QA suppression and ignored Final Polish decisions. It also shows the existing Kindle Ready **fail** checks separately as export blockers and **warn** checks as notes. Regular Kindle Ready remains the authoritative pre-export step and its behavior is unchanged.
+- The read-only audit path bypasses the text-synchronizing/italic-projecting side effects of regular Kindle Ready. It scans the current corrected text and never re-runs PaddleOCR, rewrites source pages, saves correction overlays, or changes EPUB output. The after-QA blockers are a snapshot and should be rechecked in Kindle Ready immediately before export.
+- Results include source-page buttons, capped per-group examples with accurate total counts, optional JSON export, and an in-session before/after review-lead comparison (a diagnostic, not an automatic QA completion percentage). These new audits are not export gates, and no Cloudflare Worker is needed.
+- Regression: `node tests/unified-book-audit.test.js`; all six suites run on GitHub Actions. Production loader 260, CSS 66, cache v86.
 
 ## Build 259: Residual OCR word-boundary audit
 - **Review → Residual word-boundary review → Scan word boundaries** scans current saved prose for four *advisory* patterns: split fi/fl ligatures (`fi rst`), whitespace after a line-wrap hyphen (`wait- ing`), common prose prefixes glued to an uppercase word (`thenShe`), and missing whitespace after punctuation (`said,then`).
