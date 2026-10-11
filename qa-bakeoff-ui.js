@@ -87,7 +87,11 @@
   if(obj.errors?.length){
    const err=document.createElement("p");
    err.className="qa-bakeoff-warning";
-   err.textContent=obj.errors.length+" prior failed calls; they do not count as tested pages.";
+   const last=obj.errors[obj.errors.length-1];
+   const suffix=last?.status?" (HTTP "+last.status+")":"";
+   err.textContent=obj.errors.length+" failed call(s). Latest: "+
+     String(last?.pageId||"unknown page")+": "+String(last?.error||"Unknown error")+suffix+
+     ". No pages were credited for failed calls.";
    root.appendChild(err);
   }
  }
@@ -144,6 +148,7 @@
   if(!confirm("Send "+queue.length+" page image(s) and OCR snippets to OpenRouter via your private Worker? "+
     "Requests can incur usage charges. The gold EPUB/answers will NOT be uploaded."))return;
   running=true;stop=false;render();
+  let failed=false;
   try{
    for(let i=0;i<queue.length;i++){
     if(stop)break;
@@ -158,8 +163,10 @@
     if(!resp.ok){
       let explanation="HTTP "+resp.status;
       try{const e=await resp.json();explanation=e.error||explanation;}catch{}
-      obj.errors.push({pageId:page.pageId,error:explanation});
-      persist();setStatus(page.pageId+" failed: "+explanation+". No further paid requests made.");
+      obj.errors.push({pageId:page.pageId,error:explanation,status:resp.status});
+      persist();setStatus(page.pageId+" failed (HTTP "+resp.status+"): "+explanation+
+        ". No further paid requests made.");
+      failed=true;
       break;
     }
     const data=await resp.json();
@@ -180,11 +187,17 @@
     persist();
     render();
    }
-   if(!stop)setStatus(obj.results.length+" pages completed for "+obj.model+
+   if(failed){
+     // Keep the reason for the failed call visible instead of showing a false success.
+   }else if(!stop)setStatus(obj.results.length+" pages completed for "+obj.model+
      ". Export results or run the next three pages.");
    else setStatus("Stopped between requests. Existing page results are preserved locally.");
   }catch(error){
-   setStatus("Model run interrupted: "+error.message+"; completed pages remain in local storage.");
+   const explanation=String(error?.message||"Unknown connection error");
+   obj.errors.push({pageId:queue.find(page=>!obj.results.some(x=>x.pageId===page.pageId))?.pageId||"unknown",
+     error:"Connection interrupted: "+explanation});
+   persist();
+   setStatus("Model run interrupted: "+explanation+"; completed pages remain in local storage.");
   }finally{running=false;render();}
  }
  function exportResults(){
