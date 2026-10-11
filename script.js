@@ -4189,13 +4189,24 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
     messageHint.textContent = "Choose blue (outgoing) or gray (incoming) only after checking the original screenshot. Suggestions are never applied automatically. Styling does not change the book text or narration voice.";
     const bubbleList = document.createElement("div");
     bubbleList.className = "message-review-list";
-    bubbleControls.append(showAllWrap, discardStale, messageHint, bubbleList);
+    const applySuggestions = document.createElement("button");
+    applySuggestions.className = "button secondary compact-button";
+    applySuggestions.type = "button";
+    applySuggestions.textContent = "Mark labeled messages";
+    bubbleControls.append(showAllWrap, applySuggestions, discardStale, messageHint, bubbleList);
     messageReview.append(bubbleSummary, bubbleControls);
     function refreshBubbleReview() {
       page.text = text.value;
       const report = window.OcrMessageBubbles.rows(page.text, page.messageBubbles || []);
       bubbleSummary.textContent = `Text bubbles: ${report.marked} marked · ${report.suggestions} suggestions${report.stale.length ? ` · ${report.stale.length} need re-review` : ""}`;
       discardStale.hidden = !report.stale.length;
+      const currentSection = chapterSections().find(section =>
+        index >= section.start && index < section.end);
+      const suggestions = window.OcrMessageBubbles.labeledSuggestions(report,currentSection?.pov);
+      applySuggestions.disabled = !suggestions.length;
+      applySuggestions.textContent = suggestions.length
+        ? `Mark ${suggestions.length} labeled message${suggestions.length === 1 ? "" : "s"}`
+        : "No labeled suggestions";
       bubbleList.replaceChildren();
       const shown = report.rows.filter(row => showAll.checked || row.suggested || row.side);
       if (report.stale.length) {
@@ -4245,6 +4256,19 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
         bubbleList.append(entry);
       });
     }
+    applySuggestions.addEventListener("click", () => {
+      const report = window.OcrMessageBubbles.rows(text.value, page.messageBubbles || []);
+      const section = chapterSections().find(item => index >= item.start && index < item.end);
+      const suggestions = window.OcrMessageBubbles.labeledSuggestions(report,section?.pov);
+      if (!suggestions.length) return;
+      if (!confirm(`Mark ${suggestions.length} message${suggestions.length===1?"":"s"} using the printed speaker labels and chapter POV? Blue is the chapter narrator, gray is anyone else. Compare the screenshot afterward before exporting.`)) return;
+      for (const item of suggestions) {
+        page.messageBubbles = window.OcrMessageBubbles.setAnnotation(page.messageBubbles || [],
+          item.row,item.side,true);
+      }
+      saveCheckpoint();
+      refreshBubbleReview();
+    });
     showAll.addEventListener("change", refreshBubbleReview);
     discardStale.addEventListener("click", () => {
       const review = window.OcrMessageBubbles.rows(text.value, page.messageBubbles || []);
