@@ -1,6 +1,13 @@
 # Book OCR Studio 2.7.2
 
-Current production build: **262**.
+Current production build: **263**.
+
+## Build 263: Prioritized QA inspection queue
+- Under **Review → Prioritized QA Review**, choose **Build priority queue** to sort the processed screenshot pages by existing audit evidence. **High attention** includes blank OCR pages, unresolved source-backed drop-cap concerns, stale approved text-bubble anchors, suspicious chapter openings and unconfirmed decorative dividers. **Review suggested** includes other chapter/POV, paragraph, text-boundary and unresolved typography warnings. **No patterns flagged** is a neutral category, *not* proof of completed visual QA.
+- Default shows flagged pages in descending importance. Switch to **High attention**, **Every processed page**, or **No patterns flagged**, and select **Most attention first** or **Original page order**. Tap a page to view its source screenshot/text. **Next flagged page** walks the flagged queue. Long lists load 60 at a time.
+- The detector reuses the Build 258 chapter audit, Build 259 word-boundary audit (broader display cap for prioritization), canonical Final Polish with QA approvals and explicit ignored decisions respected, Build 256 bubble validation, pending drop caps and unresolved typography. It does not launch OCR, rewrite saved page text, mark visual QA as complete, or alter EPUB/Kindle Ready export gates.
+- Rankings are an **inspection snapshot**. Manual edits in Review mark it stale; re-run after imported corrections, Guided Repair, Final Polish, or editing. Even pages with zero flags still need the appropriate source-image validation. If the word detector caps its output, a warning says the priorities may be incomplete. No new QA approval or skip-status storage is introduced.
+- Build 263 uses `prioritized-qa-queue.js`, CSS 69, offline shell v89, loader 263, and `node tests/prioritized-qa-queue.test.js` (nine suites in CI). No Cloudflare Worker or re-OCR required.
 
 ## Build 262: Generated EPUB visual preview
 - After **Kindle Ready**, choose **Preview generated EPUB** in section 8. Studio builds its actual screenshot-project EPUB **in memory**, then loads the generated chapter XHTML and `EPUB/style.css` from that ZIP into an isolated, script-disabled iframe. This does not save or download the EPUB, nor edit OCR/QA text. The regular **Download EPUB** path remains unchanged.
