@@ -54,7 +54,7 @@ let downloaded=0;
 const exporter=new Function("state","els","window","JSZip","crypto","syncCurrentEditor",
  "ensureItalicEvidenceProjected","normalizedPageText","cleanFilename","chapterSections",
  "escapeXml","sectionParagraphs","paragraphToEpubHtml","downloadBlob",
- sourceBetween("async function buildEpub()","async function downloadEpub()")+";return buildEpub;");
+ sourceBetween("async function buildEpub(","async function downloadEpub()")+";return buildEpub;");
 const fn=exporter(sourceState,els,{JSZip:Zip,OcrSceneOrnaments:art,
  OcrMessageBubbles:{validate:()=>({stale:[],marked:0})}},Zip,{randomUUID:()=>"uuid-test"},
  ()=>{},()=>{},x=>x,x=>x,section,escapeXml,paragraphs,x=>"<p>"+escapeXml(x)+"</p>",()=>{downloaded++});
