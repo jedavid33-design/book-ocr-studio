@@ -4701,6 +4701,29 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
       left.appendChild(badge);
     }
     title.append(left);
+    // Build 267: a human-controlled source inspection marker at the editor itself.
+    // This never approves QA imports or changes export preflight conditions.
+    const inspectButton=document.createElement("button");
+    inspectButton.type="button";
+    inspectButton.className="button secondary compact-button qa-page-inspected-btn";
+    function refreshInspectButton(){
+      const mode=window.OcrReviewInspection.status(page);
+      inspectButton.textContent=mode==="inspected"?"✓ Inspected · Reopen":
+        mode==="stale"?"Inspection stale · Recheck":"Mark page inspected";
+      inspectButton.disabled=state.processing||(
+        mode!=="inspected"&&!isRealSourceFile(page.file||state.files[index]));
+      inspectButton.title=inspectButton.disabled?
+        "Original screenshot must be reattached before marking an inspection.":
+        "Mark only after personally comparing this page to its screenshot. No QA is auto-approved.";
+    }
+    inspectButton.addEventListener("click",()=>{
+      toggleQaPageInspection(index);
+      refreshInspectButton();
+    });
+    item.addEventListener("input",refreshInspectButton);
+    item.addEventListener("change",refreshInspectButton);
+    refreshInspectButton();
+    title.appendChild(inspectButton);
 
     // Build 261: small source-checkable ledger for OCR-era safe fixes.
     // It is metadata only. Inspecting the list cannot change approved text.
