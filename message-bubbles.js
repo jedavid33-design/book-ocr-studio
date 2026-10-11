@@ -25,9 +25,12 @@
       const candidates = annotations.map((annotation, id) => ({ annotation, id }))
         .filter(item => item.annotation?.text === value && item.annotation?.occurrence === occurrence);
       const item = candidates[0] || null;
-      if (item && (item.annotation.side === "outgoing" || item.annotation.side === "incoming"))
-        used.add(item.id);
       const label = index ? speakerLabel(list[index - 1]) : "";
+      // A label may only be moved if that *same* printed label is still
+      // adjacent. A changed label needs re-review; never make text disappear.
+      const valid = item && (item.annotation.side === "outgoing" || item.annotation.side === "incoming")
+        && (!item.annotation.label || item.annotation.label === label);
+      if (valid) used.add(item.id);
       const flagged = Boolean(label && value.length <= 500)
         || (value.length <= 100 && /\b(?:lol|omg|idk|ur|u|wanna|gonna|txt|sext|brb)\b/i.test(value));
       return {
