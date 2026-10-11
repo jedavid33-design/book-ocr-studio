@@ -17,6 +17,7 @@ jobs:
           node --check chapter-opening-audit.js
           node --check word-boundary-audit.js
           node --check unified-book-audit.js
+          node --check ocr-first-pass.js
           node --check message-bubbles.js
           node --check scene-ornaments.js
       - name: Run production regression fixtures
@@ -27,3 +28,4 @@ jobs:
           node tests/chapter-opening-audit.test.js
           node tests/word-boundary-audit.test.js
           node tests/unified-book-audit.test.js
+          node tests/ocr-first-pass.test.js
