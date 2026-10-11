@@ -1115,3 +1115,17 @@ select{width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid var(-
 .crop-sample-warning {border-color:#db9f65;background:#fff0de;color:#7f4318;}
 #previewCanvas {max-width:100%;height:auto;max-height:620px;object-fit:contain;}
 @media(max-width:760px) {.crop-range-row{grid-template-columns:repeat(3,minmax(0,1fr));}.crop-range-row button{grid-column:3;}}
+
+/* Build 256: source-verified text bubble review, intentionally collapsed. */
+.message-review {margin:16px 0 4px;border:1px solid var(--line);border-radius:14px;background:rgba(255,255,255,.6);padding:10px 14px;}
+.message-review summary {cursor:pointer;font-weight:750;line-height:1.4;color:var(--text);}
+.message-review-controls {margin-top:12px;}
+.message-review-controls > label {display:flex;gap:8px;align-items:center;font-weight:600;}
+.message-review-controls input[type=checkbox] {width:18px;height:18px;flex:none;accent-color:var(--accent);}
+.message-review-controls > button {margin-top:10px;}
+.message-review-list {display:grid;gap:10px;margin-top:10px;}
+.message-review-row {padding:12px;border:1px solid var(--line);border-radius:12px;display:grid;gap:8px;background:#fff;}
+.message-review-excerpt {font-size:.92rem;line-height:1.5;overflow-wrap:anywhere;white-space:pre-wrap;}
+.message-review-row select {width:100%;min-width:0;}
+.message-review-row label {display:flex;gap:8px;align-items:flex-start;font-size:.84rem;line-height:1.4;color:var(--muted);}
+.message-review-warning {color:#922c2c;font-weight:700;margin:6px 0;}
