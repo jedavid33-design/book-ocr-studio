@@ -1,6 +1,15 @@
 # Book OCR Studio 2.7.2
 
-Current production build: **255**.
+Current production build: **256**.
+
+## Build 256: Reviewed message bubbles
+- Review any OCR page and expand **Text bubbles** beneath the source screenshot/editor. Only likely messages are shown initially; toggle **Show every paragraph** for unusual message layouts.
+- Source-backed all-caps sender labels (for example RANDY/LILY) produce suggestions. The **Mark labeled messages** action proposes **blue outgoing** for the current chapter POV and **gray incoming** for other printed senders. No suggestions are committed without explicit confirmation; either side can be changed manually.
+- Optional **Move preceding label above bubble** preserves the *printed label* exactly once, above its bubble. Its EPUB label is nonspoken (`data-opal-narration="skip"`). The actual message is kept in a normal `<p>`, so Opal Reader speaks it in the original **chapter narrator's** voice. No per-sender voice changes.
+- Message styles are annotations separate from authoritative page text. They are preserved in IndexedDB checkpoints and portable OCR backups, survive a normal reload, and export as XHTML + Kindle-compatible CSS. Source wording, punctuation, italics and existing scene artwork are not changed.
+- Exact paragraph + occurrence anchors prevent arbitrary assignment drift. If editing/repair changes a marked paragraph or preceding label, **Kindle Ready reports a blocker and EPUB export refuses to proceed**, naming affected pages. The reviewer can re-mark or clear unmatched annotations.
+- **Regression:** `node tests/message-bubbles.test.js` and `node tests/reader-ready-export.test.js`.
+- No OCR rerun, Cloudflare Worker, or change to existing imported book files is required. The new styles apply when exporting *new* screenshot-based projects; existing imported-EPUB byte-preserving repair remains separate.
 
 ## Build 255: Reader-aware EPUB export (Pucked Over follow-up)
 - Scene-break paragraphs remain visible as `* * *` but now carry `data-opal-scene-break="true"`. Opal Reader v1.4.90+ inserts a brief non-spoken scene pause at those dividers instead of narrating three asterisks or merging straight across them.
