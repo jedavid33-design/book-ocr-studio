@@ -2,6 +2,11 @@
 
 Current production build: **257**.
 
+## Build 258: Chapter opening inventory
+- In **Review → Chapter opening inventory**, tap **Scan chapter openings** for a read-only list of confirmed chapters and suspected missed chapter starts. Jump directly to any source page.
+- Flags are deliberately advisory: possible missing decorative initials (lowercase beginnings), uncertain or absent chapter titles, skipped/repeated numeric headings, missing POV labels (only when the book uses them elsewhere), and chapter headings the detector saw but that are not marked.
+- Re-scan after editing; the inventory does not change OCR, drop caps, corrections, EPUBs, or Kindle Ready decisions. Verify all warnings against screenshots. Regression: `node tests/chapter-opening-audit.test.js`.
+
 ## Build 257: Source-approved illustrated scene breaks
 - **Book info → Illustrated scene breaks** contains a reusable on-device ornament library. Add a tightly cropped PNG/JPG/WebP or crop directly from an *attached source screenshot* using a finger/mouse rectangle and a source page number. The original source screenshot is never changed.
 - Artwork is stored as a resized PNG (up to 900×500 pixels, under 800 KB) in an independent local IndexedDB library. It remains available when starting another book **in the same browser**. Each project's selected artwork is separately snapshotted into the OCR project checkpoint and portable OCR backup, so restoring a project doesn't depend on the local library entry.
