@@ -1222,3 +1222,23 @@ select{width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid var(-
  .epub-preview-controls select{font-size:.85rem}
  .epub-preview-frame-wrap{padding:5px}
 }
+
+/* Build 263: prioritized QA inspection queue, never a QA completion state. */
+.qa-queue-panel{border:1px solid var(--line);border-radius:14px;padding:14px;margin:12px 0;background:rgba(255,255,255,.65)}
+.qa-queue-panel>summary{font-weight:800;cursor:pointer}
+.qa-queue-panel>.actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:12px 0}
+.qa-queue-filters{display:flex;flex-wrap:wrap;gap:10px;margin:10px 0}
+.qa-queue-filters label{display:flex;flex-direction:column;font-weight:650;font-size:.84rem;gap:4px}
+.qa-queue-filters select{max-width:min(88vw,320px);min-height:38px}
+.qa-queue-summary{font-weight:700;margin:12px 0 6px;overflow-wrap:anywhere}
+.qa-queue-list{display:flex;flex-direction:column;gap:8px;margin:10px 0}
+.qa-queue-row{display:flex;align-items:flex-start;gap:10px;border:1px solid var(--line);padding:11px;border-radius:10px;min-width:0}
+.qa-queue-row.high{border-left:4px solid #ab4943}
+.qa-queue-row.medium{border-left:4px solid #b08b3f}
+.qa-queue-row.unflagged{border-left:4px solid #9b9ba7}
+.qa-queue-row>button{flex:none}
+.qa-queue-body{min-width:0;overflow-wrap:anywhere}
+.qa-queue-body p{margin:4px 0;font-size:.9rem;line-height:1.4}
+.qa-queue-body small{display:block;color:var(--muted);font-size:.78rem}
+.qa-queue-warning{color:#9a3c30;font-weight:700}
+@media(max-width:510px){.qa-queue-panel{padding:10px}.qa-queue-row{gap:8px;padding:8px}.qa-queue-row>button{padding:6px 8px}}
