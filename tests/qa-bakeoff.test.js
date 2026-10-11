@@ -56,9 +56,9 @@ const browser=fs.readFileSync(path.join(root,"qa-bakeoff-ui.js"),"utf8");
 for(const id of ["qaBakeoffBlind","qaBakeoffGold","qaBakeoffModel","qaBakeoffEndpoint",
   "qaBakeoffToken","qaBakeoffRun","qaBakeoffStop","qaBakeoffExport","qaBakeoffImport","qaBakeoffResults"])
  assert.ok(html.includes('id="'+id+'"'),"Missing UI "+id);
-assert.ok(html.includes("qa-bakeoff-core.js?v=264")&&html.includes("qa-bakeoff-ui.js?v=264"));
-assert.ok(sw.includes("qa-bakeoff-core.js?v=264")&&sw.includes("qa-bakeoff-ui.js?v=264"));
-assert.ok(script.includes('const BUILD_VERSION = "264"'));
+assert.ok(html.includes("qa-bakeoff-core.js?v=264")&&html.includes("qa-bakeoff-ui.js?v=265"));
+assert.ok(sw.includes("qa-bakeoff-core.js?v=264")&&sw.includes("qa-bakeoff-ui.js?v=265"));
+assert.ok(script.includes('const BUILD_VERSION = "265"'));
 assert.ok(worker.includes('env.OPENROUTER_API_KEY'));
 assert.ok(worker.includes('env.QA_ACCESS_TOKEN'));
 assert.ok(worker.includes('data_collection:"deny",zdr:true,require_parameters:true'));
@@ -69,5 +69,7 @@ assert.ok(browser.includes('Gold files are read in memory locally'));
 assert.ok(browser.includes('body:JSON.stringify({model:ui.model.value,pageId:page.pageId,'));
 assert.ok(!browser.includes('JSON.stringify({gold'));
 assert.ok(browser.includes('localStorage.setItem'));
+assert.ok(browser.includes("Latest: "), "Failure details must persist visibly after reload");
+assert.ok(browser.includes("if(failed)"), "Failure must not be overwritten by a completion message");
 assert.ok(browser.includes('slice(0,3)'),"paid calls must remain at most three per confirmation");
 console.log("Build 264: blind/private scoring, partial runs, false positives, safe opt-in UI and relay guards passed");
