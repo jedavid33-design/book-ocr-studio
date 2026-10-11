@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "266";
+  const BUILD_VERSION = "267";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -571,6 +571,8 @@
           chapterPov: p.chapterPov || "",
           messageBubbles: Array.isArray(p.messageBubbles) ? p.messageBubbles.map(b => ({...b})) : [],
           manualEdited: !!p.manualEdited,
+          reviewInspection: p.reviewInspection?.schema==="human-source-inspection-v1"
+            ? { ...p.reviewInspection } : null,
           layoutLines: Array.isArray(p.layoutLines) ? p.layoutLines : [],
           rawOcrItems: Array.isArray(p.rawOcrItems) ? p.rawOcrItems : [],
           layoutMeta: p.layoutMeta || null,
@@ -2775,6 +2777,8 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
         chapterPov: page.chapterPov || "",
         messageBubbles: Array.isArray(page.messageBubbles) ? page.messageBubbles.map(b => ({...b})) : [],
         manualEdited: !!page.manualEdited,
+        reviewInspection: page.reviewInspection?.schema==="human-source-inspection-v1"
+          ? { ...page.reviewInspection } : null,
         layoutLines: Array.isArray(page.layoutLines) ? page.layoutLines : [],
         rawOcrItems: Array.isArray(page.rawOcrItems) ? page.rawOcrItems : [],
         layoutMeta: page.layoutMeta || null,
@@ -4080,7 +4084,10 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
     els.messageOcrBtn.disabled = state.processing || !hasCurrent || !currentHasSource;
     els.pageDropcapBtn.disabled = state.processing || !hasCurrent;
     if (els.qaQueueRun) els.qaQueueRun.disabled = state.processing || !processed;
-    if (els.qaQueueNext) els.qaQueueNext.disabled = state.processing || !processed || !latestPrioritizedQaQueue?.flagged;
+    if (els.qaQueueNext) els.qaQueueNext.disabled = state.processing || !processed ||
+      !latestPrioritizedQaQueue?.flagged ||
+      !latestPrioritizedQaQueue.ranked.some(row=>row.priority!=="unflagged"&&
+        window.OcrReviewInspection?.status(state.pages[row.pageIndex])!=="inspected");
     if (els.epubPreviewBtn) els.epubPreviewBtn.disabled = state.processing || !processed;
     if (els.unifiedAuditAfterOcr) els.unifiedAuditAfterOcr.disabled = state.processing || !processed;
     if (els.unifiedAuditAfterQa) els.unifiedAuditAfterQa.disabled = state.processing || !processed;
@@ -4106,7 +4113,8 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
 
 
 
-  // Build 263: transient inspection priorities are NOT visual-QA approvals.
+  // Build 267: priorities are advisory and human page inspection is explicitly recorded.
+  // Never treat a review marker as imported visual-QA authority or an EPUB export gate.
   let latestPrioritizedQaQueue=null;
   let qaQueueVisibleLimit=60;
   let qaQueueSnapshotStale=false;
@@ -4125,10 +4133,44 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
     setStatus("Priority queue: page "+(pageIndex+1)+". Compare against the source screenshot and rescan after edits.");
   }
   function visibleQaQueueRows(){
-    return window.OcrPrioritizedQaQueue.visible(latestPrioritizedQaQueue,{
-      filter:els.qaQueueFilter?.value||"attention",
+    const filter=els.qaQueueFilter?.value||"attention";
+    const standard=window.OcrPrioritizedQaQueue.visible(latestPrioritizedQaQueue,{
+      filter:filter==="pending"||filter==="inspected"?"all":filter,
       order:els.qaQueueSort?.value||"priority"
     });
+    if(filter==="pending")return standard.filter(row=>
+      window.OcrReviewInspection.status(state.pages[row.pageIndex])!=="inspected");
+    if(filter==="inspected")return standard.filter(row=>
+      window.OcrReviewInspection.status(state.pages[row.pageIndex])==="inspected");
+    return standard;
+  }
+  function toggleQaPageInspection(pageIndex){
+    const page=state.pages[pageIndex];
+    if(!page||state.processing||!window.OcrReviewInspection)return;
+    if(window.OcrReviewInspection.status(page)==="inspected"){
+      page.reviewInspection=null;
+      saveCheckpoint();
+      renderPrioritizedQaQueue();
+      updateNavigationControls();
+      setStatus("Page "+(pageIndex+1)+" returned to needs inspection. No OCR text was changed.");
+      return;
+    }
+    if(!isRealSourceFile(page.file||state.files[pageIndex])){
+      setStatus("Reattach original screenshot "+(pageIndex+1)+" before marking it inspected.");
+      return;
+    }
+    if(pageIndex===state.currentPageIndex){
+      const editor=currentReviewTextarea();
+      if(editor&&editor.value!==page.text){
+        setStatus("Finish saving the active page text before marking it inspected.");
+        return;
+      }
+    }
+    page.reviewInspection=window.OcrReviewInspection.mark(page,{sourceAttached:true});
+    saveCheckpoint();
+    renderPrioritizedQaQueue();
+    updateNavigationControls();
+    setStatus("Page "+(pageIndex+1)+" marked inspected by you. New text or chapter changes will require a fresh inspection.");
   }
   function renderPrioritizedQaQueue(){
     const root=els.qaQueueResults;
@@ -4139,15 +4181,17 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
     root.classList.remove("hidden");
     const summary=document.createElement("p");
     summary.className="qa-queue-summary";
+    const inspected=window.OcrReviewInspection.counts(state.pages);
     summary.textContent=report.pagesScanned+" processed pages · "+report.counts.high+
       " high attention · "+report.counts.medium+" review suggested · "+
-      report.counts.unflagged+" no patterns flagged";
+      report.counts.unflagged+" no patterns flagged · "+inspected.inspected+
+      " explicitly inspected"+(inspected.stale?" · "+inspected.stale+" stale inspection(s)":"");
     root.appendChild(summary);
     const hint=document.createElement("p");
     hint.className="hint";
-    hint.textContent="Priority means inspect sooner, not a confirmed error. "+
-      "No patterns flagged does NOT mean visually verified. No QA decisions are automatically saved. "+
-      "Rescan after manual edits, repair, or importing QA.";
+    hint.textContent="Flags are leads, not confirmed mistakes. 'Inspected' is YOUR explicit source-image check, "+
+      "not AI verification or QA approval. Edited pages become stale automatically. "+
+      "Reattach original screenshots to mark further pages. Rescan audit leads after repairs.";
     root.appendChild(hint);
     if(report.incompleteWordCoverage){
       const limited=document.createElement("p");
@@ -4173,6 +4217,12 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
       go.addEventListener("click",()=>openQaReviewPage(item.pageIndex));
       const body=document.createElement("div");
       body.className="qa-queue-body";
+      const inspectState=window.OcrReviewInspection.status(state.pages[item.pageIndex]);
+      const badge=document.createElement("small");
+      badge.className="qa-inspection-label"+(inspectState==="stale"?" qa-queue-warning":"");
+      badge.textContent=inspectState==="inspected"?"✓ Inspected by you":
+        inspectState==="stale"?"Previous inspection stale after edits":"Not yet inspected";
+      body.appendChild(badge);
       const title=document.createElement("strong");
       title.textContent=window.OcrPrioritizedQaQueue.TITLE[item.priority]+" · "+
         item.flagCount+" lead"+(item.flagCount===1?"":"s");
@@ -4195,7 +4245,21 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
           " (see dedicated audits for all details)";
         body.appendChild(extra);
       }
-      row.append(go,body);
+      const actions=document.createElement("div");
+      actions.className="qa-queue-actions";
+      actions.appendChild(go);
+      const reviewBtn=document.createElement("button");
+      reviewBtn.type="button";
+      reviewBtn.className="button ghost compact-button";
+      reviewBtn.textContent=inspectState==="inspected"?"Reopen inspection":"Mark inspected";
+      reviewBtn.disabled=state.processing||(inspectState!=="inspected"&&
+        !isRealSourceFile(state.pages[item.pageIndex]?.file||state.files[item.pageIndex]));
+      reviewBtn.title=reviewBtn.disabled?"Attach the original screenshot before marking a page inspected":
+        inspectState==="inspected"?"Undo this manual inspection mark":
+        "Use only after personally comparing this page to its original screenshot";
+      reviewBtn.addEventListener("click",()=>toggleQaPageInspection(item.pageIndex));
+      actions.appendChild(reviewBtn);
+      row.append(actions,body);
       list.appendChild(row);
     }
     root.appendChild(list);
@@ -4239,7 +4303,8 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
       qaQueueSnapshotStale=false;
       els.qaQueueStatus.textContent=report.flagged+" pages flagged · "+
         report.counts.high+" high";
-      if(els.qaQueueNext)els.qaQueueNext.disabled=!report.flagged;
+      if(els.qaQueueNext)els.qaQueueNext.disabled=
+        window.OcrReviewInspection.next(report.ranked,state.pages,-1)<0;
       renderPrioritizedQaQueue();
       setStatus("Priority QA queue built for "+report.pagesScanned+
         " pages. OCR text, QA decisions, and EPUB output were not changed.");
@@ -4257,9 +4322,9 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
     const rows=window.OcrPrioritizedQaQueue.visible(latestPrioritizedQaQueue,{
       filter:"attention",order:els.qaQueueSort?.value||"priority"
     });
-    if(!rows.length)return;
-    const current=rows.findIndex(row=>row.pageIndex===state.currentPageIndex);
-    openQaReviewPage(rows[(current+1)%rows.length].pageIndex);
+    const next=window.OcrReviewInspection.next(rows,state.pages,state.currentPageIndex);
+    if(next<0)return;
+    openQaReviewPage(next);
   });
 
   // Build 260: independent pre-QA/post-QA scan with canonical read-only preflight.
