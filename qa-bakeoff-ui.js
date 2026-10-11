@@ -1,4 +1,4 @@
-// Build 264: opt-in 3-page OpenRouter model audition, with private reference scoring.
+// Build 266: opt-in OpenRouter QA pilot with free key verification and error diagnostics.
 // This file NEVER stores API keys. Only a user's separately deployed relay has the key.
 // Gold files are read in memory locally and are NEVER attached to fetch requests.
 (()=>{
@@ -8,11 +8,11 @@
  const ui={
   blind:$("qaBakeoffBlind"),gold:$("qaBakeoffGold"),
   model:$("qaBakeoffModel"),endpoint:$("qaBakeoffEndpoint"),token:$("qaBakeoffToken"),
-  run:$("qaBakeoffRun"),stop:$("qaBakeoffStop"),export:$("qaBakeoffExport"),
+  run:$("qaBakeoffRun"),check:$("qaBakeoffCheckKey"),stop:$("qaBakeoffStop"),export:$("qaBakeoffExport"),
   import:$("qaBakeoffImport"),status:$("qaBakeoffStatus"),results:$("qaBakeoffResults")
  };
  const core=window.OcrQaBakeoffCore;
- let blind=null,gold=null,running=false,stop=false,records=new Map();
+ let blind=null,gold=null,running=false,checking=false,stop=false,records=new Map();
  const key=model=>"ocrStudio.qaBakeoff.264."+blind?.book+"."+blind?.pages?.length+"."+model;
  function setStatus(s){ui.status.textContent=s;}
  function current(){
@@ -37,7 +37,8 @@
   const root=ui.results;
   root.replaceChildren();
   ui.export.disabled=!blind||!current().results.length||running;
-  ui.run.disabled=!blind||running;
+  ui.run.disabled=!blind||running||checking;
+  ui.check.disabled=running||checking;
   ui.stop.disabled=!running;
   ui.model.disabled=running;
   ui.blind.disabled=running;
@@ -88,7 +89,8 @@
    const err=document.createElement("p");
    err.className="qa-bakeoff-warning";
    const last=obj.errors[obj.errors.length-1];
-   const suffix=last?.status?" (HTTP "+last.status+")":"";
+   const suffix=last?.upstreamStatus?" (OpenRouter HTTP "+last.upstreamStatus+")":
+     last?.status?" (Worker HTTP "+last.status+")":"";
    err.textContent=obj.errors.length+" failed call(s). Latest: "+
      String(last?.pageId||"unknown page")+": "+String(last?.error||"Unknown error")+suffix+
      ". No pages were credited for failed calls.";
@@ -135,6 +137,33 @@
     throw new Error("Use an HTTPS Worker URL without credentials or query parameters.");
   return u.href.replace(/\/$/,"")+"/qa";
  }
+ async function checkKey(){
+   if(running||checking)return;
+   let endpoint;
+   try{endpoint=canonicalEndpoint(ui.endpoint.value.trim()).replace(/\/qa$/,"/key-check");}
+   catch(error){setStatus("Enter a valid HTTPS Worker URL. "+error.message);return;}
+   const token=ui.token.value.trim();
+   if(!token){setStatus("Enter your Worker access token, not your OpenRouter API key.");return;}
+   checking=true;render();
+   setStatus("Checking your OpenRouter key without sending pages or starting paid generation…");
+   try{
+     const response=await fetch(endpoint,{method:"POST",
+       headers:{"Content-Type":"application/json","X-QA-Token":token},
+       body:"{}"});
+     let data={};
+     try{data=await response.json();}catch{}
+     if(!response.ok){
+       const upstream=data.upstreamStatus?" (OpenRouter HTTP "+data.upstreamStatus+")":"";
+       setStatus("Key check failed"+upstream+": "+String(data.error||"Worker HTTP "+response.status));
+     }else if(data.keyAuthenticated===true){
+       const remain=Number.isFinite(data.limitRemaining)?" Key cap remaining: $"+
+         data.limitRemaining.toFixed(2)+".":"";
+       setStatus("🟢 OpenRouter accepted your key."+remain+
+         " Model routing/privacy support has not been tested; no pages or paid requests were sent.");
+     }else setStatus("Unexpected key-check response. Do not start paid QA yet.");
+   }catch(error){setStatus("Key check interrupted: "+error.message);}
+   finally{checking=false;render();}
+ }
  async function run(){
   if(running||!blind)return;
   let endpoint;
@@ -161,10 +190,17 @@
       body:JSON.stringify({model:ui.model.value,pageId:page.pageId,
         anchors:page.anchors,imageDataUrl:"data:image/jpeg;base64,"+jpg})});
     if(!resp.ok){
-      let explanation="HTTP "+resp.status;
-      try{const e=await resp.json();explanation=e.error||explanation;}catch{}
-      obj.errors.push({pageId:page.pageId,error:explanation,status:resp.status});
-      persist();setStatus(page.pageId+" failed (HTTP "+resp.status+"): "+explanation+
+      let explanation="HTTP "+resp.status,upstreamStatus=null,errorType=null;
+      try{
+        const e=await resp.json();
+        explanation=e.error||explanation;
+        upstreamStatus=Number.isInteger(e.upstreamStatus)?e.upstreamStatus:null;
+        errorType=typeof e.errorType==="string"?e.errorType:null;
+      }catch{}
+      obj.errors.push({pageId:page.pageId,error:explanation,
+        status:resp.status,upstreamStatus,errorType});
+      persist();setStatus(page.pageId+" failed (Worker HTTP "+resp.status+
+        (upstreamStatus?", OpenRouter HTTP "+upstreamStatus:"")+"): "+explanation+
         ". No further paid requests made.");
       failed=true;
       break;
@@ -228,6 +264,7 @@
  ui.gold.addEventListener("change",uploadGold);
  ui.model.addEventListener("change",()=>{render();setStatus("Ready to audition "+ui.model.value);});
  ui.run.addEventListener("click",run);
+ ui.check.addEventListener("click",checkKey);
  ui.stop.addEventListener("click",()=>{stop=true;setStatus("Stopping after current page request…");});
  ui.export.addEventListener("click",exportResults);
  ui.import.addEventListener("change",importResults);
