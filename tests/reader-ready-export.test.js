@@ -34,7 +34,7 @@ const state = {pages:[
   {text:"Chapter one",chapterStart:true}
 ], coverFile:{name:"cover.jpg"}};
 const els = {bookTitle:{value:"Test book"},bookAuthor:{value:"Test author"}};
-const status = chapters => makeCheck(state, els, chapters, {OcrMessageBubbles:{validate:()=>({stale:[],marked:0})}})
+const status = chapters => makeCheck(state, els, chapters, {OcrMessageBubbles:{validate:()=>({stale:[],marked:0})},OcrSceneOrnaments:{sceneCount:()=>0,validate:()=>false}})
   .find(x => x.name === "Reader POV metadata")?.status;
 assert.equal(status([
   {title:"Prologue",nav:true,pov:"Lily"},
