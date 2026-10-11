@@ -2,6 +2,11 @@
 
 Current production build: **257**.
 
+## Build 259: Residual OCR word-boundary audit
+- **Review → Residual word-boundary review → Scan word boundaries** scans current saved prose for four *advisory* patterns: split fi/fl ligatures (`fi rst`), whitespace after a line-wrap hyphen (`wait- ing`), common prose prefixes glued to an uppercase word (`thenShe`), and missing whitespace after punctuation (`said,then`).
+- Each finding shows the exact suspicious text, a *tentative* suggestion, nearby context, and a page-jump button for source-screenshot verification. The optional **Export findings JSON** provides a portable audit snapshot, including counts and flagged snippets. Re-scan after manual edits; the exported snapshot is not a corrections import package.
+- Never auto-apply suggestions or overwrite completed QA: ordinary expressions, intentional hyphens, author style, and names can be false positives. This checker is intentionally conservative and cannot find every missing space or merged word. Existing Repair and Final Polish checks remain unchanged. Regression: `node tests/word-boundary-audit.test.js`.
+
 ## Build 258: Chapter opening inventory
 - In **Review → Chapter opening inventory**, tap **Scan chapter openings** for a read-only list of confirmed chapters and suspected missed chapter starts. Jump directly to any source page.
 - Flags are deliberately advisory: possible missing decorative initials (lowercase beginnings), uncertain or absent chapter titles, skipped/repeated numeric headings, missing POV labels (only when the book uses them elsewhere), and chapter headings the detector saw but that are not marked.
