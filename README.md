@@ -1,6 +1,12 @@
 # Book OCR Studio 2.7.2
 
-Current production build: **266**.
+Current production build: **267**.
+
+## Build 267: No-cost human QA progress and iPad audit fix
+- **No paid AI QA is required**. The OpenRouter bake-off remains available but is parked inside a collapsed optional panel **below** the free QA audits. No new OpenRouter requests or Cloudflare Worker updates are necessary.
+- **Prioritized QA Review** now distinguishes pages you explicitly inspected against original screenshots from those pending inspection. The page editor has a **Mark page inspected** action; the priority queue also supports marking/reopening, **Next uninspected flag** navigation, and pending/inspected filters. These are manual workflow markers only, **not independent QA certification, import authority, suppressed warnings, or export approval**.
+- The marker includes an exact snapshot of page text, title/POV, text bubbles, and source filename, so changes automatically make it **stale**, and the page returns to the uninspected queue. Marking requires the original screenshot to be attached. Existing source-free restored books keep their OCR text and no unverified page gets an automatic inspected mark. Marker progress is included in the existing IndexedDB checkpoint and portable OCR backup.
+- Fixes the iPad floating Review navigation covering audit controls by limiting its sticky scope to the actual page-editor area (not all of Review). No OCR, text repair, AI generation, or EPUB output changes. **Build 267**, CSS 71, shell v93, loader 267, 11 regression suites.
 
 ## Build 266: Free credential check + provider error diagnosis
 - **Review → AI QA Bake-off → Check OpenRouter key · No charge** calls the authenticated Cloudflare relay's `/key-check` route, which only GETs OpenRouter's `/api/v1/key`. It does not transmit OCR, upload screenshots, generate tokens, or run paid model requests. Shows confirmation and any returned per-key remaining limit (not necessarily account credit).
