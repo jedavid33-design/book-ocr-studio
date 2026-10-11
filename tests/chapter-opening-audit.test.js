@@ -26,5 +26,6 @@ const source=fs.readFileSync(path.join(__dirname,"..","script.js"),"utf8");
 for(const id of ["runChapterAudit","chapterAuditStatus","chapterAuditResults"])assert.ok(index.includes('id="'+id+'"'));
 assert.ok(index.includes("chapter-opening-audit.js?v=258"));
 assert.ok(source.includes("window.OcrChapterAudit.audit(state.pages)"));
-assert.ok(source.includes('const BUILD_VERSION = "258"'));
+const version=source.match(/const BUILD_VERSION = "(\\d+)"/);
+assert.ok(version && Number(version[1])>=258,"Chapter audit requires Build 258+");
 console.log("Build 258 chapter opening inventory checks passed");
