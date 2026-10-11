@@ -6,12 +6,13 @@
 
 ## Current state
 
-- **Current build:** 254
+- **Current build:** 255
 - **Status:** stable / feature-complete for the current OCR workflow. Leave the app alone unless real-book use exposes a concrete problem.
 - **Primary repo:** `jedavid33-design/book-ocr-studio`
 - **Branch:** `main`
 - **Cloudflare Worker:** none. No Cloudflare-side deployment work is required for this project.
 - **Current production flow:** Book Info → Screenshots → Default Crop + Page-Range Overrides → Crop Preflight (human approval) → OCR / QA → Review → Guided Repair → Final Polish → Kindle Ready → Export.
+- Build 255 keeps source/QA data unchanged and adds Reader-compatible nonspoken scene markers to newly exported EPUBs. Kindle Ready warns when a book with some explicit chapter POV labels is missing others, preserving the chapter narrator across text messages. Regression tests: `node tests/reader-ready-export.test.js`. No Worker deployment. Future Pucked-derived improvements: source-backed styled text bubbles, selectable ornamental scene artwork, stronger chapter/drop-cap inventory, and review-only residual OCR split-word checks.
 - Build 254 adds inclusive 1-based page-range crop overrides and samples at book-wide intervals and span boundaries. The preview overlays removed portions of the original image, with advisory cut-line ink warnings and explicit approval before new full-book OCR. The effective crop applies to OCR and visual QA. Ranges persist in IndexedDB checkpoints; changing settings after an OCR batch begins blocks mixed-crop resume.
 - Build 253 marks the generated EPUB title page with `data-opal-narration="skip"`. This preserves the visible title/author page while allowing Opal Reader to exclude it from TTS import. No OCR text, QA, Repair, Polish, chapter content, or typography behavior changes.
 - Build 238 cleaned the production UI without changing OCR/QA/Repair/Polish/export behavior.
