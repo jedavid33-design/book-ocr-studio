@@ -1160,3 +1160,16 @@ select{width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid var(-
 .chapter-audit-row>div {min-width:0;overflow-wrap:anywhere}
 .chapter-audit-detail {margin:4px 0;line-height:1.4}
 .chapter-audit-row small {display:block;color:var(--muted);white-space:normal;overflow-wrap:anywhere}
+
+/* Build 259: read-only word-boundary review results. */
+.word-audit-panel {border:1px solid var(--line);border-radius:14px;padding:12px;margin:10px 0;background:rgba(255,255,255,.55)}
+.word-audit-panel>summary {cursor:pointer;font-weight:700}
+.word-audit-panel .actions {display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:10px 0}
+.word-audit-counts {font-size:.86rem;color:var(--muted);overflow-wrap:anywhere}
+.word-audit-list {max-height:520px;overflow:auto;margin-top:10px}
+.word-audit-row {display:flex;align-items:flex-start;gap:12px;padding:10px 0;border-bottom:1px solid var(--line)}
+.word-audit-row>.button {flex:none}
+.word-audit-row>div {min-width:0;overflow-wrap:anywhere}
+.word-audit-context {margin:4px 0;white-space:normal;line-height:1.4}
+.word-audit-row small {display:block;color:var(--muted)}
+@media(max-width:520px){.word-audit-row {gap:8px}.word-audit-row>.button{padding:7px 9px}}
