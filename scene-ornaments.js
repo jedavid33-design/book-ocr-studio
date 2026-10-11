@@ -125,7 +125,178 @@
       return asset;
     }finally{URL.revokeObjectURL(url);}
   }
-  const api=Object.freeze({list,save,remove,validate,snapshot,bytes,fromCanvas,fromFile});
+  function sceneCount(pages) {
+    return (pages||[]).reduce((total,page)=>
+      total+(String(page?.text||"").match(/^\\s*\\* \\* \\*\\s*$/gm)||[]).length,0);
+  }
+  function controller({state,els,sourceFilesAttached,loadImageFromFile,saveCheckpoint}) {
+    const pick=els.sceneArtSelect, apply=els.sceneArtApply;
+    if(!pick||!apply)return {sync:()=>{},refreshLibrary:async()=>{}};
+    let saved=[],fullImage=null,previewCanvas=null,selectedRect=null;
+    const crop=els.sceneArtCropCanvas;
+    function info(message){if(els.sceneArtStatus)els.sceneArtStatus.textContent=message;}
+    function drawCrop() {
+      if(!previewCanvas||!crop)return;
+      const ctx=crop.getContext("2d");
+      ctx.clearRect(0,0,crop.width,crop.height);
+      ctx.drawImage(previewCanvas,0,0);
+      if(selectedRect&&selectedRect.w>0&&selectedRect.h>0){
+        ctx.save();
+        ctx.strokeStyle="#7045a0";ctx.lineWidth=3;
+        ctx.setLineDash([8,4]);
+        ctx.strokeRect(selectedRect.x+1,selectedRect.y+1,Math.max(0,selectedRect.w-2),
+          Math.max(0,selectedRect.h-2));
+        ctx.restore();
+      }
+    }
+    function sync() {
+      const asset=validate(state.sceneOrnament)?state.sceneOrnament:null;
+      if(!asset){state.sceneOrnament=null;state.useSceneOrnament=false;}
+      pick.replaceChildren();
+      const empty=new Option("No illustration selected","");
+      pick.append(empty);
+      for(const art of saved)pick.append(new Option(art.name,art.id));
+      if(asset&&!saved.some(art=>art.id===asset.id))
+        pick.append(new Option(asset.name+" (saved in this book)",asset.id));
+      pick.value=asset?.id||"";
+      const ready=!!asset;
+      apply.disabled=!ready;
+      apply.checked=ready&&!!state.useSceneOrnament;
+      if(els.sceneArtDelete)els.sceneArtDelete.disabled=!ready || !saved.some(art=>art.id===asset.id);
+      if(els.sceneArtPreviewWrap)els.sceneArtPreviewWrap.classList.toggle("hidden",!ready);
+      if(ready){
+        if(els.sceneArtPreview)els.sceneArtPreview.src=asset.dataUrl;
+        if(els.sceneArtPreviewName)els.sceneArtPreviewName.textContent=asset.name;
+      }else if(els.sceneArtPreview)els.sceneArtPreview.removeAttribute("src");
+      const count=sceneCount(state.pages);
+      info(!ready?"No artwork selected. Canonical scene dividers will remain * * *."
+        :state.useSceneOrnament
+          ?`“${asset.name}” will replace ${count} canonical * * * divider${count===1?"":"s"} in this book. Opal Reader pauses remain intact.`
+          :`“${asset.name}” selected, but not applied. ${count} semantic scene break${count===1?"":"s"} remain plain until approved.`);
+    }
+    async function refreshLibrary(){
+      try{saved=await list();sync();}
+      catch(error){saved=[];sync();info("Cannot open local illustration library: "+(error.message||error));}
+    }
+    pick.addEventListener("change",()=>{
+      const choice=saved.find(art=>art.id===pick.value);
+      // Re-select the backed-up asset even when its library copy was deleted.
+      const preserved=state.sceneOrnament?.id===pick.value?state.sceneOrnament:null;
+      state.sceneOrnament=choice?snapshot(choice):preserved?snapshot(preserved):null;
+      if(!state.sceneOrnament)state.useSceneOrnament=false;
+      saveCheckpoint();sync();
+    });
+    apply.addEventListener("change",()=>{
+      if(apply.checked&&!validate(state.sceneOrnament)){apply.checked=false;return;}
+      if(apply.checked&&!confirm(
+        "Use this source-approved ornament for every canonical * * * scene divider in this book? Only choose this when the printed book uses that ornament consistently. The source text will not be edited.")){
+        apply.checked=false;return;
+      }
+      state.useSceneOrnament=apply.checked;
+      saveCheckpoint();sync();
+    });
+    els.sceneArtUpload?.addEventListener("change",async()=>{
+      const file=els.sceneArtUpload.files?.[0];
+      if(!file)return;
+      try{
+        info("Processing ornament…");
+        const asset=await fromFile(file);
+        await save(asset);
+        state.sceneOrnament=snapshot(asset);
+        state.useSceneOrnament=false;
+        saveCheckpoint();await refreshLibrary();
+        info("Saved “"+asset.name+"” to the reusable library. Approve its use with the checkbox after checking the source page.");
+      }catch(error){info("Could not save ornament: "+(error.message||error));}
+      finally{els.sceneArtUpload.value="";}
+    });
+    els.sceneArtDelete?.addEventListener("click",async()=>{
+      const asset=state.sceneOrnament;
+      if(!asset||!saved.some(a=>a.id===asset.id))return;
+      if(!confirm("Delete “"+asset.name+"” from the reusable illustration library and unselect it for this book?"))return;
+      try{
+        await remove(asset.id);
+        state.sceneOrnament=null;state.useSceneOrnament=false;
+        saveCheckpoint();await refreshLibrary();
+      }catch(error){info("Could not delete the illustration: "+(error.message||error));}
+    });
+    els.sceneArtCropLoad?.addEventListener("click",async()=>{
+      const index=Number(els.sceneArtCropPage?.value)-1;
+      const source=state.files?.[index];
+      if(!Number.isInteger(index)||index<0||index>=state.files.length||
+         !sourceFilesAttached()||!source){
+        info("Attach the original screenshots and enter a valid source page number.");return;
+      }
+      try{
+        fullImage=await loadImageFromFile(source);
+        const ratio=Math.min(1,520/fullImage.naturalWidth,680/fullImage.naturalHeight);
+        if(!Number.isFinite(ratio)||ratio<=0)throw new Error("Invalid screenshot size.");
+        previewCanvas=document.createElement("canvas");
+        previewCanvas.width=Math.max(1,Math.round(fullImage.naturalWidth*ratio));
+        previewCanvas.height=Math.max(1,Math.round(fullImage.naturalHeight*ratio));
+        previewCanvas.getContext("2d").drawImage(fullImage,0,0,previewCanvas.width,previewCanvas.height);
+        crop.width=previewCanvas.width;crop.height=previewCanvas.height;
+        crop.style.touchAction="none";
+        selectedRect=null;
+        if(els.sceneArtCropSave)els.sceneArtCropSave.disabled=true;
+        drawCrop();
+        if(els.sceneArtCropHint)els.sceneArtCropHint.textContent=
+          "Drag a box tightly around the illustration, then save the selected crop.";
+      }catch(error){info("Could not load source screenshot: "+(error.message||error));}
+    });
+    let pointerStart=null;
+    function pointerCoords(ev){
+      const rect=crop.getBoundingClientRect();
+      return {x:Math.min(crop.width,Math.max(0,(ev.clientX-rect.left)*crop.width/rect.width)),
+        y:Math.min(crop.height,Math.max(0,(ev.clientY-rect.top)*crop.height/rect.height))};
+    }
+    crop?.addEventListener("pointerdown",ev=>{
+      if(!previewCanvas)return;
+      pointerStart=pointerCoords(ev);
+      crop.setPointerCapture?.(ev.pointerId);
+      selectedRect=null;
+      if(els.sceneArtCropSave)els.sceneArtCropSave.disabled=true;
+    });
+    crop?.addEventListener("pointermove",ev=>{
+      if(!pointerStart)return;
+      const point=pointerCoords(ev),x=Math.min(pointerStart.x,point.x),y=Math.min(pointerStart.y,point.y);
+      selectedRect={x,y,w:Math.abs(point.x-pointerStart.x),h:Math.abs(point.y-pointerStart.y)};
+      drawCrop();
+    });
+    const finishCrop=()=>{
+      if(!pointerStart)return;
+      pointerStart=null;
+      if(els.sceneArtCropSave)els.sceneArtCropSave.disabled=!(selectedRect&&selectedRect.w>=16&&selectedRect.h>=10);
+    };
+    crop?.addEventListener("pointerup",finishCrop);
+    crop?.addEventListener("pointercancel",finishCrop);
+    els.sceneArtCropSave?.addEventListener("click",async()=>{
+      if(!fullImage||!previewCanvas||!selectedRect)return;
+      try{
+        const ratioX=fullImage.naturalWidth/previewCanvas.width;
+        const ratioY=fullImage.naturalHeight/previewCanvas.height;
+        const x=Math.floor(selectedRect.x*ratioX),y=Math.floor(selectedRect.y*ratioY);
+        const w=Math.min(fullImage.naturalWidth-x,Math.ceil(selectedRect.w*ratioX));
+        const h=Math.min(fullImage.naturalHeight-y,Math.ceil(selectedRect.h*ratioY));
+        if(w<16||h<10)throw new Error("Crop is too small.");
+        const source=document.createElement("canvas");
+        source.width=w;source.height=h;
+        source.getContext("2d").drawImage(fullImage,x,y,w,h,0,0,w,h);
+        const suggested="Scene artwork · page "+els.sceneArtCropPage.value;
+        const name=prompt("Name this reusable scene illustration:",suggested);
+        if(name===null)return;
+        if(!name.trim())throw new Error("Give the illustration a name.");
+        const asset=fromCanvas(source,{x:0,y:0,w,h},name);
+        source.width=source.height=1;
+        await save(asset);
+        state.sceneOrnament=snapshot(asset);state.useSceneOrnament=false;
+        saveCheckpoint();await refreshLibrary();
+        info("Crop saved as “"+asset.name+"”. Check its preview, then approve use for this book.");
+      }catch(error){info("Could not save crop: "+(error.message||error));}
+    });
+    refreshLibrary();
+    return {sync,refreshLibrary};
+  }
+  const api=Object.freeze({list,save,remove,validate,snapshot,bytes,fromCanvas,fromFile,sceneCount,controller});
   if(typeof module!=="undefined"&&module.exports)module.exports=api;
   if(typeof globalThis!=="undefined")globalThis.OcrSceneOrnaments=api;
 })();
