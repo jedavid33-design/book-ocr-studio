@@ -1190,3 +1190,8 @@ select{width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid var(-
 .unified-audit-check.fail strong{color:#a33838}
 .unified-audit-check.warn strong{color:#806010}
 @media(max-width:520px){.unified-audit-item{gap:8px}.unified-audit-item>button{padding:7px 8px}}
+
+/* Build 261: transparent pre-QA automatic correction log on OCR pages. */
+.ocr-first-pass-ledger{margin:8px 0 12px;padding:8px 12px;border:1px solid var(--line);border-radius:10px;background:rgba(255,255,255,.45)}
+.ocr-first-pass-ledger>summary{font-size:.87rem;font-weight:650;cursor:pointer}
+.ocr-first-pass-change{margin:7px 0;padding:6px 3px;border-top:1px solid var(--line);font-size:.85rem;overflow-wrap:anywhere}
