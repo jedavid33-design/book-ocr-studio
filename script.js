@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "255";
+  const BUILD_VERSION = "256";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -522,6 +522,7 @@
           chapterStart: !!p.chapterStart,
           chapterTitle: p.chapterTitle || "",
           chapterPov: p.chapterPov || "",
+          messageBubbles: Array.isArray(p.messageBubbles) ? p.messageBubbles.map(b => ({...b})) : [],
           manualEdited: !!p.manualEdited,
           layoutLines: Array.isArray(p.layoutLines) ? p.layoutLines : [],
           rawOcrItems: Array.isArray(p.rawOcrItems) ? p.rawOcrItems : [],
@@ -2721,6 +2722,7 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
         chapterStart: page.chapterStart != null ? !!page.chapterStart : !!page.chapterCandidate,
         chapterTitle: page.chapterTitle || "",
         chapterPov: page.chapterPov || "",
+        messageBubbles: Array.isArray(page.messageBubbles) ? page.messageBubbles.map(b => ({...b})) : [],
         manualEdited: !!page.manualEdited,
         layoutLines: Array.isArray(page.layoutLines) ? page.layoutLines : [],
         rawOcrItems: Array.isArray(page.rawOcrItems) ? page.rawOcrItems : [],
@@ -4167,8 +4169,97 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
       saveCheckpoint();
     });
 
+    // Build 256: opt-in message bubble styling. OCR text remains authoritative.
+    // Blue/gray roles and speaker labels are explicit review decisions.
+    const messageReview = document.createElement("details");
+    messageReview.className = "message-review";
+    const bubbleSummary = document.createElement("summary");
+    const bubbleControls = document.createElement("div");
+    bubbleControls.className = "message-review-controls";
+    const showAllWrap = document.createElement("label");
+    const showAll = document.createElement("input");
+    showAll.type = "checkbox";
+    showAllWrap.append(showAll, document.createTextNode(" Show every paragraph"));
+    const discardStale = document.createElement("button");
+    discardStale.className = "button ghost compact-button";
+    discardStale.type = "button";
+    discardStale.textContent = "Clear unmatched marks";
+    const messageHint = document.createElement("p");
+    messageHint.className = "hint";
+    messageHint.textContent = "Choose blue (outgoing) or gray (incoming) only after checking the original screenshot. Suggestions are never applied automatically. Styling does not change the book text or narration voice.";
+    const bubbleList = document.createElement("div");
+    bubbleList.className = "message-review-list";
+    bubbleControls.append(showAllWrap, discardStale, messageHint, bubbleList);
+    messageReview.append(bubbleSummary, bubbleControls);
+    function refreshBubbleReview() {
+      page.text = text.value;
+      const report = window.OcrMessageBubbles.rows(page.text, page.messageBubbles || []);
+      bubbleSummary.textContent = `Text bubbles: ${report.marked} marked · ${report.suggestions} suggestions${report.stale.length ? ` · ${report.stale.length} need re-review` : ""}`;
+      discardStale.hidden = !report.stale.length;
+      bubbleList.replaceChildren();
+      const shown = report.rows.filter(row => showAll.checked || row.suggested || row.side);
+      if (report.stale.length) {
+        const warning = document.createElement("p");
+        warning.className = "message-review-warning";
+        warning.textContent = `${report.stale.length} saved message mark(s) no longer match the current OCR text. Re-review or clear them before export.`;
+        bubbleList.append(warning);
+      }
+      if (!shown.length) {
+        const hint = document.createElement("p");
+        hint.className = "hint";
+        hint.textContent = "No likely messages found. Check Show every paragraph to mark an unusual message manually.";
+        bubbleList.append(hint);
+      }
+      shown.forEach(row => {
+        const entry = document.createElement("div");
+        entry.className = "message-review-row";
+        const excerpt = document.createElement("div");
+        excerpt.className = "message-review-excerpt";
+        excerpt.textContent = `¶${row.index + 1}: ${row.text.length > 180 ? row.text.slice(0, 180) + "…" : row.text}`;
+        const role = document.createElement("select");
+        role.setAttribute("aria-label", `Message bubble style for paragraph ${row.index + 1}`);
+        for (const [value,label] of [["","Ordinary prose"],["outgoing","Blue outgoing bubble"],["incoming","Gray incoming bubble"]]) {
+          const option = document.createElement("option");
+          option.value = value;
+          option.textContent = label;
+          role.append(option);
+        }
+        role.value = row.side || "";
+        const speakerWrap = document.createElement("label");
+        const speakerCheck = document.createElement("input");
+        speakerCheck.type = "checkbox";
+        speakerCheck.checked = !!row.useLabel;
+        speakerCheck.disabled = !row.side || !row.label;
+        speakerWrap.append(speakerCheck, document.createTextNode(row.label
+          ? ` Move preceding “${row.label}” label above bubble (don't narrate)`
+          : " No separate preceding speaker label detected"));
+        const update = () => {
+          page.messageBubbles = window.OcrMessageBubbles.setAnnotation(page.messageBubbles || [],
+            row, role.value, speakerCheck.checked);
+          saveCheckpoint();
+          refreshBubbleReview();
+        };
+        role.addEventListener("change", update);
+        speakerCheck.addEventListener("change", update);
+        entry.append(excerpt, role, speakerWrap);
+        bubbleList.append(entry);
+      });
+    }
+    showAll.addEventListener("change", refreshBubbleReview);
+    discardStale.addEventListener("click", () => {
+      const review = window.OcrMessageBubbles.rows(text.value, page.messageBubbles || []);
+      page.messageBubbles = review.rows.filter(row => row.side).map(row => ({
+        text: row.text, occurrence: row.occurrence,
+        side: row.side, label: row.useLabel ? row.label : ""
+      }));
+      saveCheckpoint();
+      refreshBubbleReview();
+    });
+    messageReview.addEventListener("toggle", () => { if (messageReview.open) refreshBubbleReview(); });
+    text.addEventListener("change", () => { if (messageReview.open) refreshBubbleReview(); });
+    refreshBubbleReview();
     body.append(sourceView, text);
-    item.append(title, chapterControls, body);
+    item.append(title, chapterControls, body, messageReview);
     els.reviewList.appendChild(item);
 
     updateNavigationControls();
@@ -10807,9 +10898,20 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
       }
       const paragraphs = exportParagraphs(pageText);
       if (!paragraphs.length) continue;
+      // Match reviewed bubbles by exact text + occurrence in the source page.
+      // Removed chapter furniture never shifts annotations onto unrelated prose.
+      const sourceRows = window.OcrMessageBubbles.rows(page?.text || "", page?.messageBubbles || []).rows;
+      let sourceCursor = 0;
+      const annotated = paragraphs.map(text => {
+        const found = sourceRows.findIndex((row, idx) => idx >= sourceCursor && row.text === text);
+        if (found < 0) return {text, side:"", label:""};
+        sourceCursor = found + 1;
+        return {text, side:sourceRows[found].side, label:sourceRows[found].useLabel ? sourceRows[found].label : ""};
+      });
 
       const firstParagraphIsSceneBreak = String(paragraphs[0] || "").trim() === "* * *";
       const previousExportIsSceneBreak = String(out[out.length - 1]?.text || "").trim() === "* * *";
+      const bubbleBoundary = Boolean(annotated[0]?.side || out[out.length - 1]?.side);
       const previousPage = state.pages[pageIndex - 1];
       const qaBoundary = String(previousPage?.layoutMeta?.qaBoundaryToNext || page?.layoutMeta?.qaBoundaryFromPrevious || "");
       const qaForcesMerge = qaBoundary === "merge_across_pages";
@@ -10823,14 +10925,25 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
         && !page?.chapterStart
         && !firstParagraphIsSceneBreak
         && !previousExportIsSceneBreak
+        && !bubbleBoundary
         && !qaForcesSeparate
         && (qaForcesMerge || geometryAllowsJoin);
 
       if (canJoinAcrossPage) {
         out[out.length - 1].text = joinParagraphLines([out[out.length - 1].text, paragraphs[0]]);
         paragraphs.shift();
+        annotated.shift();
       }
-      paragraphs.forEach((text, paragraphIndex) => out.push({ text, pageIndex, paragraphIndex }));
+      annotated.forEach((row, paragraphIndex) => {
+        if (row.side && row.label && out.length
+            && out[out.length-1].pageIndex === pageIndex
+            && out[out.length-1].text.trim() === row.label
+            && !out[out.length-1].side) {
+          out.pop(); // Render this verified printed label as bubble furniture instead of prose.
+        } else row.label = "";
+        out.push({ text: row.text, pageIndex, paragraphIndex,
+          side: row.side, speakerLabel: row.label });
+      });
     }
     return out;
   }
@@ -10921,6 +11034,17 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
         : `Italic markers are unbalanced (${openItalic} opens / ${closeItalic} closes).`);
 
     const sceneBreaks = state.pages.reduce((n, p) => n + ((String(p.text || "").match(/^\s*\* \* \*\s*$/gm) || []).length), 0);
+    const bubbles = state.pages.map((page,index) =>
+      ({index, report:window.OcrMessageBubbles.validate(page)}));
+    const staleBubbles = bubbles.reduce((n,x) => n + x.report.stale.length, 0);
+    const approvedBubbles = bubbles.reduce((n,x) => n + x.report.marked, 0);
+    add("Reviewed text bubbles", staleBubbles ? "fail" : "pass",
+      staleBubbles
+        ? `${staleBubbles} bubble mark(s) no longer match their original paragraph. Open Review → Text bubbles on the affected pages before exporting.`
+        : approvedBubbles
+          ? `${approvedBubbles} source-reviewed bubble(s) will keep their exact wording and chapter narration voice.`
+          : "No text bubbles marked. Message formatting is opt-in and never guessed.");
+
     add("Scene breaks", "pass",
       sceneBreaks ? `${sceneBreaks} semantic scene break${sceneBreaks===1?"":"s"} will export as visible EPUB separators and nonspoken Opal Reader pause markers.` : "No semantic scene breaks are present in this batch.");
 
@@ -11022,9 +11146,14 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
     sections.forEach((section, sectionIndex) => {
       const fileName = `chapter-${String(sectionIndex + 1).padStart(3, "0")}.xhtml`;
       const itemId = `chapter-${sectionIndex + 1}`;
-      const bodyParagraphs = sectionParagraphs(section).map(({ text, pageIndex, paragraphIndex }) => {
+      const bodyParagraphs = sectionParagraphs(section).map(({ text, pageIndex, paragraphIndex, side, speakerLabel }) => {
         if (String(text || "").trim() === "* * *") return `<p id="p-${pageIndex + 1}-${paragraphIndex + 1}" class="scene-break" data-opal-scene-break="true">* * *</p>`;
         const html = paragraphToEpubHtml(text);
+        if (side === "incoming" || side === "outgoing") {
+          const sender = speakerLabel ? `<span class="message-sender" data-opal-narration="skip">${escapeXml(speakerLabel)}</span>` : "";
+          const message = html.replace("<p>", `<p id="p-${pageIndex + 1}-${paragraphIndex + 1}" class="message-bubble">`);
+          return `<div class="message-group ${side}" data-opal-message="${side}">${sender}${message}</div>`;
+        }
         return html.replace("<p>", `<p id="p-${pageIndex + 1}-${paragraphIndex + 1}">`);
       });
 
@@ -11116,6 +11245,40 @@ em{
   text-align:center;
   text-indent:0;
   margin:1.5em 0;
+}
+.message-group{
+  display:table;
+  box-sizing:border-box;
+  width:auto;
+  max-width:82%;
+  margin:1em 0;
+  page-break-inside:avoid;
+  break-inside:avoid;
+}
+.message-group.outgoing{margin-left:auto;margin-right:0;}
+.message-group.incoming{margin-left:0;margin-right:auto;}
+.message-group .message-sender{
+  display:block;
+  font-size:0.82em;
+  letter-spacing:0.10em;
+  text-align:center;
+  margin:0 0 0.4em;
+}
+.message-group .message-bubble{
+  text-align:left;
+  text-indent:0;
+  margin:0;
+  padding:0.75em 1em;
+  border-radius:0.9em;
+  font-size:1em;
+  line-height:1.45;
+  color:#254266;
+  background:#d2e0f1;
+  overflow-wrap:break-word;
+}
+.message-group.incoming .message-bubble{
+  background:#dedee2;
+  color:#34343d;
 }
 `);
 
