@@ -1173,3 +1173,20 @@ select{width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid var(-
 .word-audit-context {margin:4px 0;white-space:normal;line-height:1.4}
 .word-audit-row small {display:block;color:var(--muted)}
 @media(max-width:520px){.word-audit-row {gap:8px}.word-audit-row>.button{padding:7px 9px}}
+
+/* Build 260: scan-only book audit dashboard. */
+.unified-audit-panel{border:2px solid var(--line);border-radius:14px;margin:12px 0;padding:14px;background:rgba(255,255,255,.64)}
+.unified-audit-panel>summary{cursor:pointer;font-weight:800}
+.unified-audit-panel>.actions{display:flex;align-items:center;flex-wrap:wrap;gap:9px;margin:12px 0}
+.unified-audit-summary{font-weight:700;overflow-wrap:anywhere}
+.unified-audit-group,.unified-audit-readiness{border:1px solid var(--line);padding:10px 12px;border-radius:10px;margin:9px 0;background:rgba(255,255,255,.35)}
+.unified-audit-group>summary,.unified-audit-readiness summary{font-weight:700;cursor:pointer;padding:4px 0}
+.unified-audit-item{display:flex;gap:10px;align-items:flex-start;padding:10px 0;border-top:1px solid var(--line)}
+.unified-audit-item>button{flex:none}
+.unified-audit-item>div{min-width:0;overflow-wrap:anywhere}
+.unified-audit-item p{margin:3px 0;line-height:1.4}
+.unified-audit-item small{display:block;color:var(--muted)}
+.unified-audit-check{display:flex;flex-direction:column;gap:3px;padding:8px 3px;border-top:1px solid var(--line);overflow-wrap:anywhere}
+.unified-audit-check.fail strong{color:#a33838}
+.unified-audit-check.warn strong{color:#806010}
+@media(max-width:520px){.unified-audit-item{gap:8px}.unified-audit-item>button{padding:7px 8px}}
