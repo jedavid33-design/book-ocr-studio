@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "262";
+  const BUILD_VERSION = "263";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -205,6 +205,12 @@
     reviewSection: $("reviewSection"),
     reviewList: $("reviewList"),
     reviewProgress: $("reviewProgress"),
+    qaQueueRun: $("qaQueueRun"),
+    qaQueueNext: $("qaQueueNext"),
+    qaQueueFilter: $("qaQueueFilter"),
+    qaQueueSort: $("qaQueueSort"),
+    qaQueueStatus: $("qaQueueStatus"),
+    qaQueueResults: $("qaQueueResults"),
     unifiedAuditAfterOcr: $("unifiedAuditAfterOcr"),
     unifiedAuditAfterQa: $("unifiedAuditAfterQa"),
     unifiedAuditExport: $("unifiedAuditExport"),
@@ -4073,6 +4079,8 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
     els.prevPageBtn.disabled = state.processing || !hasCurrent || pos <= 0;
     els.messageOcrBtn.disabled = state.processing || !hasCurrent || !currentHasSource;
     els.pageDropcapBtn.disabled = state.processing || !hasCurrent;
+    if (els.qaQueueRun) els.qaQueueRun.disabled = state.processing || !processed;
+    if (els.qaQueueNext) els.qaQueueNext.disabled = state.processing || !processed || !latestPrioritizedQaQueue?.flagged;
     if (els.epubPreviewBtn) els.epubPreviewBtn.disabled = state.processing || !processed;
     if (els.unifiedAuditAfterOcr) els.unifiedAuditAfterOcr.disabled = state.processing || !processed;
     if (els.unifiedAuditAfterQa) els.unifiedAuditAfterQa.disabled = state.processing || !processed;
@@ -4096,6 +4104,163 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
     els.exportSection?.classList[method]("hidden");
   }
 
+
+
+  // Build 263: transient inspection priorities are NOT visual-QA approvals.
+  let latestPrioritizedQaQueue=null;
+  let qaQueueVisibleLimit=60;
+  let qaQueueSnapshotStale=false;
+  function flagQaQueueForRescan(){
+    if(!latestPrioritizedQaQueue || qaQueueSnapshotStale)return;
+    qaQueueSnapshotStale=true;
+    if(els.qaQueueStatus)els.qaQueueStatus.textContent="Snapshot needs refresh after edits";
+  }
+  function openQaReviewPage(pageIndex){
+    if(!state.pages[pageIndex])return;
+    els.reviewSection.open=true;
+    setReviewMode("all");
+    state.currentPageIndex=pageIndex;
+    renderReview();
+    els.reviewList?.scrollIntoView({behavior:"smooth",block:"start"});
+    setStatus("Priority queue: page "+(pageIndex+1)+". Compare against the source screenshot and rescan after edits.");
+  }
+  function visibleQaQueueRows(){
+    return window.OcrPrioritizedQaQueue.visible(latestPrioritizedQaQueue,{
+      filter:els.qaQueueFilter?.value||"attention",
+      order:els.qaQueueSort?.value||"priority"
+    });
+  }
+  function renderPrioritizedQaQueue(){
+    const root=els.qaQueueResults;
+    if(!root||!latestPrioritizedQaQueue)return;
+    const report=latestPrioritizedQaQueue;
+    const rows=visibleQaQueueRows();
+    root.replaceChildren();
+    root.classList.remove("hidden");
+    const summary=document.createElement("p");
+    summary.className="qa-queue-summary";
+    summary.textContent=report.pagesScanned+" processed pages · "+report.counts.high+
+      " high attention · "+report.counts.medium+" review suggested · "+
+      report.counts.unflagged+" no patterns flagged";
+    root.appendChild(summary);
+    const hint=document.createElement("p");
+    hint.className="hint";
+    hint.textContent="Priority means inspect sooner, not a confirmed error. "+
+      "No patterns flagged does NOT mean visually verified. No QA decisions are automatically saved. "+
+      "Rescan after manual edits, repair, or importing QA.";
+    root.appendChild(hint);
+    if(report.incompleteWordCoverage){
+      const limited=document.createElement("p");
+      limited.className="qa-queue-warning";
+      limited.textContent="Word scanner capped its visible results ("+report.omittedWordLeads+
+        " candidates omitted), so some pages may have incomplete priorities.";
+      root.appendChild(limited);
+    }
+    const showing=Math.min(qaQueueVisibleLimit,rows.length);
+    const shown=document.createElement("p");
+    shown.className="hint";
+    shown.textContent=showing+" of "+rows.length+" pages in this view";
+    root.appendChild(shown);
+    const list=document.createElement("div");
+    list.className="qa-queue-list";
+    for(const item of rows.slice(0,showing)){
+      const row=document.createElement("div");
+      row.className="qa-queue-row "+item.priority;
+      const go=document.createElement("button");
+      go.type="button";
+      go.className="button secondary compact-button";
+      go.textContent="Page "+(item.pageIndex+1);
+      go.addEventListener("click",()=>openQaReviewPage(item.pageIndex));
+      const body=document.createElement("div");
+      body.className="qa-queue-body";
+      const title=document.createElement("strong");
+      title.textContent=window.OcrPrioritizedQaQueue.TITLE[item.priority]+" · "+
+        item.flagCount+" lead"+(item.flagCount===1?"":"s");
+      body.appendChild(title);
+      if(!item.reasons.length){
+        const none=document.createElement("p");
+        none.className="hint";
+        none.textContent="No listed detection matches. Source verification is still required.";
+        body.appendChild(none);
+      }
+      for(const reason of item.reasons.slice(0,3)){
+        const p=document.createElement("p");
+        p.textContent=reason.label+": "+reason.detail;
+        body.appendChild(p);
+      }
+      const hiddenReasons=Math.max(0,item.reasons.length-3)+item.moreReasons;
+      if(hiddenReasons){
+        const extra=document.createElement("small");
+        extra.textContent="+"+hiddenReasons+" more lead"+(hiddenReasons===1?"":"s")+
+          " (see dedicated audits for all details)";
+        body.appendChild(extra);
+      }
+      row.append(go,body);
+      list.appendChild(row);
+    }
+    root.appendChild(list);
+    if(showing<rows.length){
+      const more=document.createElement("button");
+      more.type="button";
+      more.className="button ghost";
+      more.textContent="Show "+Math.min(60,rows.length-showing)+" more pages";
+      more.addEventListener("click",()=>{
+        qaQueueVisibleLimit+=60;renderPrioritizedQaQueue();
+      });
+      root.appendChild(more);
+    }
+  }
+  function buildPrioritizedQaQueue(){
+    if(!state.pages.length||state.processing||!window.OcrPrioritizedQaQueue||
+      !window.OcrChapterAudit||!window.OcrWordBoundaryAudit)return;
+    try{
+      // Same read-only live editor snapshot technique as Builds 259-260.
+      // This feature never calls syncCurrentEditor or saveCheckpoint.
+      const active=state.currentPageIndex;
+      const textarea=els.reviewList?.querySelector("textarea");
+      const snapshot=state.pages.map((page,index)=>
+        textarea&&index===active&&textarea.value!==page.text
+          ? {...page,text:textarea.value}:page);
+      const chapterReport=window.OcrChapterAudit.audit(snapshot);
+      const wordReport=window.OcrWordBoundaryAudit.audit(snapshot,{
+        maxFindings:20000,maxPerPage:500
+      });
+      const polishReport=finalPolishAudit({
+        suppressQaApproved:true,respectIgnored:true
+      });
+      const bubbleReports=snapshot.map(page=>window.OcrMessageBubbles.validate(page));
+      const report=window.OcrPrioritizedQaQueue.build({
+        pages:snapshot,chapterReport,wordReport,polishReport,bubbleReports,
+        dropcapCandidates:state.dropcapCandidates,
+        typographyUncertain:state.typographyUncertain
+      });
+      latestPrioritizedQaQueue=report;
+      qaQueueVisibleLimit=60;
+      qaQueueSnapshotStale=false;
+      els.qaQueueStatus.textContent=report.flagged+" pages flagged · "+
+        report.counts.high+" high";
+      if(els.qaQueueNext)els.qaQueueNext.disabled=!report.flagged;
+      renderPrioritizedQaQueue();
+      setStatus("Priority QA queue built for "+report.pagesScanned+
+        " pages. OCR text, QA decisions, and EPUB output were not changed.");
+    }catch(error){
+      console.error("Priority QA queue failed",error);
+      els.qaQueueStatus.textContent="Queue unavailable";
+      setStatus("Could not build prioritized QA queue: "+String(error?.message||error));
+    }
+  }
+  els.qaQueueRun?.addEventListener("click",buildPrioritizedQaQueue);
+  els.qaQueueFilter?.addEventListener("change",()=>{qaQueueVisibleLimit=60;renderPrioritizedQaQueue();});
+  els.qaQueueSort?.addEventListener("change",()=>{qaQueueVisibleLimit=60;renderPrioritizedQaQueue();});
+  els.qaQueueNext?.addEventListener("click",()=>{
+    if(!latestPrioritizedQaQueue)return;
+    const rows=window.OcrPrioritizedQaQueue.visible(latestPrioritizedQaQueue,{
+      filter:"attention",order:els.qaQueueSort?.value||"priority"
+    });
+    if(!rows.length)return;
+    const current=rows.findIndex(row=>row.pageIndex===state.currentPageIndex);
+    openQaReviewPage(rows[(current+1)%rows.length].pageIndex);
+  });
 
   // Build 260: independent pre-QA/post-QA scan with canonical read-only preflight.
   // Review editor changes are saved through the normal input handler, not by
@@ -4515,6 +4680,7 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
     chapterTitleLabel.append(chapterTitleText, chapterTitleInput);
 
     chapterCheck.addEventListener("change", () => {
+      flagQaQueueForRescan();
       page.chapterStart = chapterCheck.checked;
       if (chapterCheck.checked && !page.chapterTitle) page.chapterTitle = detectChapterTitle(page.text, index + 1);
       chapterTitleInput.disabled = !chapterCheck.checked;
@@ -4522,6 +4688,7 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
       saveCheckpoint();
     });
     chapterTitleInput.addEventListener("input", () => {
+      flagQaQueueForRescan();
       page.chapterTitle = chapterTitleInput.value;
       saveCheckpoint();
     });
@@ -4549,6 +4716,7 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
     text.value = page.text;
     text.setAttribute("aria-label", `OCR text for page ${index + 1}`);
     text.addEventListener("input", () => {
+      flagQaQueueForRescan();
       state.pages[index].text = text.value;
       state.pages[index].manualEdited = true;
       state.pages[index].chapterCandidate = chapterHeuristic(text.value);
