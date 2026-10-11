@@ -1242,3 +1242,18 @@ select{width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid var(-
 .qa-queue-body small{display:block;color:var(--muted);font-size:.78rem}
 .qa-queue-warning{color:#9a3c30;font-weight:700}
 @media(max-width:510px){.qa-queue-panel{padding:10px}.qa-queue-row{gap:8px;padding:8px}.qa-queue-row>button{padding:6px 8px}}
+
+/* Build 264: local-only QA benchmark scoring and opt-in paid model audition. */
+.qa-bakeoff-panel{border:1px solid var(--line);border-radius:14px;margin:12px 0;padding:14px;background:rgba(255,255,255,.62)}
+.qa-bakeoff-panel>summary{font-weight:800;cursor:pointer}
+.qa-bakeoff-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:12px;margin:12px 0}
+.qa-bakeoff-fields label{font-weight:650;font-size:.85rem;display:flex;flex-direction:column;gap:5px;min-width:0}
+.qa-bakeoff-fields input,.qa-bakeoff-fields select{min-width:0;width:100%;max-width:100%;box-sizing:border-box}
+.qa-bakeoff-panel .actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:12px 0}
+.qa-bakeoff-results{margin:10px 0;font-size:.85rem}
+.qa-bakeoff-results p{margin:5px 0}
+.qa-bakeoff-metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:8px;margin:10px 0}
+.qa-bakeoff-metrics>div{padding:9px;border:1px solid var(--line);border-radius:9px;display:flex;flex-direction:column;gap:5px}
+.qa-bakeoff-metrics small{color:var(--muted)}
+.qa-bakeoff-warning{color:#8d342a;font-weight:650}
+.qa-bakeoff-import-label{cursor:pointer}
