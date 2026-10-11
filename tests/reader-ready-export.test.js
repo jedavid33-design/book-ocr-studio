@@ -6,7 +6,7 @@ const path = require("node:path");
 const source = fs.readFileSync(path.join(__dirname, "..", "script.js"), "utf8");
 
 assert.ok(/const BUILD_VERSION = "(?:25[5-9]|2[6-9][0-9]|[3-9][0-9]{2})"/.test(source));
-const exportStart = source.indexOf("async function buildEpub()");
+const exportStart = source.indexOf("async function buildEpub(");
 const exportEnd = source.indexOf("async function downloadEpub()", exportStart);
 assert.ok(exportStart >= 0 && exportEnd > exportStart, "EPUB exporter exists");
 const exporter = source.slice(exportStart, exportEnd);
