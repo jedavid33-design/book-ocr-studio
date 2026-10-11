@@ -11630,6 +11630,10 @@ ${coverSpine}${spine.join("\n")}
       return;
     }
 
+    // Book Info appears before Screenshots. An ornament chosen in step 1 must
+    // survive attaching the first batch. Clear it only when actually changing
+    // away from a loaded book, never on initial screenshot selection.
+    const replacingExistingBook = !!(state.files.length || state.pages.length || state.importedEpub);
     state.importedEpub = null;
     state.dropcapCandidates = [];
     state.repairBookHasRun = false;
@@ -11637,9 +11641,11 @@ ${coverSpine}${spine.join("\n")}
     state.ignoredFinalPolishIssues = new Set();
     state.files = selected;
     state.pages = [];
-    state.sceneOrnament = null;
-    state.useSceneOrnament = false;
-    sceneArtUI?.sync();
+    if (replacingExistingBook) {
+      state.sceneOrnament = null;
+      state.useSceneOrnament = false;
+      sceneArtUI?.sync();
+    }
     cropPreflight.onNewBatch();
     state.currentPageIndex = -1;
     state.cropPreviewIndex = defaultPreviewIndex();
