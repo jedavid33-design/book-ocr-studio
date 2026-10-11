@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "258";
+  const BUILD_VERSION = "259";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -208,6 +208,10 @@
     runChapterAudit: $("runChapterAudit"),
     chapterAuditStatus: $("chapterAuditStatus"),
     chapterAuditResults: $("chapterAuditResults"),
+    runWordAudit: $("runWordAudit"),
+    wordAuditStatus: $("wordAuditStatus"),
+    wordAuditResults: $("wordAuditResults"),
+    downloadWordAudit: $("downloadWordAudit"),
     reviewAllBtn: $("reviewAllBtn"),
     reviewChaptersBtn: $("reviewChaptersBtn"),
     prevPageBtn: $("prevPageBtn"),
@@ -4055,6 +4059,7 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
     els.messageOcrBtn.disabled = state.processing || !hasCurrent || !currentHasSource;
     els.pageDropcapBtn.disabled = state.processing || !hasCurrent;
     if (els.runChapterAudit) els.runChapterAudit.disabled = state.processing || !processed;
+    if (els.runWordAudit) els.runWordAudit.disabled = state.processing || !processed;
     if (els.markItalicBtn) els.markItalicBtn.disabled = state.processing || !hasCurrent;
     if (els.clearItalicBtn) els.clearItalicBtn.disabled = state.processing || !hasCurrent;
     els.nextPageBtn.disabled = state.processing || !hasCurrent || pos < 0 || pos >= indices.length - 1;
@@ -4136,6 +4141,83 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
     root.appendChild(list);
   }
   els.runChapterAudit?.addEventListener("click", showChapterOpeningAudit);
+
+
+  // Build 259: scans CURRENT authoritative text without auto-applying any edits.
+  // Do not syncCurrentEditor() here: a read-only scan must never save a checkpoint.
+  let latestWordAudit = null;
+  function showResidualWordAudit() {
+    if (!els.wordAuditResults || !window.OcrWordBoundaryAudit) return;
+    const activeIndex=state.currentPageIndex;
+    const currentEditor=els.reviewList?.querySelector("textarea");
+    const snapshot=state.pages.map((page,index)=>index===activeIndex && currentEditor
+      ? {...page,text:currentEditor.value} : page);
+    const report=window.OcrWordBoundaryAudit.audit(snapshot);
+    latestWordAudit=report;
+    const root=els.wordAuditResults;
+    root.replaceChildren();
+    root.classList.remove("hidden");
+    els.wordAuditStatus.textContent=report.total+" possible issue"+(report.total===1?"":"s")
+      +" · "+report.pagesScanned+" pages"+(report.omitted?" · "+report.omitted+" beyond display limit":"");
+    if(els.downloadWordAudit)els.downloadWordAudit.disabled=false;
+    const hint=document.createElement("p");
+    hint.className="hint";
+    hint.textContent="Suggestions are NOT fixes. This advisory scan cannot see every missing space. Verify each candidate against the original page; rerun the scan after manual corrections.";
+    root.appendChild(hint);
+    const groups=document.createElement("p");
+    groups.className="word-audit-counts";
+    groups.textContent=[
+      "Split ligatures: "+report.counts["split-ligature"],
+      "Hyphen wraps: "+report.counts["broken-hyphen"],
+      "Glued capitals: "+report.counts["glued-capital"],
+      "Punctuation spacing: "+report.counts["missing-punctuation-space"]
+    ].join(" · ");
+    root.appendChild(groups);
+    const jump=pageIndex=>{
+      setReviewMode("all");
+      state.currentPageIndex=pageIndex;
+      renderReview();
+      els.reviewSection?.scrollIntoView({behavior:"smooth",block:"start"});
+      setStatus("Reviewing possible word-boundary issue on page "+(pageIndex+1)+". Compare with the original screenshot.");
+    };
+    const list=document.createElement("div");
+    list.className="word-audit-list";
+    if(!report.findings.length){
+      const empty=document.createElement("p");
+      empty.textContent="No matches for these four patterns. This does not guarantee the book is free of word-boundary errors.";
+      list.appendChild(empty);
+    }
+    for(const item of report.findings) {
+      const row=document.createElement("div");
+      row.className="word-audit-row";
+      const btn=document.createElement("button");
+      btn.type="button";
+      btn.className="button secondary compact-button";
+      btn.textContent="Page "+(item.pageIndex+1);
+      btn.addEventListener("click",()=>jump(item.pageIndex));
+      const desc=document.createElement("div");
+      const label=document.createElement("strong");
+      label.textContent=item.match+" → "+item.suggestion+" (check source)";
+      const context=document.createElement("p");
+      context.className="word-audit-context";
+      context.textContent=item.excerpt;
+      const explanation=document.createElement("small");
+      explanation.textContent=item.reason;
+      desc.append(label,context,explanation);
+      row.append(btn,desc);
+      list.appendChild(row);
+    }
+    root.appendChild(list);
+  }
+  els.runWordAudit?.addEventListener("click",showResidualWordAudit);
+  els.downloadWordAudit?.addEventListener("click",()=>{
+    if(!latestWordAudit)return;
+    const payload={format:"book-ocr-studio-word-boundary-audit-v1",
+      build:BUILD_VERSION,bookTitle:String(els.bookTitle?.value||""),
+      exportedAt:new Date().toISOString(),...latestWordAudit};
+    downloadBlob(new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}),
+      cleanFilename(els.bookTitle?.value||"book")+"-word-boundary-audit.json");
+  });
 
   function renderReview() {
     els.reviewList.innerHTML = "";
