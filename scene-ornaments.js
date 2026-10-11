@@ -126,8 +126,11 @@
     }finally{URL.revokeObjectURL(url);}
   }
   function sceneCount(pages) {
+    // Match *paragraph* separators, not a standalone line embedded inside prose.
+    // This mirrors Studio's exportParagraphs() grouping rules.
     return (pages||[]).reduce((total,page)=>
-      total+(String(page?.text||"").match(/^\\s*\\* \\* \\*\\s*$/gm)||[]).length,0);
+      total+String(page?.text||"").replace(/\\r/g,"").trim()
+        .split(/\\n{2,}/).filter(part=>part.trim()==="* * *").length,0);
   }
   function controller({state,els,sourceFilesAttached,loadImageFromFile,saveCheckpoint}) {
     const pick=els.sceneArtSelect, apply=els.sceneArtApply;
