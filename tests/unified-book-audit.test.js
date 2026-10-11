@@ -52,7 +52,8 @@ for(const id of ["unifiedAuditAfterOcr","unifiedAuditAfterQa","unifiedAuditExpor
 }
 assert.ok(index.includes("unified-book-audit.js?v=260"));
 assert.ok(sw.includes("./unified-book-audit.js?v=260"));
-assert.ok(main.includes('const BUILD_VERSION = "260"'));
+const version=main.match(/const BUILD_VERSION = "([0-9]+)"/);
+assert.ok(version&&Number(version[1])>=260,"Unified audit requires Build 260+");
 assert.ok(main.includes("kindleReadyChecks({readOnly:true})"),"must use non-mutating preflight");
 assert.ok(main.includes("if (!readOnly) {"),"read-only preflight must bypass side effects");
 assert.ok(main.includes("finalPolishAudit({"),"must reuse existing Final Polish checks");
