@@ -1,6 +1,13 @@
 # Book OCR Studio 2.7.2
 
-Current production build: **260**.
+Current production build: **261**.
+
+## Build 261: Source-traceable first-pass OCR cleanup
+- When **new screenshot pages** are recognized, Studio now runs `ocr-first-pass.js` on the newly reconstructed text **before visual QA**. Fixes are deliberately narrow and deterministic: known internal false periods (`assist. ant → assistant`, `expres. sion → expression`, `resent. ment → resentment`); a tiny set of known split-letter words (`fi rst → first`, `fl owers → flowers`, `fi nally → finally`, `fl oor → floor`); and no-space comma/semicolon between multi-letter words (`said,then → said, then`). The rule set is idempotent and will not generalize to unknown or hyphenated words.
+- This **does not run on restored, already-processed, manually edited, or QA-approved pages**. Existing Repair Book / Final Polish remain unchanged. There is no retroactive blanket migration of old books. No new OCR request beyond the user's ordinary OCR run.
+- Each real correction is recorded under `page.layoutMeta.ocrFirstPass`; the Review page shows a collapsible `N first-pass OCR corrections` ledger with the exact before/after snippet and rule. The record survives ordinary checkpoint/backup export because it uses the existing `layoutMeta` serialization. Readers should verify source screenshots, especially for names or intentional unusual punctuation.
+- Changes to exported EPUB occur only because new OCR text is improved at ingestion, not because the exporter was altered. Uncertain mid-word capitals (`thenShe`), hyphen wraps (`wait- ing`), and drop-cap guesses still require review.
+- Loader 261; stylesheet 67; offline cache v87; no Worker. Regression: `node tests/ocr-first-pass.test.js`; GitHub Actions runs seven suites.
 
 ## Build 260: Unified Book Audit with two checkpoints
 - In **Review → Unified Book Audit**, choose **1 · Scan after OCR** for a non-mutating, full-book queue of chapter/drop-cap warnings, Final Polish paragraph/punctuation/scene-break candidates, residual word-boundary warnings, and empty-text pages. These are leads for visual QA, not validated defects or EPUB blockers.
