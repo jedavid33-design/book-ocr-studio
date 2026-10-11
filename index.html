@@ -13,7 +13,7 @@
 <link href="manifest.webmanifest" rel="manifest"/>
 <link href="apple-touch-icon.png" rel="apple-touch-icon"/>
 <link href="icon-192.png" rel="icon" sizes="192x192" type="image/png"/>
-<link href="styles.css?v=68" rel="stylesheet"/>
+<link href="styles.css?v=69" rel="stylesheet"/>
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
 </head>
 <body>
@@ -231,6 +231,32 @@
 <span class="progress-pill" id="reviewProgress">0 of 0 processed</span>
 </div>
 </div>
+<details class="qa-queue-panel" open>
+<summary>Prioritized QA Review · Where to look first</summary>
+<p class="hint">Rank pages by existing OCR/formatting warnings, then open each source screenshot. This is an inspection queue, not automated QA or a verification badge. No clean page is silently marked approved.</p>
+<div class="actions">
+<button class="button primary" id="qaQueueRun" type="button">Build priority queue</button>
+<button class="button secondary" id="qaQueueNext" type="button" disabled>Next flagged page</button>
+<span class="progress-pill" id="qaQueueStatus">Not scanned</span>
+</div>
+<div class="qa-queue-filters">
+<label>Show
+<select id="qaQueueFilter">
+<option value="attention" selected>All flagged pages</option>
+<option value="high">High attention only</option>
+<option value="all">Every processed page</option>
+<option value="unflagged">No patterns flagged (still needs QA)</option>
+</select>
+</label>
+<label>Order
+<select id="qaQueueSort">
+<option value="priority" selected>Most attention first</option>
+<option value="book">Original page order</option>
+</select>
+</label>
+</div>
+<div id="qaQueueResults" class="hidden" aria-live="polite"></div>
+</details>
 <details class="unified-audit-panel" open>
 <summary>Unified Book Audit · Two checkpoints</summary>
 <p class="hint">Run after OCR to guide visual QA, then after QA to recheck remaining problems and preview Kindle Ready statuses. Both scans are read-only.</p>
@@ -469,7 +495,8 @@
 <script src="unified-book-audit.js?v=260"></script>
 <script src="ocr-first-pass.js?v=261"></script>
 <script src="epub-visual-preview.js?v=262"></script>
-<script src="script-loader.js?v=262"></script>
+<script src="prioritized-qa-queue.js?v=263"></script>
+<script src="script-loader.js?v=263"></script>
 <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
