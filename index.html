@@ -13,7 +13,7 @@
 <link href="manifest.webmanifest" rel="manifest"/>
 <link href="apple-touch-icon.png" rel="apple-touch-icon"/>
 <link href="icon-192.png" rel="icon" sizes="192x192" type="image/png"/>
-<link href="styles.css?v=71" rel="stylesheet"/>
+<link href="styles.css?v=68" rel="stylesheet"/>
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
 </head>
 <body>
@@ -231,35 +231,6 @@
 <span class="progress-pill" id="reviewProgress">0 of 0 processed</span>
 </div>
 </div>
-
-<details class="qa-queue-panel" open>
-<summary>Prioritized QA Review · Where to look first</summary>
-<p class="hint">Rank pages by saved OCR/formatting warnings. Mark a page inspected only after comparing with its original screenshot; this is NOT automated QA approval. Previously inspected pages become stale if their text or chapter data changes.</p>
-<div class="actions">
-<button class="button primary" id="qaQueueRun" type="button">Build priority queue</button>
-<button class="button secondary" id="qaQueueNext" type="button" disabled>Next uninspected flag</button>
-<span class="progress-pill" id="qaQueueStatus">Not scanned</span>
-</div>
-<div class="qa-queue-filters">
-<label>Show
-<select id="qaQueueFilter">
-<option value="attention" selected>All flagged pages</option>
-<option value="high">High attention only</option>
-<option value="all">Every processed page</option>
-<option value="unflagged">No patterns flagged (still needs QA)</option>
-<option value="pending">Not yet inspected / stale (all pages)</option>
-<option value="inspected">Inspected by you (all pages)</option>
-</select>
-</label>
-<label>Order
-<select id="qaQueueSort">
-<option value="priority" selected>Most attention first</option>
-<option value="book">Original page order</option>
-</select>
-</label>
-</div>
-<div id="qaQueueResults" class="hidden" aria-live="polite"></div>
-</details>
 <details class="unified-audit-panel" open>
 <summary>Unified Book Audit · Two checkpoints</summary>
 <p class="hint">Run after OCR to guide visual QA, then after QA to recheck remaining problems and preview Kindle Ready statuses. Both scans are read-only.</p>
@@ -285,42 +256,6 @@
 </div>
 <div id="wordAuditResults" class="hidden" aria-live="polite"></div>
 </details>
-<details class="qa-bakeoff-panel">
-<summary>AI QA Bake-off · Parked (optional paid experiment)</summary>
-<p class="hint">Load a BLIND benchmark ZIP containing source screenshots and original OCR snippets. Keep its private corrected EPUB and answer key in the separate LOCAL reference ZIP. Scores are calculated on-device; the answer key is never sent to the model.</p>
-<div class="qa-bakeoff-fields">
-<label>Blind screenshots + OCR inputs
-<input id="qaBakeoffBlind" type="file" accept=".zip,application/zip" />
-</label>
-<label>Private polished reference (local scoring only)
-<input id="qaBakeoffGold" type="file" accept=".zip,application/zip" />
-</label>
-<label>Model to audition
-<select id="qaBakeoffModel">
-<option value="google/gemini-3.1-flash-lite-preview">Gemini 3.1 Flash Lite</option>
-<option value="google/gemini-3.8-flash">Gemini 3.8 Flash</option>
-<option value="anthropic/claude-sonnet-4.6">Claude Sonnet 4.6</option>
-</select>
-</label>
-<label>Private QA Worker base URL (HTTPS)
-<input id="qaBakeoffEndpoint" type="url" placeholder="https://your-qa-relay.workers.dev" autocomplete="off"/>
-</label>
-<label>Worker access token (NOT OpenRouter key)
-<input id="qaBakeoffToken" type="password" placeholder="Temporary token, never saved" autocomplete="off"/>
-</label>
-</div>
-<p class="hint">Models receive one page image and its OCR snippets per request, with no polished EPUB or QA gold data. Worker setup and OpenRouter account are required for paid calls. Privacy routing requires zero data retention and provider data-collection denial. Run only if you are authorized to transmit these pages.</p>
-<div class="actions">
-<button class="button secondary" id="qaBakeoffCheckKey" type="button">Check OpenRouter key · No charge</button>
-<button class="button primary" id="qaBakeoffRun" type="button" disabled>Run next 3 pages · Paid API</button>
-<button class="button ghost" id="qaBakeoffStop" type="button" disabled>Stop after current page</button>
-<button class="button secondary" id="qaBakeoffExport" type="button" disabled>Export results JSON</button>
-<label class="qa-bakeoff-import-label button ghost" for="qaBakeoffImport">Import previous results<input id="qaBakeoffImport" type="file" accept=".json,application/json" hidden /></label>
-</div>
-<p class="progress-pill" id="qaBakeoffStatus" aria-live="polite">Load a blind benchmark ZIP to begin. No external requests until you confirm.</p>
-<div id="qaBakeoffResults" class="qa-bakeoff-results" aria-live="polite"></div>
-</details>
-<div class="review-working-area">
 <div class="review-list" id="reviewList"></div>
 <div class="nav-row">
 <button class="button ghost" disabled="" id="prevPageBtn" type="button">Previous page</button>
@@ -336,7 +271,6 @@
 <button class="button secondary" id="redetectChaptersBtn" type="button" title="Replace chapter markers from saved OCR. No OCR rerun.">Re-detect chapter starts</button>
 </div>
 </details>
-</div>
 </details>
 <section class="card hidden" id="guidedRepairSection"><h2>6. Guided Repair</h2><div class="subcard guided-repair-card">
 <p class="hint">One pass through the safe, proven repair pipeline. Studio rebuilds paragraph structure first, applies conservative italics while source geometry is still authoritative, then runs safe cleanup, split-ligature repair, and Dropcap Rescue. High-confidence dropcaps are accepted automatically; anything uncertain stays for review.</p>
@@ -535,11 +469,7 @@
 <script src="unified-book-audit.js?v=260"></script>
 <script src="ocr-first-pass.js?v=261"></script>
 <script src="epub-visual-preview.js?v=262"></script>
-<script src="prioritized-qa-queue.js?v=263"></script>
-<script src="qa-review-inspection.js?v=267"></script>
-<script src="qa-bakeoff-core.js?v=264"></script>
-<script src="qa-bakeoff-ui.js?v=266"></script>
-<script src="script-loader.js?v=267"></script>
+<script src="script-loader.js?v=262"></script>
 <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
