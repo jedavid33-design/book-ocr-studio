@@ -13,7 +13,7 @@
 <link href="manifest.webmanifest" rel="manifest"/>
 <link href="apple-touch-icon.png" rel="apple-touch-icon"/>
 <link href="icon-192.png" rel="icon" sizes="192x192" type="image/png"/>
-<link href="styles.css?v=67" rel="stylesheet"/>
+<link href="styles.css?v=68" rel="stylesheet"/>
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
 </head>
 <body>
@@ -369,7 +369,11 @@
 </div>
 </div>
 </details>
-</div></details><details class="card hidden kindle-ready-section" id="kindleReadySection" open=""><summary class="kindle-ready-summary">8. Kindle Ready</summary><div class="kindle-ready-body"><p class="hint">Final preflight for a clean reflowable EPUB before Send to Kindle. This inspects the repaired/polished book and does not change text.</p><div class="actions"><button class="button primary" id="runKindleReady" type="button">Run Kindle Ready Check</button><span class="progress-pill" id="kindleReadyStatus">Not checked</span></div><div class="regression-results hidden" id="kindleReadyResults"></div></div></details><section class="card hidden" id="exportSection"><h2>9. Export</h2><div class="actions">
+</div></details><details class="card hidden kindle-ready-section" id="kindleReadySection" open=""><summary class="kindle-ready-summary">8. Kindle Ready</summary><div class="kindle-ready-body"><p class="hint">Final preflight for a clean reflowable EPUB before Send to Kindle. This inspects the repaired/polished book and does not change text.</p><div class="actions"><button class="button primary" id="runKindleReady" type="button">Run Kindle Ready Check</button><span class="progress-pill" id="kindleReadyStatus">Not checked</span></div><div class="regression-results hidden" id="kindleReadyResults"></div><div class="epub-preview-launch">
+<button class="button secondary" id="epubPreviewBtn" type="button" disabled>Preview generated EPUB</button>
+<p class="hint">Inspect the EPUB's own XHTML, CSS, bubbles and artwork at phone or tablet width. Read-only and no download required. Best used after Kindle Ready. A browser preview cannot certify Apple Books or Kindle pagination.</p>
+</div>
+</div></details><section class="card hidden" id="exportSection"><h2>9. Export</h2><div class="actions">
 <button class="button primary" id="downloadTxt" type="button">Download TXT</button>
 <button class="button secondary" id="downloadEpub" type="button">Download EPUB</button>
 </div><p class="hint">For imported EPUBs, export keeps the original package and changes only repairs you applied. For screenshot projects, it uses the existing Book OCR Studio exporter.</p></section>
@@ -390,6 +394,31 @@
 </div>
 </details>
 </main>
+<dialog id="epubPreviewDialog" aria-labelledby="epubPreviewHeading" class="epub-preview-dialog">
+<div class="epub-preview-shell">
+<div class="epub-preview-heading">
+<div>
+<h2 id="epubPreviewHeading">EPUB Visual Preview</h2>
+<p class="hint">Rendered from the actual generated EPUB files. Check Apple Books/Kindle separately before final sign-off.</p>
+</div>
+<button class="button secondary" type="button" id="epubPreviewClose">Close</button>
+</div>
+<div class="epub-preview-controls">
+<label>Section <select id="epubPreviewSelect" aria-label="Select EPUB section"></select></label>
+<button class="button ghost compact-button" type="button" id="epubPreviewPrev">Previous</button>
+<button class="button ghost compact-button" type="button" id="epubPreviewNext">Next</button>
+<label>Reader width <select id="epubPreviewViewport" aria-label="EPUB preview screen width">
+<option value="360" selected>Phone · 360px</option>
+<option value="640">Small tablet · 640px</option>
+<option value="820">Wide reader · 820px</option>
+</select></label>
+</div>
+<p class="epub-preview-status" id="epubPreviewStatus" aria-live="polite">No preview loaded.</p>
+<div class="epub-preview-frame-wrap"><iframe id="epubPreviewFrame" title="Generated EPUB chapter preview" sandbox="" referrerpolicy="no-referrer"></iframe></div>
+<div id="epubPreviewMetrics" class="epub-preview-metrics" aria-live="polite"></div>
+<p class="hint">Preview is read-only and may differ from device-specific pagination, installed fonts, or future edits. Final EPUB export may project newly approved italic evidence, so run Kindle Ready first.</p>
+</div>
+</dialog>
 <dialog aria-labelledby="pageDropcapTitle" id="pageDropcapDialog">
 <div class="dialog-card">
 <div class="dialog-head">
@@ -439,7 +468,8 @@
 <script src="word-boundary-audit.js?v=259"></script>
 <script src="unified-book-audit.js?v=260"></script>
 <script src="ocr-first-pass.js?v=261"></script>
-<script src="script-loader.js?v=261"></script>
+<script src="epub-visual-preview.js?v=262"></script>
+<script src="script-loader.js?v=262"></script>
 <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
