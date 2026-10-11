@@ -1,6 +1,13 @@
 # Book OCR Studio 2.7.2
 
-Current production build: **261**.
+Current production build: **262**.
+
+## Build 262: Generated EPUB visual preview
+- After **Kindle Ready**, choose **Preview generated EPUB** in section 8. Studio builds its actual screenshot-project EPUB **in memory**, then loads the generated chapter XHTML and `EPUB/style.css` from that ZIP into an isolated, script-disabled iframe. This does not save or download the EPUB, nor edit OCR/QA text. The regular **Download EPUB** path remains unchanged.
+- Select cover/title or any chapter; navigate with Previous/Next. Preview at phone (360 px), small tablet (640 px) or wider reader (820 px) widths, with scrollable page content. A per-section report counts paragraphs, italic runs, text-message groups, semantic scene breaks and embedded illustrated dividers, with advisory warnings for residual markup/empty sections or duplicated headings.
+- The preview uses the actual packaged styling and embeds images only if they occur in the generated EPUB ZIP, using local data URLs. Its iframe has a restrictive content security policy and `sandbox=""` (no script execution, no same-origin access). No remote preview server or worker.
+- Supported for **screenshot-to-EPUB projects**. Existing imported-EPUB repair preserves the uploaded package and is not previewed in this build. Preview is diagnostic and cannot guarantee Apple Books/Kindle font substitution, paginated layout, or reading-app compatibility. Export can still project accepted italics; run Kindle Ready first, and verify the actual exported book in a reading app before signing off.
+- Build 262 adds `epub-visual-preview.js`, stylesheet 68, loader 262, offline cache v88, and `node tests/epub-visual-preview.test.js` (eight regression suites in CI).
 
 ## Build 261: Source-traceable first-pass OCR cleanup
 - When **new screenshot pages** are recognized, Studio now runs `ocr-first-pass.js` on the newly reconstructed text **before visual QA**. Fixes are deliberately narrow and deterministic: known internal false periods (`assist. ant → assistant`, `expres. sion → expression`, `resent. ment → resentment`); a tiny set of known split-letter words (`fi rst → first`, `fl owers → flowers`, `fi nally → finally`, `fl oor → floor`); and no-space comma/semicolon between multi-letter words (`said,then → said, then`). The rule set is idempotent and will not generalize to unknown or hyphenated words.
