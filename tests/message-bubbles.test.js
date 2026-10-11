@@ -42,7 +42,7 @@ const original=state.pages.map(p=>p.text);
 const current=bubble.rows(state.pages[0].text,[]).rows[2];
 state.pages[0].messageBubbles=bubble.setAnnotation([],current,"outgoing",true);
 const makeSections=new Function("state","exportParagraphs","stripExportedChapterHeading","joinParagraphLines","window",
-  section("function sectionParagraphs(section)","function kindleReadyChecks()")+";return sectionParagraphs;");
+  section("function sectionParagraphs(section)","function kindleReadyChecks(")+";return sectionParagraphs;");
 const pageSections=makeSections(state,bubble.paragraphs,text=>text.replace("CHAPTER ONE\n\n",""),parts=>parts.join(" "),{OcrMessageBubbles:bubble});
 const rows=pageSections({title:"CHAPTER ONE",start:0,end:2,nav:true,pov:"Randy"});
 assert.equal(rows[0].side,"outgoing");
@@ -82,7 +82,7 @@ const checkpoint=section("function buildCheckpointPayload()","let projectCheckpo
 const restoration=section("function applyCheckpoint(","function legacyCheckpointCandidates");
 assert.ok(checkpoint.includes("messageBubbles:"));
 assert.ok(restoration.includes("messageBubbles:"));
-const ready=section("function kindleReadyChecks()","function renderKindleReady");
+const ready=section("function kindleReadyChecks(","function renderKindleReady");
 assert.ok(ready.includes('add("Reviewed text bubbles", staleBubbles ? "fail"'));
 testExport().then(()=>console.log("Build 256: 18 bubble/export/retention checks passed"))
 .catch(error=>{console.error(error);process.exitCode=1;});
