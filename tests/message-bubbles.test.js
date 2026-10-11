@@ -63,7 +63,7 @@ const exportBook=new Function("state","els","window","JSZip","crypto",
   section("async function buildEpub()","async function downloadEpub()")+";return buildEpub;");
 const escaped=value=>String(value).replace(/&/g,"&amp;").replace(/</g,"&lt;");
 async function testExport(){
-  const fn=exportBook(state,els,{JSZip:Zip},Zip,{randomUUID:()=>"test-id"},
+  const fn=exportBook(state,els,{JSZip:Zip,OcrMessageBubbles:bubble},Zip,{randomUUID:()=>"test-id"},
     ()=>{},()=>{},x=>x,x=>x,()=>[{title:"CHAPTER ONE",start:0,end:2,nav:true,pov:"Randy"}],
     escaped,pageSections,value=>"<p>"+escaped(value)+"</p>",()=>{downloaded=true});
   await fn();
