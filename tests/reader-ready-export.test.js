@@ -17,7 +17,7 @@ assert.ok(exporter.includes('data-opal-pov='),
 assert.ok(!exporter.includes('class="scene-break" data-opal-narration="skip"'),
   "Reader must see scene-break nodes to insert pauses");
 
-const readyStart = source.indexOf("function kindleReadyChecks()");
+const readyStart = source.indexOf("function kindleReadyChecks(");
 const readyEnd = source.indexOf("function renderKindleReady", readyStart);
 assert.ok(readyStart >= 0 && readyEnd > readyStart);
 const makeCheck = new Function("state", "els", "sections", "window", `
