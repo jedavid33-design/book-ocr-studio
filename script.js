@@ -11834,6 +11834,137 @@ ${coverSpine}${spine.join("\n")}
   }
 
 
+
+  // Build 262: preview the generated archive's actual XHTML/CSS in a sandboxed
+  // iframe. No export download, no external resources, no saved OCR mutations.
+  let epubVisualSession=null;
+  let epubVisualRequest=0;
+  async function renderEpubVisualSection(index){
+    const session=epubVisualSession;
+    if(!session || !els.epubPreviewFrame)return;
+    const request=++epubVisualRequest;
+    const next=Math.max(0,Math.min(session.entries.length-1,Number(index)||0));
+    const entry=session.entries[next];
+    if(!entry)return;
+    if(els.epubPreviewSelect)els.epubPreviewSelect.value=String(next);
+    if(els.epubPreviewPrev)els.epubPreviewPrev.disabled=next===0;
+    if(els.epubPreviewNext)els.epubPreviewNext.disabled=next===session.entries.length-1;
+    els.epubPreviewStatus.textContent="Rendering "+entry.label+"…";
+    try{
+      const item=session.archive.file(entry.path);
+      if(!item)throw new Error("Missing generated EPUB section "+entry.path);
+      const xhtml=await item.async("string");
+      if(request!==epubVisualRequest || session!==epubVisualSession)return;
+      const report=window.OcrEpubVisualPreview.inspectXhtml(xhtml);
+      const content=window.OcrEpubVisualPreview.htmlDocument(xhtml,session.css,session.images);
+      els.epubPreviewFrame.srcdoc=content;
+      const metrics=els.epubPreviewMetrics;
+      metrics.replaceChildren();
+      const summary=document.createElement("p");
+      summary.textContent=report.paragraphs+" paragraphs · "+report.italics+
+        " italic spans · "+report.groups+" message bubbles · "+
+        report.sceneBreaks+" scene breaks"+
+        (report.illustrations?" ("+report.illustrations+" illustrated)":"");
+      metrics.appendChild(summary);
+      for(const warning of report.warnings){
+        const note=document.createElement("p");
+        note.className="epub-preview-warning";
+        note.textContent="Check: "+warning;
+        metrics.appendChild(note);
+      }
+      els.epubPreviewStatus.textContent=entry.label+" · "+(next+1)+"/"+session.entries.length+
+        (report.warnings.length?" · "+report.warnings.length+" review note"+(report.warnings.length===1?"":"s"):"");
+    }catch(error){
+      if(request!==epubVisualRequest)return;
+      console.warn("EPUB visual preview could not render section",error);
+      els.epubPreviewStatus.textContent="Could not render section: "+String(error?.message||error);
+    }
+  }
+  async function openEpubVisualPreview(){
+    if(state.processing || !state.pages.length)return;
+    if(state.importedEpub){
+      setStatus("Visual preview currently supports screenshot-based EPUBs only. Imported EPUB exports still retain their original package.");
+      return;
+    }
+    const editor=els.reviewList?.querySelector("textarea");
+    if(editor && state.pages[state.currentPageIndex] &&
+      editor.value!==state.pages[state.currentPageIndex].text){
+      setStatus("Save the current Review edit before building an EPUB preview.");
+      return;
+    }
+    if(!window.JSZip || !window.OcrEpubVisualPreview){
+      setStatus("EPUB preview helpers are missing. Reload OCR Studio and try again.");
+      return;
+    }
+    const button=els.epubPreviewBtn;
+    if(button)button.disabled=true;
+    const startSession=++epubVisualRequest;
+    els.epubPreviewStatus.textContent="Building EPUB preview…";
+    try{
+      const blob=await buildEpub({preview:true});
+      const archive=await window.JSZip.loadAsync(blob);
+      const cssFile=archive.file("EPUB/style.css");
+      if(!cssFile)throw new Error("Generated EPUB is missing its stylesheet.");
+      const css=await cssFile.async("string");
+      const chapters=Object.keys(archive.files).filter(p=>
+        /^EPUB\/chapter-\d+\.xhtml$/.test(p)).sort();
+      const entries=[];
+      const namedSections=chapterSections();
+      if(archive.file("EPUB/cover.xhtml"))entries.push({path:"EPUB/cover.xhtml",label:"Cover"});
+      if(archive.file("EPUB/title.xhtml"))entries.push({path:"EPUB/title.xhtml",label:"Title page"});
+      chapters.forEach((path,index)=>entries.push({
+        path,label:String(namedSections[index]?.title||"Section "+(index+1)).trim()||"Section "+(index+1)
+      }));
+      if(!chapters.length)throw new Error("Generated EPUB has no chapter sections.");
+      const images={};
+      const imagePaths=Object.keys(archive.files).filter(p=>
+        /^EPUB\/(?:images\/[^/]+|cover\.[^.]+)$/.test(p)&&/\.(?:png|jpg|jpeg|webp)$/i.test(p));
+      await Promise.all(imagePaths.map(async path=>{
+        const item=archive.file(path);if(!item)return;
+        const data=await item.async("base64");
+        const mime=/\.png$/i.test(path)?"image/png":
+          /\.webp$/i.test(path)?"image/webp":"image/jpeg";
+        images[path.slice(5)]="data:"+mime+";base64,"+data;
+      }));
+      if(startSession!==epubVisualRequest)return;
+      epubVisualSession={archive,css,entries,images};
+      const select=els.epubPreviewSelect;
+      select.replaceChildren();
+      entries.forEach((entry,index)=>{
+        const option=document.createElement("option");
+        option.value=String(index);
+        option.textContent=entry.label;
+        select.appendChild(option);
+      });
+      els.epubPreviewFrame.style.width=(els.epubPreviewViewport?.value||"360")+"px";
+      if(!els.epubPreviewDialog.open)els.epubPreviewDialog.showModal();
+      await renderEpubVisualSection(entries.some(e=>e.path.includes("chapter-"))?
+        Math.max(0,entries.findIndex(e=>e.path.includes("chapter-"))):0);
+      setStatus("Generated EPUB preview opened. Review in Studio, then verify the exported file in Apple Books/Kindle as well.");
+    }catch(error){
+      console.error("Could not build EPUB preview",error);
+      els.epubPreviewStatus.textContent="Preview unavailable: "+String(error?.message||error);
+      setStatus("Could not build EPUB preview: "+String(error?.message||error));
+    }finally{
+      if(button)button.disabled=false;
+    }
+  }
+  els.epubPreviewBtn?.addEventListener("click",openEpubVisualPreview);
+  els.epubPreviewClose?.addEventListener("click",()=>els.epubPreviewDialog?.close());
+  els.epubPreviewSelect?.addEventListener("change",value=>renderEpubVisualSection(Number(value?.target?.value)));
+  els.epubPreviewPrev?.addEventListener("click",()=>renderEpubVisualSection(Number(els.epubPreviewSelect?.value)-1));
+  els.epubPreviewNext?.addEventListener("click",()=>renderEpubVisualSection(Number(els.epubPreviewSelect?.value)+1));
+  els.epubPreviewViewport?.addEventListener("change",()=>{
+    if(els.epubPreviewFrame)els.epubPreviewFrame.style.width=els.epubPreviewViewport.value+"px";
+  });
+  els.epubPreviewDialog?.addEventListener("close",()=>{
+    ++epubVisualRequest;
+    epubVisualSession=null;
+    if(els.epubPreviewFrame)els.epubPreviewFrame.srcdoc="";
+    if(els.epubPreviewMetrics)els.epubPreviewMetrics.replaceChildren();
+    if(els.epubPreviewStatus)els.epubPreviewStatus.textContent="Preview closed.";
+  });
+
   function applySourceProfile(profile, { preserveCrop = false } = {}) {
     const next = profile === "kindle-georgia" ? "kindle-georgia" : profile === "custom" ? "custom" : "cloud-iowan";
     state.sourceProfile = next;
