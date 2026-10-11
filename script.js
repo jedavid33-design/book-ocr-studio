@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "261";
+  const BUILD_VERSION = "262";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -292,6 +292,16 @@
     runKindleReady: $("runKindleReady"),
     kindleReadyStatus: $("kindleReadyStatus"),
     kindleReadyResults: $("kindleReadyResults"),
+    epubPreviewBtn: $("epubPreviewBtn"),
+    epubPreviewDialog: $("epubPreviewDialog"),
+    epubPreviewClose: $("epubPreviewClose"),
+    epubPreviewSelect: $("epubPreviewSelect"),
+    epubPreviewPrev: $("epubPreviewPrev"),
+    epubPreviewNext: $("epubPreviewNext"),
+    epubPreviewViewport: $("epubPreviewViewport"),
+    epubPreviewFrame: $("epubPreviewFrame"),
+    epubPreviewMetrics: $("epubPreviewMetrics"),
+    epubPreviewStatus: $("epubPreviewStatus"),
     epubInput: $("epubInput"),
     epubImportStatus: $("epubImportStatus"),
     dropcapSection: $("dropcapSection"),
@@ -4063,6 +4073,7 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
     els.prevPageBtn.disabled = state.processing || !hasCurrent || pos <= 0;
     els.messageOcrBtn.disabled = state.processing || !hasCurrent || !currentHasSource;
     els.pageDropcapBtn.disabled = state.processing || !hasCurrent;
+    if (els.epubPreviewBtn) els.epubPreviewBtn.disabled = state.processing || !processed;
     if (els.unifiedAuditAfterOcr) els.unifiedAuditAfterOcr.disabled = state.processing || !processed;
     if (els.unifiedAuditAfterQa) els.unifiedAuditAfterQa.disabled = state.processing || !processed;
     if (els.runChapterAudit) els.runChapterAudit.disabled = state.processing || !processed;
@@ -11534,17 +11545,20 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
     return report;
   }
 
-  async function buildEpub() {
+  async function buildEpub({preview=false} = {}) {
     if (!window.JSZip) throw new Error("JSZip did not load.");
     if (state.importedEpub) {
+      if(preview)throw new Error("Studio visual preview currently supports screenshot-based EPUB output, not patched imported EPUBs.");
       await exportRepairedImportedEpub();
       return;
     }
-    syncCurrentEditor();
-    // Do not trust an earlier scan/projection to still be reflected after later
-    // Repair/Polish edits. Re-project accepted italic evidence onto the latest
-    // authoritative wording immediately before serialization.
-    ensureItalicEvidenceProjected();
+    if (!preview) {
+      syncCurrentEditor();
+      // Export applies the existing italic projection. The inspection-only
+      // preview deliberately avoids this save/mutation path; Kindle Ready
+      // should be run first to project any remaining approved italic evidence.
+      ensureItalicEvidenceProjected();
+    }
     const invalidMessagePages = state.pages.flatMap((page,index) =>
       window.OcrMessageBubbles.validate(page).stale.length ? [index + 1] : []);
     if (invalidMessagePages.length) throw new Error(
@@ -11801,6 +11815,7 @@ ${coverSpine}${spine.join("\n")}
       compressionOptions: { level: 6 }
     });
 
+    if(preview)return blob;
     downloadBlob(blob, `${safeTitle}.epub`);
   }
 
