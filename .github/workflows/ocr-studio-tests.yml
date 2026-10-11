@@ -19,6 +19,11 @@ jobs:
           node --check unified-book-audit.js
           node --check ocr-first-pass.js
           node --check epub-visual-preview.js
+          node --check prioritized-qa-queue.js
+          node --check qa-review-inspection.js
+          node --check qa-bakeoff-core.js
+          node --check qa-bakeoff-ui.js
+          node --check cloudflare/openrouter-qa-relay.js
           node --check message-bubbles.js
           node --check scene-ornaments.js
       - name: Run production regression fixtures
@@ -31,3 +36,6 @@ jobs:
           node tests/unified-book-audit.test.js
           node tests/ocr-first-pass.test.js
           node tests/epub-visual-preview.test.js
+          node tests/prioritized-qa-queue.test.js
+          node tests/qa-review-inspection.test.js
+          node tests/qa-bakeoff.test.js

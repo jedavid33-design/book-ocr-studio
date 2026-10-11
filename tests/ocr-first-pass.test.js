@@ -46,8 +46,8 @@ assert.ok(script.includes("const text = firstPass.text"));
 assert.ok(script.includes("firstPassLedger.appendChild(row)"));
 assert.ok(html.includes('ocr-first-pass.js?v=261'));
 assert.ok(sw.includes('./ocr-first-pass.js?v=261'));
-// Build 262 bumps the main loader while the first-pass helper stays at v261.
-assert.ok(loader.includes('script.js?v=262'));
+const loaderRevision=loader.match(/script\.js\?v=([0-9]+)/);
+assert.ok(loaderRevision && Number(loaderRevision[1])>=261,"The loader must include Build 261 or newer");
 // Guard old imported/QA material from this new helper, even via explicit repair.
 const firstPassCalls=script.match(/OcrFirstPassRepair\.repair\(/g)||[];
 assert.equal(firstPassCalls.length,1,"the auto-joiner must run only at first OCR capture");

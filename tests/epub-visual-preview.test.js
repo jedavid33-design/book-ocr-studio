@@ -32,8 +32,10 @@ for(const id of ["epubPreviewBtn","epubPreviewDialog","epubPreviewClose","epubPr
 assert.ok(html.includes('id="epubPreviewFrame" title="Generated EPUB chapter preview" sandbox=""'),"iframe must block script execution and same-origin access");
 assert.ok(html.includes("epub-visual-preview.js?v=262"));
 assert.ok(sw.includes("./epub-visual-preview.js?v=262"));
-assert.ok(loader.includes("script.js?v=262"));
-assert.ok(main.includes('const BUILD_VERSION = "262"'));
+const revision=loader.match(/script\.js\?v=([0-9]+)/);
+assert.ok(revision && Number(revision[1])>=262,"EPUB preview requires loader 262+");
+const current=main.match(/const BUILD_VERSION = "([0-9]+)"/);
+assert.ok(current && Number(current[1])>=262,"EPUB preview requires Build 262+");
 assert.ok(main.includes('async function buildEpub({preview=false} = {})'));
 assert.ok(main.includes('if(preview)return blob;'),"preview should not download the archive");
 assert.ok(main.includes('await buildEpub({preview:true})'));
