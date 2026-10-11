@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "254";
+  const BUILD_VERSION = "255";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -10871,6 +10871,19 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
           ? `${sections.length} EPUB navigation entr${sections.length===1?"y":"ies"} generated from ${markedStarts} marked chapter start${markedStarts===1?"":"s"}.`
           : `${sections.length} fallback EPUB navigation entry will be generated. No explicit chapter starts are marked.`);
 
+    // The presence of POV metadata means the project is explicitly cast.
+    // Warn about holes instead of silently sending some chapters to a fallback voice.
+    // Books without named chapter POVs are valid and remain unchanged.
+    const castSections = sections.filter(s => s.nav && !/^(?:front matter|contents|copyright|dedication)$/i.test(String(s.title || "").trim()));
+    const castCount = castSections.filter(s => String(s.pov || "").trim()).length;
+    const missingCast = castSections.filter(s => !String(s.pov || "").trim());
+    add("Reader POV metadata", castCount && missingCast.length ? "warn" : "pass",
+      castCount && missingCast.length
+        ? `${castCount}/${castSections.length} story sections have a narrator. Review missing POV labels before importing into Opal Reader: ${missingCast.map(s => s.title || "Untitled").slice(0, 5).join(", ")}${missingCast.length > 5 ? "…" : ""}.`
+        : castCount
+          ? `All ${castSections.length} story sections carry explicit narration POV metadata; text-message senders do not change the chapter voice.`
+          : "No chapter POV casting is set. Reader can use its default voice if that is intentional.");
+
     // Repair Book owns repair resolution. Kindle Ready consumes that canonical
     // stage state instead of running a separate repair-discovery/counting path.
     const repairState = getRepairReviewState();
@@ -10909,7 +10922,7 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
 
     const sceneBreaks = state.pages.reduce((n, p) => n + ((String(p.text || "").match(/^\s*\* \* \*\s*$/gm) || []).length), 0);
     add("Scene breaks", "pass",
-      sceneBreaks ? `${sceneBreaks} semantic scene break${sceneBreaks===1?"":"s"} will export as EPUB separators.` : "No semantic scene breaks are present in this batch.");
+      sceneBreaks ? `${sceneBreaks} semantic scene break${sceneBreaks===1?"":"s"} will export as visible EPUB separators and nonspoken Opal Reader pause markers.` : "No semantic scene breaks are present in this batch.");
 
     add("Kindle-safe structure", "pass",
       "Exporter uses a reflowable EPUB 3 package with nav.xhtml, ordered spine entries, semantic paragraphs/emphasis, and simple relative CSS suitable for Send to Kindle.");
@@ -11010,7 +11023,7 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
       const fileName = `chapter-${String(sectionIndex + 1).padStart(3, "0")}.xhtml`;
       const itemId = `chapter-${sectionIndex + 1}`;
       const bodyParagraphs = sectionParagraphs(section).map(({ text, pageIndex, paragraphIndex }) => {
-        if (String(text || "").trim() === "* * *") return `<p id="p-${pageIndex + 1}-${paragraphIndex + 1}" class="scene-break">* * *</p>`;
+        if (String(text || "").trim() === "* * *") return `<p id="p-${pageIndex + 1}-${paragraphIndex + 1}" class="scene-break" data-opal-scene-break="true">* * *</p>`;
         const html = paragraphToEpubHtml(text);
         return html.replace("<p>", `<p id="p-${pageIndex + 1}-${paragraphIndex + 1}">`);
       });
