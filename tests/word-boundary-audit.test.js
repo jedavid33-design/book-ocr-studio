@@ -36,6 +36,7 @@ for(const id of ["runWordAudit","wordAuditResults","wordAuditStatus","downloadWo
 }
 assert.ok(index.includes("word-boundary-audit.js?v=259"));
 assert.ok(script.includes("window.OcrWordBoundaryAudit.audit(snapshot)"));
-assert.ok(script.includes('const BUILD_VERSION = "259"'));
+const version=script.match(/const BUILD_VERSION = "([0-9]+)"/);
+assert.ok(version && Number(version[1])>=259,"Word audit requires Build 259+");
 assert.ok(!fs.readFileSync(path.join(__dirname,"..","word-boundary-audit.js"),"utf8").includes(".text = "),"pure audit must not assign text");
 console.log("Build 259 residual word-boundary audit: all fixtures passed");
