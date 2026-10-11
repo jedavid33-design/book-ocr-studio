@@ -54,13 +54,16 @@ const script=fs.readFileSync(path.join(root,"script.js"),"utf8");
 const worker=fs.readFileSync(path.join(root,"cloudflare/openrouter-qa-relay.js"),"utf8");
 const browser=fs.readFileSync(path.join(root,"qa-bakeoff-ui.js"),"utf8");
 for(const id of ["qaBakeoffBlind","qaBakeoffGold","qaBakeoffModel","qaBakeoffEndpoint",
-  "qaBakeoffToken","qaBakeoffRun","qaBakeoffStop","qaBakeoffExport","qaBakeoffImport","qaBakeoffResults"])
+  "qaBakeoffToken","qaBakeoffRun","qaBakeoffCheckKey","qaBakeoffStop","qaBakeoffExport","qaBakeoffImport","qaBakeoffResults"])
  assert.ok(html.includes('id="'+id+'"'),"Missing UI "+id);
-assert.ok(html.includes("qa-bakeoff-core.js?v=264")&&html.includes("qa-bakeoff-ui.js?v=265"));
-assert.ok(sw.includes("qa-bakeoff-core.js?v=264")&&sw.includes("qa-bakeoff-ui.js?v=265"));
-assert.ok(script.includes('const BUILD_VERSION = "265"'));
+assert.ok(html.includes("qa-bakeoff-core.js?v=264")&&html.includes("qa-bakeoff-ui.js?v=266"));
+assert.ok(sw.includes("qa-bakeoff-core.js?v=264")&&sw.includes("qa-bakeoff-ui.js?v=266"));
+assert.ok(script.includes('const BUILD_VERSION = "266"'));
 assert.ok(worker.includes('env.OPENROUTER_API_KEY'));
 assert.ok(worker.includes('env.QA_ACCESS_TOKEN'));
+assert.ok(worker.includes('url.pathname==="/key-check"'), "Authenticated key-check route must exist");
+assert.ok(worker.includes('/api/v1/key'), "Key check must use non-generative OpenRouter endpoint");
+assert.ok(worker.includes('upstreamStatus:code'), "Model errors must expose sanitized upstream status");
 assert.ok(worker.includes('data_collection:"deny",zdr:true,require_parameters:true'));
 assert.ok(worker.includes('const MODELS=new Set'));
 assert.ok(worker.includes('Access-Control-Allow-Origin'));
