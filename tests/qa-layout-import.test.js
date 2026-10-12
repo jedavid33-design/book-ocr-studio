@@ -62,6 +62,36 @@ assert.ok(layout.validateShape([chapter(1,"p0001","p0003",[
 assert.ok(layout.validateShape([chapter(1,"p0001","p0003",[
   {...tests[0]},{...tests[0]}
 ])],3).length>0);
+// Build 272: a rejected raw OCR quote anomaly may be recovered only with
+// the exact, source-reviewed full paragraph and a tiny edit distance.
+const shortFix=mk("quote1","verified_paragraph_edit","p0003",{
+ matchParagraph:"” All right, Vi. Try not to worry about the pre-nup stuff, or Darcy.”",
+ finalParagraph:"“All right, Vi. Try not to worry about the pre-nup stuff, or Darcy.”"
+});
+const textOnly=[chapter(1,"p0001","p0003",[shortFix])];
+assert.deepEqual(layout.validateShape(textOnly,3),[]);
+const quotePages=clone();
+quotePages[2].text=shortFix.matchParagraph+"\\n\\nMore paragraphs remain.";
+let q=layout.apply(quotePages,textOnly,bubbles);
+assert.equal(q.errors.length,0,JSON.stringify(q.errors));
+assert.equal(q.applied,1);
+assert.ok(quotePages[2].text.startsWith(shortFix.finalParagraph));
+assert.ok(quotePages[2].text.endsWith("More paragraphs remain."));
+q=layout.apply(quotePages,textOnly,bubbles);
+assert.equal(q.errors.length,0);
+assert.equal(q.alreadyPresent,1);
+const guardPages=clone();
+guardPages[2].text="Entirely different paragraph.";
+q=layout.apply(guardPages,textOnly,bubbles);
+assert.equal(q.errors.length,1);
+assert.equal(guardPages[2].text,"Entirely different paragraph.");
+const bigRewrite=mk("no","verified_paragraph_edit","p0003",{
+  matchParagraph:"This is a full paragraph that should not be rewritten.",
+  finalParagraph:"This entire paragraph has been replaced with unrelated prose."
+});
+q=layout.apply(clone(),[chapter(1,"p0001","p0003",[bigRewrite])],bubbles);
+assert.equal(q.errors.length,1);
+
 // No silent substitution when narration and letter opening lack a source boundary.
 pages=clone(); pages[0].text="Narration with Dear person,\n\nLetter body.\n\nYours truly.";
 result=layout.apply(pages,chapters,bubbles);
@@ -82,6 +112,6 @@ assert.ok(importer.indexOf("if (structuralMisses.length || misses.length)")<
   importer.indexOf("state.pages = workingPages"));
 assert.ok(importer.includes("messageBubbles:Array.isArray(page.messageBubbles)"));
 assert.ok(script.includes("window.OcrQaLayout.validateShape(chapters,totalPages)"));
-assert.ok(html.includes('qa-layout-import.js?v=271'));
-assert.ok(sw.includes('./qa-layout-import.js?v=271'));
+assert.ok(html.includes('qa-layout-import.js?v=272'));
+assert.ok(sw.includes('./qa-layout-import.js?v=272'));
 console.log("Build 271: source-verified layout, conflict, idempotence and atomic import checks passed");
