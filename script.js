@@ -231,6 +231,7 @@
     pageDropcapBtn: $("pageDropcapBtn"),
     markItalicBtn: $("markItalicBtn"),
     insertSceneBreakBtn: $("insertSceneBreakBtn"),
+    markLetterBtn: $("markLetterBtn"),
     clearItalicBtn: $("clearItalicBtn"),
     exportSection: $("exportSection"),
     guidedRepairSection: $("guidedRepairSection"),
@@ -4061,6 +4062,39 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
     setStatus("Source-reviewed scene break saved. EPUB exports it as a visible, nonspoken separator.");
   }
 
+  // An actual source-checked letter can be marked as layout without changing
+  // a single character of the selected book text. Mark full paragraph(s) only.
+  function markSelectedLetter() {
+    const editor = currentReviewTextarea();
+    const page = state.pages[state.currentPageIndex];
+    if (!editor || !page) return;
+    const a = editor.selectionStart, b = editor.selectionEnd;
+    const text = editor.value, selected = text.slice(a,b);
+    if (b <= a || !selected.trim()) {
+      setStatus("Select the exact complete paragraph(s) of the letter in the page editor.");
+      return;
+    }
+    const before = text.slice(0,a), after = text.slice(b);
+    if ((before.trim() && !/\n\s*\n$/.test(before)) ||
+        (after.trim() && !/^\n\s*\n/.test(after))) {
+      setStatus("Select complete letter paragraphs, starting and ending at paragraph boundaries. No text changed.");
+      return;
+    }
+    if (/\[\[\/?letter\]\]/i.test(selected)) {
+      setStatus("This selection contains letter markup already. No changes made.");
+      return;
+    }
+    if (!confirm("You checked the source screenshot and selected only the letter's paragraphs?")) return;
+    const next = "[[letter]]\n\n" + selected.trim() + "\n\n[[/letter]]";
+    editor.setRangeText(next,a,b,"end");
+    page.text = editor.value;
+    page.manualEdited = true;
+    page.chapterCandidate = chapterHeuristic(page.text);
+    saveRepairOverlayPage(state.currentPageIndex,{manualEdited:true});
+    saveCheckpoint();
+    setStatus("Letter block saved. Export will set it apart typographically without changing its words.");
+  }
+
   function clearItalicMarksOnPage() {
     const textarea = currentReviewTextarea();
     if (!textarea) return;
@@ -4150,6 +4184,7 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
     if (els.runWordAudit) els.runWordAudit.disabled = state.processing || !processed;
     if (els.markItalicBtn) els.markItalicBtn.disabled = state.processing || !hasCurrent;
     if (els.insertSceneBreakBtn) els.insertSceneBreakBtn.disabled = state.processing || !hasCurrent;
+    if (els.markLetterBtn) els.markLetterBtn.disabled = state.processing || !hasCurrent;
     if (els.clearItalicBtn) els.clearItalicBtn.disabled = state.processing || !hasCurrent;
     els.nextPageBtn.disabled = state.processing || !hasCurrent || pos < 0 || pos >= indices.length - 1;
     els.prevPageBtn.textContent = state.reviewMode === "chapters" ? "Previous chapter" : "Previous page";
@@ -11664,8 +11699,9 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
         return {text, side:sourceRows[found].side, label:sourceRows[found].useLabel ? sourceRows[found].label : ""};
       });
 
-      const firstParagraphIsSceneBreak = String(paragraphs[0] || "").trim() === "* * *";
-      const previousExportIsSceneBreak = String(out[out.length - 1]?.text || "").trim() === "* * *";
+      const isExportBoundary = value => ["* * *","[[letter]]","[[/letter]]"].includes(String(value || "").trim());
+      const firstParagraphIsSceneBreak = isExportBoundary(paragraphs[0]);
+      const previousExportIsSceneBreak = isExportBoundary(out[out.length - 1]?.text);
       const bubbleBoundary = Boolean(annotated[0]?.side || out[out.length - 1]?.side);
       const previousPage = state.pages[pageIndex - 1];
       const qaBoundary = String(previousPage?.layoutMeta?.qaBoundaryToNext || page?.layoutMeta?.qaBoundaryFromPrevious || "");
@@ -11940,13 +11976,26 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
     sections.forEach((section, sectionIndex) => {
       const fileName = `chapter-${String(sectionIndex + 1).padStart(3, "0")}.xhtml`;
       const itemId = `chapter-${sectionIndex + 1}`;
+      let letterOpen = false;
       const bodyParagraphs = sectionParagraphs(section).map(({ text, pageIndex, paragraphIndex, side, speakerLabel }) => {
+        const marker = String(text || "").trim();
+        if (marker === "[[letter]]") {
+          if (letterOpen) throw new Error("Nested letter markup: check complete letter selection in Review.");
+          letterOpen = true;
+          return '<blockquote class="letter-block" data-opal-letter="true">';
+        }
+        if (marker === "[[/letter]]") {
+          if (!letterOpen) throw new Error("Closing letter marker has no opening marker. Fix it in Review.");
+          letterOpen = false;
+          return "</blockquote>";
+        }
         if (String(text || "").trim() === "* * *") {
           return renderSceneArtwork
             ? `<p id="p-${pageIndex + 1}-${paragraphIndex + 1}" class="scene-break illustrated" data-opal-scene-break="true"><img src="${sceneArtworkPath}" alt="" role="presentation"/></p>`
             : `<p id="p-${pageIndex + 1}-${paragraphIndex + 1}" class="scene-break" data-opal-scene-break="true">* * *</p>`;
         }
         const html = paragraphToEpubHtml(text);
+        if (letterOpen) return html.replace("<p>", `<p id="p-${pageIndex + 1}-${paragraphIndex + 1}" class="letter-line">`);
         if (side === "incoming" || side === "outgoing") {
           const sender = speakerLabel ? `<span class="message-sender" data-opal-narration="skip">${escapeXml(speakerLabel)}</span>` : "";
           const message = html.replace("<p>", `<p id="p-${pageIndex + 1}-${paragraphIndex + 1}" class="message-bubble">`);
@@ -11954,6 +12003,7 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
         }
         return html.replace("<p>", `<p id="p-${pageIndex + 1}-${paragraphIndex + 1}">`);
       });
+      if (letterOpen) throw new Error("Letter block is not closed before the chapter ends. Fix it in Review.");
 
       const hasHeading = Boolean(String(section.title || "").trim());
       const headingHtml = (hasHeading ? `<h1>${escapeXml(section.title)}</h1>` : "") +
@@ -12047,6 +12097,19 @@ section > p:first-of-type,
 }
 em{
   font-style:italic;
+}
+/* Printed letters stay source-faithful but visually separate from narration. */
+.letter-block{
+  margin:1.1em 0;
+  padding:0.25em 1em;
+  border-left:2px solid #999;
+  text-align:left;
+  break-inside:avoid;
+}
+.letter-block .letter-line{
+  margin:0.45em 0;
+  text-align:left;
+  text-indent:0;
 }
 .scene-break{
   text-align:center;
@@ -12617,6 +12680,7 @@ ${coverSpine}${spine.join("\n")}
   els.pageDropcapBtn.addEventListener("click", openPageDropcapReview);
   els.markItalicBtn?.addEventListener("click", markSelectedItalic);
   els.insertSceneBreakBtn?.addEventListener("click", insertSceneBreakAtCaret);
+  els.markLetterBtn?.addEventListener("click", markSelectedLetter);
   els.clearItalicBtn?.addEventListener("click", clearItalicMarksOnPage);
   els.closePageDropcap.addEventListener("click", closePageDropcapReview);
   els.cancelPageDropcap.addEventListener("click", closePageDropcapReview);
