@@ -229,7 +229,7 @@
     const source=String(page.text||"");
     const phrase=compact(d.paragraph);
     const item=unique(blocks(source).filter(block=>block.text===phrase),"Ellipsis paragraph");
-    const matches=(item.text.match(/\\.\\.\\./g)||[]).length;
+    const matches=(item.text.match(/\.\.\./g)||[]).length;
     if(matches!==d.count)throw Error("Ellipsis count changed from the approved screenshot");
     return markPresentation(page,"ellipses",{paragraph:phrase,count:d.count});
   }
