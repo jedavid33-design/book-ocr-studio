@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "272";
+  const BUILD_VERSION = "273";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -11720,6 +11720,7 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
       }
       const paragraphs = exportParagraphs(pageText);
       if (!paragraphs.length) continue;
+      const presentation = page?.layoutMeta?.qaPresentation || {};
       // Match reviewed bubbles by exact text + occurrence in the source page.
       // Removed chapter furniture never shifts annotations onto unrelated prose.
       const sourceRows = window.OcrMessageBubbles.rows(page?.text || "", page?.messageBubbles || []).rows;
@@ -11758,6 +11759,14 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
         annotated.shift();
       }
       annotated.forEach((row, paragraphIndex) => {
+        const sourceText=paragraphs[paragraphIndex];
+        const letterBreakAfter=(presentation.letterLines||[]).find(
+          item=>item.paragraph===sourceText)?.breakAfter||"";
+        const chapterDropcap=!!(presentation.dropcaps||[]).some(
+          item=>item.paragraph===sourceText && page.chapterStart);
+        const sceneRule=sourceText==="* * *" && !!(presentation.sceneRules||[]).some(
+          item=>item.before===paragraphs[paragraphIndex-1] &&
+            item.after===paragraphs[paragraphIndex+1]);
         if (row.side && row.label && out.length
             && out[out.length-1].pageIndex === pageIndex
             && !out[out.length-1].side) {
@@ -11772,7 +11781,8 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
           } else row.label = "";
         } else row.label = "";
         out.push({ text: row.text, pageIndex, paragraphIndex,
-          side: row.side, speakerLabel: row.label });
+          side: row.side, speakerLabel: row.label,
+          letterBreakAfter, chapterDropcap, sceneRule });
       });
     }
     return out;
@@ -12009,7 +12019,7 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
       const fileName = `chapter-${String(sectionIndex + 1).padStart(3, "0")}.xhtml`;
       const itemId = `chapter-${sectionIndex + 1}`;
       let letterOpen = false;
-      const bodyParagraphs = sectionParagraphs(section).map(({ text, pageIndex, paragraphIndex, side, speakerLabel }) => {
+      const bodyParagraphs = sectionParagraphs(section).map(({ text, pageIndex, paragraphIndex, side, speakerLabel, letterBreakAfter, chapterDropcap, sceneRule }) => {
         const marker = String(text || "").trim();
         if (marker === "[[letter]]") {
           if (letterOpen) throw new Error("Nested letter markup: check complete letter selection in Review.");
@@ -12022,23 +12032,37 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
           return "</blockquote>";
         }
         if (String(text || "").trim() === "* * *") {
+          if(sceneRule) {
+            if(!window.OcrEpubPresentation)throw Error("Source-rule exporter is unavailable.");
+            return window.OcrEpubPresentation.sceneRule(`p-${pageIndex + 1}-${paragraphIndex + 1}`);
+          }
           return renderSceneArtwork
             ? `<p id="p-${pageIndex + 1}-${paragraphIndex + 1}" class="scene-break illustrated" data-opal-scene-break="true"><img src="${sceneArtworkPath}" alt="" role="presentation"/></p>`
             : `<p id="p-${pageIndex + 1}-${paragraphIndex + 1}" class="scene-break" data-opal-scene-break="true">* * *</p>`;
         }
         const html = paragraphToEpubHtml(text);
-        if (letterOpen) return html.replace("<p>", `<p id="p-${pageIndex + 1}-${paragraphIndex + 1}" class="letter-line">`);
+        if (letterOpen) {
+          if(letterBreakAfter && !window.OcrEpubPresentation)
+            throw Error("Source-verified letter line exporter is unavailable.");
+          const letterHtml=letterBreakAfter
+            ? window.OcrEpubPresentation.letterParagraph(text,letterBreakAfter,paragraphToEpubHtml)
+            : html;
+          return letterHtml.replace("<p>", `<p id="p-${pageIndex + 1}-${paragraphIndex + 1}" class="letter-line">`);
+        }
         if (side === "incoming" || side === "outgoing") {
           const sender = speakerLabel ? `<span class="message-sender" data-opal-narration="skip">${escapeXml(speakerLabel)}</span>` : "";
           const message = html.replace("<p>", `<p id="p-${pageIndex + 1}-${paragraphIndex + 1}" class="message-bubble">`);
           return `<div class="message-group ${side}" data-opal-message="${side}">${sender}${message}</div>`;
         }
-        return html.replace("<p>", `<p id="p-${pageIndex + 1}-${paragraphIndex + 1}">`);
+        return html.replace("<p>", `<p id="p-${pageIndex + 1}-${paragraphIndex + 1}"${chapterDropcap ? ' class="chapter-dropcap"' : ""}>`);
       });
       if (letterOpen) throw new Error("Letter block is not closed before the chapter ends. Fix it in Review.");
 
       const hasHeading = Boolean(String(section.title || "").trim());
-      const headingHtml = (hasHeading ? `<h1>${escapeXml(section.title)}</h1>` : "") +
+      const headingHtml = (hasHeading
+        ? (window.OcrEpubPresentation?.heading(section.title,escapeXml)
+          || `<h1>${escapeXml(section.title)}</h1>`)
+        : "") +
         (section.pov ? `<p class="chapter-pov" data-opal-narration="skip">${escapeXml(section.pov)}</p>` : "");
       const sectionType = section.nav ? "chapter" : "bodymatter";
       const povAttr = section.pov ? ` data-opal-pov="${escapeXml(section.pov)}"` : "";
@@ -12100,7 +12124,9 @@ body{
   text-indent:0;
   margin:0;
 }
-/* Chapter headings */
+/* Chapter headings: exact source line breaks, reflowable text. */
+.chapter-heading-line{display:block;}
+.chapter-heading-number{font-size:0.90em;}
 .chapter-pov{
   text-align:center;
   text-indent:0;
@@ -12130,6 +12156,15 @@ section > p:first-of-type,
 em{
   font-style:italic;
 }
+/* A drop cap is applied only when the source-reviewed QA metadata approved it. */
+.chapter-dropcap::first-letter{
+  float:left;
+  font-size:3.1em;
+  line-height:0.85;
+  padding-right:0.08em;
+  padding-top:0.05em;
+}
+.chapter-dropcap{text-indent:0;}
 /* Printed letters stay source-faithful but visually separate from narration. */
 .letter-block{
   margin:1.1em 0;
@@ -12143,10 +12178,21 @@ em{
   text-align:left;
   text-indent:0;
 }
+.letter-source-linebreak{display:inline;}
+.letter-block .letter-line:has(> .letter-source-linebreak){white-space:normal;}
 .scene-break{
   text-align:center;
   text-indent:0;
   margin:1.5em 0;
+}
+.scene-break.source-rule{clear:both;}
+.scene-break.source-rule hr{
+  display:block;
+  width:28%;
+  margin:0 auto;
+  border:0;
+  border-top:1px solid currentColor;
+  height:0;
 }
 .scene-break.illustrated img{
   display:inline-block;
