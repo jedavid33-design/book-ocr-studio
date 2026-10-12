@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "269";
+  const BUILD_VERSION = "270";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -3982,14 +3982,24 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
     return state.pages.map((_, index) => index);
   }
 
+  // Review navigation and its visual selection must share one source of truth.
+  // Also called during render, since recovery and page-jump tools can change
+  // reviewMode without going through the two mode buttons.
+  function syncReviewModeControls() {
+    const all = state.reviewMode !== "chapters";
+    els.reviewAllBtn?.classList.toggle("active", all);
+    els.reviewChaptersBtn?.classList.toggle("active", !all);
+    els.reviewAllBtn?.setAttribute("aria-pressed", String(all));
+    els.reviewChaptersBtn?.setAttribute("aria-pressed", String(!all));
+  }
+
   function setReviewMode(mode) {
     state.reviewMode = mode === "chapters" ? "chapters" : "all";
     const indices = reviewIndices();
     if (indices.length && !indices.includes(state.currentPageIndex)) {
       state.currentPageIndex = indices[0];
     }
-    els.reviewAllBtn?.classList.toggle("active", state.reviewMode === "all");
-    els.reviewChaptersBtn?.classList.toggle("active", state.reviewMode === "chapters");
+    syncReviewModeControls();
     renderReview();
     setStatus(state.reviewMode === "chapters"
       ? `Showing ${indices.length} chapter start page${indices.length === 1 ? "" : "s"}.`
@@ -4163,6 +4173,7 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
     const total = state.files.length;
     const indices = reviewIndices();
     const pos = indices.indexOf(state.currentPageIndex);
+    syncReviewModeControls();
     els.reviewProgress.textContent = state.reviewMode === "chapters"
       ? `${indices.length} chapter start${indices.length === 1 ? "" : "s"} · ${processed} of ${total} processed`
       : `${processed} of ${total} processed`;
@@ -12675,6 +12686,8 @@ ${coverSpine}${spine.join("\n")}
     els.stopBatchBtn.textContent = "Stopping…";
     setStatus("Stopping after the current page finishes. Completed pages are already saved.");
   });
+  els.reviewAllBtn?.addEventListener("click", () => setReviewMode("all"));
+  els.reviewChaptersBtn?.addEventListener("click", () => setReviewMode("chapters"));
   els.prevPageBtn.addEventListener("click", goToPreviousPage);
   els.nextPageBtn.addEventListener("click", goToNextPage);
   els.pageDropcapBtn.addEventListener("click", openPageDropcapReview);
