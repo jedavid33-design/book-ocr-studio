@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "268";
+  const BUILD_VERSION = "269";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -230,6 +230,7 @@
     messageOcrBtn: $("messageOcrBtn"),
     pageDropcapBtn: $("pageDropcapBtn"),
     markItalicBtn: $("markItalicBtn"),
+    insertSceneBreakBtn: $("insertSceneBreakBtn"),
     clearItalicBtn: $("clearItalicBtn"),
     exportSection: $("exportSection"),
     guidedRepairSection: $("guidedRepairSection"),
@@ -3753,19 +3754,34 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
     return sections.filter(section => section.end > section.start);
   }
 
+  // Build 269: remove *only* source-matched opening furniture. Real books
+  // often have blank lines between the chapter number and its printed title.
+  // The previous line-by-line comparison left both as duplicate paragraphs.
   function stripExportedChapterHeading(text, title) {
-    const lines = normalizedPageText(text).split("\n");
-    let i = 0;
-    while (i < lines.length && !lines[i].trim()) i++;
-    const first = lines[i]?.trim() || "";
-    const second = lines[i + 1]?.trim() || "";
-    const norm = v => (v || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-    const nt = norm(title), nf = norm(first), ns = norm(second);
-    if ((/^\d{1,3}$/.test(first) || /^chapter\b/i.test(first) || /^(prologue|epilogue|interlude)$/i.test(first)) && nf && nt.includes(nf)) {
-      lines.splice(i, 1);
-      if (second && ns && nt.includes(ns)) lines.splice(i, 1);
+    const raw = normalizedPageText(text);
+    if (!raw || !String(title || "").trim()) return raw;
+    const blocks = raw.split(/\n{2,}/);
+    const norm = value => stripItalicMarkers(String(value || ""))
+      .toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    const expected = norm(title);
+    let combined = "";
+    for (let count = 1; count <= Math.min(3, blocks.length); count++) {
+      combined = norm(blocks.slice(0, count).join(" "));
+      // A printed chapter heading must match the approved title in full.
+      // Never strip a partial/prefix match from genuine opening narration.
+      if (combined === expected) return blocks.slice(count).join("\n\n").trim();
+      if (!expected.startsWith(combined + " ")) break;
     }
-    return lines.join("\n").trim();
+    return raw;
+  }
+
+  function stripExportedChapterPov(text, pov) {
+    const raw = normalizedPageText(text);
+    if (!raw || !String(pov || "").trim()) return raw;
+    const blocks = raw.split(/\n{2,}/);
+    if (stripItalicMarkers(blocks[0] || "").trim().toLowerCase() !==
+        String(pov).trim().toLowerCase()) return raw;
+    return blocks.slice(1).join("\n\n").trim();
   }
 
   function combinedText() {
@@ -4010,6 +4026,41 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
     setStatus(`Marked the selected text as italic on page ${state.currentPageIndex + 1}. The formatting is now durable and EPUB export will preserve it as emphasis.`);
   }
 
+  // Source-reviewed scene dividers that OCR missed are inserted as semantic
+  // standalone paragraphs. Never infer one or insert inside narration.
+  function insertSceneBreakAtCaret() {
+    const textarea = currentReviewTextarea();
+    const page = state.pages[state.currentPageIndex];
+    if (!textarea || !page || textarea.selectionStart !== textarea.selectionEnd) {
+      setStatus("Place the cursor on a blank line between two paragraphs first.");
+      return;
+    }
+    const source = textarea.value;
+    const caret = textarea.selectionStart;
+    const gap = [...source.matchAll(/\n[ \t]*\n/g)]
+      .find(hit => caret >= hit.index && caret <= hit.index + hit[0].length);
+    if (!gap || !source.slice(0,gap.index).trim() ||
+        !source.slice(gap.index+gap[0].length).trim()) {
+      setStatus("Place the cursor within an existing blank line between two paragraphs. No text changed.");
+      return;
+    }
+    const before = source.slice(0,gap.index).trimEnd();
+    const after = source.slice(gap.index+gap[0].length).trimStart();
+    if (before.endsWith("* * *") || after.startsWith("* * *")) {
+      setStatus("There's already a semantic scene break here.");
+      return;
+    }
+    if (!confirm("You checked the original screenshot and this blank line is a real scene break?")) return;
+    const next = before + "\n\n* * *\n\n" + after;
+    textarea.value = next;
+    page.text = next;
+    page.manualEdited = true;
+    page.chapterCandidate = chapterHeuristic(next);
+    saveRepairOverlayPage(state.currentPageIndex, { manualEdited:true });
+    saveCheckpoint();
+    setStatus("Source-reviewed scene break saved. EPUB exports it as a visible, nonspoken separator.");
+  }
+
   function clearItalicMarksOnPage() {
     const textarea = currentReviewTextarea();
     if (!textarea) return;
@@ -4098,6 +4149,7 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
     if (els.runChapterAudit) els.runChapterAudit.disabled = state.processing || !processed;
     if (els.runWordAudit) els.runWordAudit.disabled = state.processing || !processed;
     if (els.markItalicBtn) els.markItalicBtn.disabled = state.processing || !hasCurrent;
+    if (els.insertSceneBreakBtn) els.insertSceneBreakBtn.disabled = state.processing || !hasCurrent;
     if (els.clearItalicBtn) els.clearItalicBtn.disabled = state.processing || !hasCurrent;
     els.nextPageBtn.disabled = state.processing || !hasCurrent || pos < 0 || pos >= indices.length - 1;
     els.prevPageBtn.textContent = state.reviewMode === "chapters" ? "Previous chapter" : "Previous page";
@@ -11596,6 +11648,8 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
       let pageText = page?.text || "";
       if (pageIndex === section.start && page?.chapterStart) {
         pageText = stripExportedChapterHeading(pageText, section.title);
+        // The POV remains visible once as EPUB furniture, never as duplicate prose.
+        pageText = stripExportedChapterPov(pageText, section.pov);
       }
       const paragraphs = exportParagraphs(pageText);
       if (!paragraphs.length) continue;
@@ -11638,9 +11692,16 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
       annotated.forEach((row, paragraphIndex) => {
         if (row.side && row.label && out.length
             && out[out.length-1].pageIndex === pageIndex
-            && out[out.length-1].text.trim() === row.label
             && !out[out.length-1].side) {
-          out.pop(); // Render this verified printed label as bubble furniture instead of prose.
+          const previous = out[out.length-1];
+          if (previous.text.trim() === row.label) {
+            out.pop(); // Printed standalone sender becomes bubble furniture.
+          } else if (previous.text.trimEnd().endsWith(": " + row.label)) {
+            // A verified source label can be attached to the end of the
+            // narrator's preceding sentence. Move only the exact label;
+            // preserve the narrator's entire sentence and its colon.
+            previous.text = previous.text.trimEnd().slice(0, -row.label.length).trimEnd();
+          } else row.label = "";
         } else row.label = "";
         out.push({ text: row.text, pageIndex, paragraphIndex,
           side: row.side, speakerLabel: row.label });
@@ -11895,7 +11956,8 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
       });
 
       const hasHeading = Boolean(String(section.title || "").trim());
-      const headingHtml = hasHeading ? `<h1>${escapeXml(section.title)}</h1>` : "";
+      const headingHtml = (hasHeading ? `<h1>${escapeXml(section.title)}</h1>` : "") +
+        (section.pov ? `<p class="chapter-pov" data-opal-narration="skip">${escapeXml(section.pov)}</p>` : "");
       const sectionType = section.nav ? "chapter" : "bodymatter";
       const povAttr = section.pov ? ` data-opal-pov="${escapeXml(section.pov)}"` : "";
 
@@ -11957,6 +12019,13 @@ body{
   margin:0;
 }
 /* Chapter headings */
+.chapter-pov{
+  text-align:center;
+  text-indent:0;
+  font-size:0.87em;
+  letter-spacing:0.08em;
+  margin:0 0 1.3em;
+}
 h1{
   font-size:1.5em;
   margin:2em 0 1.5em;
@@ -11971,6 +12040,7 @@ p{
   white-space:normal;
 }
 h1 + p,
+.chapter-pov + p,
 section > p:first-of-type,
 .scene-break + p{
   text-indent:0;
@@ -12546,6 +12616,7 @@ ${coverSpine}${spine.join("\n")}
   els.nextPageBtn.addEventListener("click", goToNextPage);
   els.pageDropcapBtn.addEventListener("click", openPageDropcapReview);
   els.markItalicBtn?.addEventListener("click", markSelectedItalic);
+  els.insertSceneBreakBtn?.addEventListener("click", insertSceneBreakAtCaret);
   els.clearItalicBtn?.addEventListener("click", clearItalicMarksOnPage);
   els.closePageDropcap.addEventListener("click", closePageDropcapReview);
   els.cancelPageDropcap.addEventListener("click", closePageDropcapReview);
