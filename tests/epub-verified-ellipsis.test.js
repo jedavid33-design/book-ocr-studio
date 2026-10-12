@@ -52,7 +52,8 @@ const render=new Function("state","exportParagraphs","stripExportedChapterHeadin
  state,exp,t=>t,t=>t,(arr)=>arr.join(" "),testWindow);
 const paragraphs=render({start:0,end:2,title:"",pov:"",nav:false});
 const printed=paragraphs.map(x=>x.text).join("\n\n");
-console.log("DEBUG approved paragraphs",JSON.stringify(paragraphs.map(x=>x.text)));\nassert.ok(printed.includes("Before… After. Then…again."),
+console.log("DEBUG approved paragraphs",JSON.stringify(paragraphs.map(x=>x.text)));
+assert.ok(printed.includes("Before… After. Then…again."),
   "Every approved occurrence survives a cross-page paragraph join");
 assert.ok(printed.includes("Not approved... keep three dots."),
   "Unapproved three-dot punctuation must remain unchanged");
