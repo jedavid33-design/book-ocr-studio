@@ -14,6 +14,15 @@
     if (/^(CHAPTER|PROLOGUE|EPILOGUE|PART|THE END|THREE MONTHS LATER)$/i.test(text)) return "";
     return text;
   }
+  // Source-backed sender labels sometimes share the last OCR paragraph
+  // with narration: "I received a reply: VIOLET". Surface the label only
+  // when the adjacent source paragraph literally ends in ": UPPERCASE".
+  function adjacentLabel(previous) {
+    const standalone = speakerLabel(previous);
+    if (standalone) return standalone;
+    const match = String(previous || "").match(/:\s+([A-Z][A-Z .'-]{1,24})\s*$/);
+    return match ? speakerLabel(match[1]) : "";
+  }
   function rows(text, saved = []) {
     const list = paragraphs(text);
     const counts = new Map();
@@ -25,7 +34,7 @@
       const candidates = annotations.map((annotation, id) => ({ annotation, id }))
         .filter(item => item.annotation?.text === value && item.annotation?.occurrence === occurrence);
       const item = candidates[0] || null;
-      const label = index ? speakerLabel(list[index - 1]) : "";
+      const label = index ? adjacentLabel(list[index - 1]) : "";
       // A label may only be moved if that *same* printed label is still
       // adjacent. A changed label needs re-review; never make text disappear.
       const valid = item && (item.annotation.side === "outgoing" || item.annotation.side === "incoming")
@@ -62,7 +71,7 @@
   function validate(page) {
     return rows(page?.text || "",page?.messageBubbles);
   }
-  const api=Object.freeze({paragraphs,speakerLabel,rows,setAnnotation,validate,labeledSuggestions});
+  const api=Object.freeze({paragraphs,speakerLabel,adjacentLabel,rows,setAnnotation,validate,labeledSuggestions});
   if(typeof module !== "undefined" && module.exports)module.exports=api;
   if(typeof globalThis !== "undefined")globalThis.OcrMessageBubbles=api;
 })();
