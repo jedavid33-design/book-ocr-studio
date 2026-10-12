@@ -11800,7 +11800,7 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
             previous.text = previous.text.trimEnd().slice(0, -row.label.length).trimEnd();
           } else row.label = "";
         } else row.label = "";
-        out.push({ text: row.text, pageIndex, paragraphIndex,
+        out.push({ text: sourceText, pageIndex, paragraphIndex,
           side: row.side, speakerLabel: row.label,
           letterBreakAfter, chapterDropcap, sceneRule });
       });
