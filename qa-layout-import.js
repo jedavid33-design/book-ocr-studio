@@ -208,7 +208,7 @@
     if(idx<0||end<=idx||target.start<=idx||target.end>=end)
       throw Error("Letter line must be inside an existing verified letter block");
     const at=phrase.indexOf(breakAfter);
-    if(at<0 || phrase.indexOf(breakAfter,at+1)>=0 || !/\\s/.test(phrase[at+breakAfter.length]||""))
+    if(at<0 || phrase.indexOf(breakAfter,at+1)>=0 || !/\s/.test(phrase[at+breakAfter.length]||""))
       throw Error("Letter line break is missing or not between words");
     return markPresentation(page,"letterLines",{paragraph:phrase,breakAfter});
   }
@@ -223,7 +223,7 @@
     if(!page.chapterStart)throw Error("Drop cap is not on an approved chapter-opening page");
     const list=blocks(page.text),paragraph=compact(d.paragraph);
     const target=unique(list.filter(x=>x.text===paragraph),"Drop cap paragraph");
-    const heading=String(page.chapterTitle||"").replace(/\\n/g," ").replace(/\\s+/g," ").trim();
+    const heading=String(page.chapterTitle||"").replace(/\n/g," ").replace(/\s+/g," ").trim();
     if(!heading||!list.slice(0,list.indexOf(target)).some(x=>x.text===String(page.chapterPov||"").trim()))
       throw Error("Drop cap paragraph is not after an approved chapter heading and POV");
     return markPresentation(page,"dropcaps",{paragraph});
