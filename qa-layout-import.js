@@ -2,7 +2,7 @@
 // No inferred formatting. Failed anchors prevent the complete QA import.
 (() => {
   "use strict";
-  const TYPES = new Set(["message_bubble", "scene_break", "letter_block", "verified_paragraph_edit"]);
+  const TYPES = new Set(["message_bubble", "scene_break", "letter_block", "verified_paragraph_edit", "letter_line_break", "scene_rule", "chapter_dropcap"]);
   const own = (v) => typeof v === "string" && v.length > 0;
   const compact = (v) => String(v || "").replace(/\r/g, "").split("\n")
     .map(x => x.trim()).filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
@@ -60,6 +60,12 @@
         } else if (d?.type==="letter_block") {
           if (!own(d.startText) || !own(d.endText))
             fail("layout-letter","Both source-verified start and end phrases are required.");
+        } else if (d?.type==="letter_line_break") {
+          if (!own(d.paragraph) || !own(d.breakAfter)) fail("layout-letter-line","Complete letter paragraph and exact breakAfter are required.");
+        } else if (d?.type==="scene_rule") {
+          if (!own(d.before) || !own(d.after)) fail("layout-rule","Scene rule must have exact neighboring paragraphs.");
+        } else if (d?.type==="chapter_dropcap") {
+          if (!own(d.paragraph)) fail("layout-dropcap","Drop cap needs its exact opening paragraph.");
         } else if (d?.type==="verified_paragraph_edit") {
           if (!own(d.matchParagraph) || !own(d.finalParagraph) ||
               d.matchParagraph===d.finalParagraph || compact(d.matchParagraph).length<20)
@@ -172,6 +178,57 @@
     page.text=prefix.trimEnd()+"\n\n[[letter]]\n\n"+source.slice(start,finish)+"\n\n[[/letter]]"+suffix;
     return true;
   }
+  // Presentation approvals do not rewrite source prose. They are durable
+  // per-page metadata, and the exporter verifies anchors again when rendering.
+  function markPresentation(page,key,record) {
+    const layout={...(page.layoutMeta||{})};
+    const qa={...(layout.qaPresentation||{})};
+    const current=Array.isArray(qa[key])?qa[key]:[];
+    const id=key==="letterLines" ? record.paragraph
+      : key==="dropcaps" ? record.paragraph
+      : record.before+"\\n"+record.after;
+    const ident=item=>key==="letterLines" ? item.paragraph
+      : key==="dropcaps" ? item.paragraph
+      : item.before+"\\n"+item.after;
+    const other=current.find(item=>ident(item)===id);
+    if(other) {
+      if(JSON.stringify(other)===JSON.stringify(record))return false;
+      throw Error("Conflicting existing source-verified presentation style");
+    }
+    qa[key]=[...current,record];
+    page.layoutMeta={...layout,qaPresentation:qa};
+    return true;
+  }
+  function markLetterLine(page,d) {
+    const list=blocks(page.text);
+    const phrase=compact(d.paragraph),breakAfter=String(d.breakAfter).trim();
+    const target=unique(list.filter(x=>x.text===phrase),"Letter paragraph");
+    const idx=String(page.text).indexOf("[[letter]]");
+    const end=String(page.text).indexOf("[[/letter]]",idx+10);
+    if(idx<0||end<=idx||target.start<=idx||target.end>=end)
+      throw Error("Letter line must be inside an existing verified letter block");
+    const at=phrase.indexOf(breakAfter);
+    if(at<0 || phrase.indexOf(breakAfter,at+1)>=0 || !/\\s/.test(phrase[at+breakAfter.length]||""))
+      throw Error("Letter line break is missing or not between words");
+    return markPresentation(page,"letterLines",{paragraph:phrase,breakAfter});
+  }
+  function markSceneRule(page,d) {
+    const list=blocks(page.text);
+    const before=compact(d.before),after=compact(d.after);
+    unique(list.filter((row,i)=>row.text===before && list[i+1]?.text==="* * *"
+      && list[i+2]?.text===after),"Horizontal scene rule");
+    return markPresentation(page,"sceneRules",{before,after});
+  }
+  function markDropcap(page,d) {
+    if(!page.chapterStart)throw Error("Drop cap is not on an approved chapter-opening page");
+    const list=blocks(page.text),paragraph=compact(d.paragraph);
+    const target=unique(list.filter(x=>x.text===paragraph),"Drop cap paragraph");
+    const heading=String(page.chapterTitle||"").replace(/\\n/g," ").replace(/\\s+/g," ").trim();
+    if(!heading||!list.slice(0,list.indexOf(target)).some(x=>x.text===String(page.chapterPov||"").trim()))
+      throw Error("Drop cap paragraph is not after an approved chapter heading and POV");
+    return markPresentation(page,"dropcaps",{paragraph});
+  }
+
   function apply(pages,chapters,bubbleApi) {
     const records=decisions(chapters);
     const errors=[],changed=[];
@@ -183,6 +240,9 @@
         else if (d.type==="message_bubble") yes=markMessage(page,d,bubbleApi);
         else if (d.type==="scene_break") yes=markScene(page,d);
         else if (d.type==="letter_block") yes=markLetter(page,d);
+        else if (d.type==="letter_line_break") yes=markLetterLine(page,d);
+        else if (d.type==="scene_rule") yes=markSceneRule(page,d);
+        else if (d.type==="chapter_dropcap") yes=markDropcap(page,d);
         else throw Error("Unsupported visual decision");
         if (yes) changed.push({layoutId:d.layoutId,pageIndex:idx});
       } catch (e) {
