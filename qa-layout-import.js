@@ -1,0 +1,166 @@
+// Build 271: source-verified visual decisions in cumulative chapter QA.
+// No inferred formatting. Failed anchors prevent the complete QA import.
+(() => {
+  "use strict";
+  const TYPES = new Set(["message_bubble", "scene_break", "letter_block"]);
+  const own = (v) => typeof v === "string" && v.length > 0;
+  const compact = (v) => String(v || "").replace(/\r/g, "").split("\n")
+    .map(x => x.trim()).filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
+  function blocks(text) {
+    const source = String(text || "");
+    const result = [];
+    let start = 0;
+    const re = /\n[ \t]*\n/g;
+    for (const m of source.matchAll(re)) {
+      if (m.index > start && source.slice(start, m.index).trim())
+        result.push({start, end:m.index, text:compact(source.slice(start, m.index))});
+      start = m.index + m[0].length;
+    }
+    if (source.slice(start).trim()) result.push({start, end:source.length, text:compact(source.slice(start))});
+    return result;
+  }
+  function decisions(chapters) {
+    return (chapters || []).flatMap(ch => ch?.layout?.decisions || []);
+  }
+  function validateShape(chapters, pageCount) {
+    const errors = [];
+    const seen = new Set();
+    const ranges = (chapters || []).map(ch => {
+      const s = Number(String(ch?.chapter?.reviewedPageRange?.startPageId || "").match(/^p(\d+)$/)?.[1]);
+      const e = Number(String(ch?.chapter?.reviewedPageRange?.endPageId || "").match(/^p(\d+)$/)?.[1]);
+      return {s,e};
+    });
+    (chapters || []).forEach((chapter,ci) => {
+      const layout = chapter?.layout;
+      if (layout === undefined) return; // All existing Build 270 QA files stay compatible.
+      if (!layout || !Array.isArray(layout.decisions)) {
+        errors.push({code:"layout-array",message:"Chapter "+(ci+1)+": layout.decisions must be an array."});
+        return;
+      }
+      for (const d of layout.decisions) {
+        const id = String(d?.layoutId || "");
+        const page = String(d?.pageId || "").match(/^p(\d+)$/);
+        const pn = page ? Number(page[1]) : NaN;
+        const fail = (code,message) => errors.push({code,message:(id||"layout?")+": "+message});
+        if (!id || seen.has(id)) fail("layout-id","Missing or duplicate layoutId.");
+        seen.add(id);
+        if (!TYPES.has(d?.type)) fail("layout-type","Unsupported visual decision type.");
+        if (d?.sourceVerified !== true) fail("layout-unverified","Only source-verified layout decisions may import.");
+        if (!page || pn<1 || pn>pageCount || pn<ranges[ci].s || pn>ranges[ci].e)
+          fail("layout-page","pageId is outside this chapter's reviewed pages.");
+        if (d?.type==="message_bubble") {
+          if (!own(d.paragraph) || !["incoming","outgoing"].includes(d.side))
+            fail("layout-message","Message must have exact paragraph text and a reviewed incoming/outgoing side.");
+          if (d.senderLabel!==undefined && (typeof d.senderLabel!=="string" || !d.senderLabel.trim()))
+            fail("layout-sender","senderLabel must be a nonempty source label.");
+          if (d.occurrence!==undefined && (!Number.isInteger(d.occurrence) || d.occurrence<0))
+            fail("layout-occurrence","occurrence must be a nonnegative integer.");
+        } else if (d?.type==="scene_break") {
+          if (!own(d.before) || !own(d.after)) fail("layout-scene","Both adjacent paragraph anchors are required.");
+        } else if (d?.type==="letter_block") {
+          if (!own(d.startText) || !own(d.endText))
+            fail("layout-letter","Both source-verified start and end phrases are required.");
+        }
+      }
+    });
+    return errors;
+  }
+  function locatePage(pages, d) {
+    const idx = Number(String(d.pageId).slice(1))-1;
+    if (!Number.isInteger(idx) || !pages[idx]) throw Error("Missing reviewed page "+d.pageId);
+    return {page:pages[idx],idx};
+  }
+  function unique(list, description) {
+    if (list.length !== 1) throw Error(description+" anchor matched "+list.length+" locations, expected exactly one");
+    return list[0];
+  }
+  function exactIndex(source, phrase) {
+    const positions = [];
+    let pos=-1;
+    while ((pos=source.indexOf(phrase,pos+1))>=0) positions.push(pos);
+    return unique(positions,"Text");
+  }
+  function markMessage(page, d, bubble) {
+    if (!bubble?.rows || !bubble?.setAnnotation) throw Error("Message bubble renderer is unavailable");
+    const report = bubble.rows(page.text || "", page.messageBubbles || []);
+    if (report.stale.length) throw Error("Existing message marks have drifted");
+    const matches = report.rows.filter(row => row.text === compact(d.paragraph));
+    if (!matches.length) throw Error("Message paragraph does not match corrected OCR");
+    const row = d.occurrence === undefined
+      ? unique(matches,"Message paragraph")
+      : matches.find(row => row.occurrence === d.occurrence);
+    if (!row) throw Error("Message occurrence was not found");
+    const sender = d.senderLabel || "";
+    if (sender && row.label !== sender) throw Error("Printed sender label does not match corrected OCR");
+    if (row.side && (row.side !== d.side || row.useLabel !== !!sender))
+      throw Error("Message has a conflicting saved bubble decision");
+    if (row.side) return false;
+    page.messageBubbles = bubble.setAnnotation(page.messageBubbles || [],row,d.side,!!sender);
+    const check = bubble.rows(page.text || "",page.messageBubbles).rows;
+    if (!check.some(other => other.text === row.text && other.occurrence===row.occurrence
+      && other.side===d.side && other.useLabel===!!sender))
+      throw Error("Message annotation could not be verified after application");
+    return true;
+  }
+  function markScene(page,d) {
+    const list = blocks(page.text);
+    const before = compact(d.before), after = compact(d.after);
+    const candidates=[];
+    for (let i=0;i<list.length;i++) {
+      if (list[i].text!==before) continue;
+      if (list[i+1]?.text===after) candidates.push({i,already:false});
+      else if (list[i+1]?.text==="* * *" && list[i+2]?.text===after)
+        candidates.push({i,already:true});
+    }
+    const match=unique(candidates,"Scene boundary");
+    if (match.already) return false;
+    const left=list[match.i],right=list[match.i+1],source=String(page.text);
+    page.text=source.slice(0,left.end)+"\n\n* * *\n\n"+source.slice(right.start);
+    return true;
+  }
+  function markLetter(page,d) {
+    const source=String(page.text||""), start=exactIndex(source,d.startText), endStart=exactIndex(source,d.endText);
+    const finish=endStart+d.endText.length;
+    if (finish<=start) throw Error("Letter anchors out of order");
+    const prefix=source.slice(0,start), suffix=source.slice(finish);
+    // Start at a paragraph boundary or immediately after the narrator's colon.
+    // An inline letter opening is common in flattened OCR; only a source-confirmed
+    // colon may be separated, and the printed characters are preserved.
+    if (prefix.trim() && !/(?:\n\s*\n\s*|:\s*)$/.test(prefix))
+      throw Error("Letter start is not at an approved paragraph or colon boundary");
+    if (suffix.trim() && !/^\s*\n\s*\n/.test(suffix))
+      throw Error("Letter end is not at a paragraph boundary");
+    const starts=(source.match(/\[\[letter\]\]/g)||[]).length;
+    const ends=(source.match(/\[\[\/letter\]\]/g)||[]).length;
+    if (starts||ends) {
+      if (starts!==1 || ends!==1) throw Error("Unbalanced or multiple letter blocks");
+      if (prefix.includes("[[letter]]") && suffix.includes("[[/letter]]")) return false;
+      throw Error("Conflicting letter block already present");
+    }
+    page.text=prefix.trimEnd()+"\n\n[[letter]]\n\n"+source.slice(start,finish)+"\n\n[[/letter]]"+suffix;
+    return true;
+  }
+  function apply(pages,chapters,bubbleApi) {
+    const records=decisions(chapters);
+    const errors=[],changed=[];
+    for (const d of records) {
+      try {
+        const {page,idx}=locatePage(pages,d);
+        let yes=false;
+        if (d.type==="message_bubble") yes=markMessage(page,d,bubbleApi);
+        else if (d.type==="scene_break") yes=markScene(page,d);
+        else if (d.type==="letter_block") yes=markLetter(page,d);
+        else throw Error("Unsupported visual decision");
+        if (yes) changed.push({layoutId:d.layoutId,pageIndex:idx});
+      } catch (e) {
+        errors.push({opId:d?.layoutId||"layout?",type:"visual_layout",pageId:d?.pageId,
+          reason:String(e?.message||e)});
+      }
+    }
+    return {requested:records.length,applied:changed.length,alreadyPresent:records.length-changed.length-errors.length,
+      changed,errors};
+  }
+  const api=Object.freeze({validateShape,apply,blocks});
+  if(typeof module!=="undefined"&&module.exports)module.exports=api;
+  if(typeof globalThis!=="undefined")globalThis.OcrQaLayout=api;
+})();
