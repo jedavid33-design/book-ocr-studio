@@ -223,8 +223,8 @@
 <div>
 <p class="hint">After batch OCR, review every page or just the detected chapter starts. Edits save automatically.</p>
 <div class="preset-row">
-<button class="chip" id="reviewAllBtn" type="button">All pages</button>
-<button class="chip active" id="reviewChaptersBtn" type="button">Chapter starts only</button>
+<button class="chip active" id="reviewAllBtn" type="button" aria-pressed="true">All pages</button>
+<button class="chip" id="reviewChaptersBtn" type="button" aria-pressed="false">Chapter starts only</button>
 </div>
 </div>
 <div class="review-tools compact">
@@ -547,7 +547,7 @@
 <script src="qa-bakeoff-core.js?v=264"></script>
 <script src="qa-bakeoff-ui.js?v=266"></script>
 <script src="ocr-hyphen-guard.js?v=268"></script>
-<script src="script-loader.js?v=269"></script>
+<script src="script-loader.js?v=270"></script>
 <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
