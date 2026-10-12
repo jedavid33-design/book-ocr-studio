@@ -30,6 +30,7 @@ jobs:
       - name: Run production regression fixtures
         run: |
           node tests/reader-ready-export.test.js
+          node tests/epub-reviewed-layout.test.js
           node tests/message-bubbles.test.js
           node tests/scene-ornaments.test.js
           node tests/chapter-opening-audit.test.js
