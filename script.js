@@ -12179,7 +12179,7 @@ em{
   text-indent:0;
 }
 .letter-source-linebreak{display:inline;}
-.letter-block .letter-line:has(> .letter-source-linebreak){white-space:normal;}
+/* Source-approved letter line breaks remain selectable text. */
 .scene-break{
   text-align:center;
   text-indent:0;
