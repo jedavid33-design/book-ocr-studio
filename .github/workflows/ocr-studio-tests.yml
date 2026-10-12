@@ -32,6 +32,7 @@ jobs:
           node tests/reader-ready-export.test.js
           node tests/epub-reviewed-layout.test.js
           node tests/epub-source-presentation.test.js
+          node tests/epub-verified-ellipsis.test.js
           node tests/qa-layout-import.test.js
           node tests/review-mode-controls.test.js
           node tests/message-bubbles.test.js
