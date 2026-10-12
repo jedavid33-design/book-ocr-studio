@@ -1,8 +1,8 @@
-// Build 271: source-verified visual decisions in cumulative chapter QA.
+// Build 274: source-verified visual decisions in cumulative chapter QA.
 // No inferred formatting. Failed anchors prevent the complete QA import.
 (() => {
   "use strict";
-  const TYPES = new Set(["message_bubble", "scene_break", "letter_block", "verified_paragraph_edit", "letter_line_break", "scene_rule", "chapter_dropcap"]);
+  const TYPES = new Set(["message_bubble", "scene_break", "letter_block", "verified_paragraph_edit", "letter_line_break", "scene_rule", "chapter_dropcap", "typographic_ellipsis"]);
   const own = (v) => typeof v === "string" && v.length > 0;
   const compact = (v) => String(v || "").replace(/\r/g, "").split("\n")
     .map(x => x.trim()).filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
@@ -64,6 +64,9 @@
           if (!own(d.paragraph) || !own(d.breakAfter)) fail("layout-letter-line","Complete letter paragraph and exact breakAfter are required.");
         } else if (d?.type==="scene_rule") {
           if (!own(d.before) || !own(d.after)) fail("layout-rule","Scene rule must have exact neighboring paragraphs.");
+        } else if (d?.type==="typographic_ellipsis") {
+          if (!own(d.paragraph) || !Number.isInteger(d.count) || d.count<1 || d.count>12)
+            fail("layout-ellipsis","Ellipsis requires an exact page paragraph and a positive expected count.");
         } else if (d?.type==="chapter_dropcap") {
           if (!own(d.paragraph)) fail("layout-dropcap","Drop cap needs its exact opening paragraph.");
         } else if (d?.type==="verified_paragraph_edit") {
@@ -185,10 +188,10 @@
     const qa={...(layout.qaPresentation||{})};
     const current=Array.isArray(qa[key])?qa[key]:[];
     const id=key==="letterLines" ? record.paragraph
-      : key==="dropcaps" ? record.paragraph
+      : key==="dropcaps" || key==="ellipses" ? record.paragraph
       : record.before+"\\n"+record.after;
     const ident=item=>key==="letterLines" ? item.paragraph
-      : key==="dropcaps" ? item.paragraph
+      : key==="dropcaps" || key==="ellipses" ? item.paragraph
       : item.before+"\\n"+item.after;
     const other=current.find(item=>ident(item)===id);
     if(other) {
@@ -219,6 +222,17 @@
       && list[i+2]?.text===after),"Horizontal scene rule");
     return markPresentation(page,"sceneRules",{before,after});
   }
+  // A verified ellipsis is display metadata, never a global substitution.
+  // OCR and Writer text remain original; EPUB output uses U+2026 only at
+  // paragraphs that have screenshot-approved, exact, unique anchors.
+  function markEllipsis(page,d) {
+    const source=String(page.text||"");
+    const phrase=compact(d.paragraph);
+    const item=unique(blocks(source).filter(block=>block.text===phrase),"Ellipsis paragraph");
+    const matches=(item.text.match(/\\.\\.\\./g)||[]).length;
+    if(matches!==d.count)throw Error("Ellipsis count changed from the approved screenshot");
+    return markPresentation(page,"ellipses",{paragraph:phrase,count:d.count});
+  }
   function markDropcap(page,d) {
     if(!page.chapterStart)throw Error("Drop cap is not on an approved chapter-opening page");
     const list=blocks(page.text),paragraph=compact(d.paragraph);
@@ -243,6 +257,7 @@
         else if (d.type==="letter_line_break") yes=markLetterLine(page,d);
         else if (d.type==="scene_rule") yes=markSceneRule(page,d);
         else if (d.type==="chapter_dropcap") yes=markDropcap(page,d);
+        else if (d.type==="typographic_ellipsis") yes=markEllipsis(page,d);
         else throw Error("Unsupported visual decision");
         if (yes) changed.push({layoutId:d.layoutId,pageIndex:idx});
       } catch (e) {
