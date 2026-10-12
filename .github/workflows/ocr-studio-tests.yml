@@ -31,6 +31,7 @@ jobs:
         run: |
           node tests/reader-ready-export.test.js
           node tests/epub-reviewed-layout.test.js
+          node tests/qa-layout-import.test.js
           node tests/review-mode-controls.test.js
           node tests/message-bubbles.test.js
           node tests/scene-ornaments.test.js
