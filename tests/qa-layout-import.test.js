@@ -71,7 +71,7 @@ const shortFix=mk("quote1","verified_paragraph_edit","p0003",{
 const textOnly=[chapter(1,"p0001","p0003",[shortFix])];
 assert.deepEqual(layout.validateShape(textOnly,3),[]);
 const quotePages=clone();
-quotePages[2].text=shortFix.matchParagraph+"\\n\\nMore paragraphs remain.";
+quotePages[2].text=shortFix.matchParagraph+"\n\nMore paragraphs remain.";
 let q=layout.apply(quotePages,textOnly,bubbles);
 assert.equal(q.errors.length,0,JSON.stringify(q.errors));
 assert.equal(q.applied,1);
