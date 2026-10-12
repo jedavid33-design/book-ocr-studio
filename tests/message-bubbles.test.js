@@ -32,6 +32,16 @@ const second=bubble.setAnnotation([],same.rows[1],"incoming",false);
 assert.equal(bubble.rows("Yes.\n\nYes.",second).rows[0].side,"");
 assert.equal(bubble.rows("Yes.\n\nYes.",second).rows[1].side,"incoming");
 
+// Build 269: a source-printed uppercase sender can follow narrator prose.
+const inline="I get one back five minutes later: VIOLET\n\nLeaving work in 10!";
+const inlineRows=bubble.rows(inline).rows;
+assert.equal(inlineRows[1].label,"VIOLET");
+assert.equal(inlineRows[1].side,"");
+const inlineSaved=bubble.setAnnotation([],inlineRows[1],"incoming",true);
+assert.equal(bubble.rows(inline,inlineSaved).rows[1].useLabel,true);
+assert.equal(bubble.rows(inline.replace("VIOLET","ALEX"),inlineSaved).stale.length,1);
+assert.equal(bubble.adjacentLabel("A normal sentence."),"");
+
 const state={pages:[
   {text:"CHAPTER ONE\n\nRANDY\n\nMaybe. Do u wanna b sexted?\n\nI can wait.",
     chapterStart:true,chapterTitle:"CHAPTER ONE",chapterPov:"Randy",
@@ -41,9 +51,9 @@ const state={pages:[
 const original=state.pages.map(p=>p.text);
 const current=bubble.rows(state.pages[0].text,[]).rows[2];
 state.pages[0].messageBubbles=bubble.setAnnotation([],current,"outgoing",true);
-const makeSections=new Function("state","exportParagraphs","stripExportedChapterHeading","joinParagraphLines","window",
+const makeSections=new Function("state","exportParagraphs","stripExportedChapterHeading","stripExportedChapterPov","joinParagraphLines","window",
   section("function sectionParagraphs(section)","function kindleReadyChecks(")+";return sectionParagraphs;");
-const pageSections=makeSections(state,bubble.paragraphs,text=>text.replace("CHAPTER ONE\n\n",""),parts=>parts.join(" "),{OcrMessageBubbles:bubble});
+const pageSections=makeSections(state,bubble.paragraphs,text=>text.replace("CHAPTER ONE\n\n",""),text=>text,parts=>parts.join(" "),{OcrMessageBubbles:bubble});
 const rows=pageSections({title:"CHAPTER ONE",start:0,end:2,nav:true,pov:"Randy"});
 assert.equal(rows[0].side,"outgoing");
 assert.equal(rows[0].speakerLabel,"RANDY");
