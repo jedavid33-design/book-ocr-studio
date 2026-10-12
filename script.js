@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "273";
+  const BUILD_VERSION = "274";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -11731,6 +11731,26 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
         sourceCursor = found + 1;
         return {text, side:sourceRows[found].side, label:sourceRows[found].useLabel ? sourceRows[found].label : ""};
       });
+
+      // Build 274: restore only the typographic ellipses approved against
+      // source screenshots. Transform the local EPUB paragraph copy, not the
+      // saved OCR text or bubble labels. Do this before cross-page joining
+      // so a verified ellipsis on the next page cannot be lost.
+      const ellipses=Array.isArray(presentation.ellipses)?presentation.ellipses:[];
+      const visited=new Set();
+      paragraphs.forEach((original,index)=>{
+        const matched=ellipses.filter(entry=>entry?.paragraph===original);
+        if(!matched.length)return;
+        if(matched.length!==1 || visited.has(matched[0]))
+          throw Error("Ambiguous approved ellipsis paragraph on page "+(pageIndex+1));
+        const approval=matched[0],n=(original.match(/\.\.\./g)||[]).length;
+        if(n!==approval.count || n<1)
+          throw Error("Source-verified ellipses changed on page "+(pageIndex+1)+". Recheck QA.");
+        visited.add(approval);
+        paragraphs[index]=original.replace(/\.\.\./g,"…");
+      });
+      if(visited.size!==ellipses.length)
+        throw Error("A source-verified ellipsis paragraph was lost on page "+(pageIndex+1));
 
       const isExportBoundary = value => ["* * *","[[letter]]","[[/letter]]"].includes(String(value || "").trim());
       const firstParagraphIsSceneBreak = isExportBoundary(paragraphs[0]);
