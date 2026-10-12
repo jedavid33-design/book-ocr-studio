@@ -112,6 +112,6 @@ assert.ok(importer.indexOf("if (structuralMisses.length || misses.length)")<
   importer.indexOf("state.pages = workingPages"));
 assert.ok(importer.includes("messageBubbles:Array.isArray(page.messageBubbles)"));
 assert.ok(script.includes("window.OcrQaLayout.validateShape(chapters,totalPages)"));
-assert.ok(html.includes('qa-layout-import.js?v=273'));
-assert.ok(sw.includes('./qa-layout-import.js?v=273'));
+assert.ok(html.includes('qa-layout-import.js?v=274'));
+assert.ok(sw.includes('./qa-layout-import.js?v=274'));
 console.log("Build 271: source-verified layout, conflict, idempotence and atomic import checks passed");
