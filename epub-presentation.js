@@ -6,7 +6,7 @@
     const lines=String(title||"").replace(/\r/g,"").split("\n").map(s=>s.trim()).filter(Boolean);
     if(!lines.length)return "";
     return '<h1 class="chapter-heading">'+lines.map((line,i)=>
-      '<span class="chapter-heading-line'+(i===0?' chapter-heading-number':'')+'">'+escape(line)+'</span>').join("")+"</h1>";
+      '<span class="chapter-heading-line'+(i===0?' chapter-heading-number':'')+'">'+escape(line)+'</span>').join("\n")+"</h1>";
   }
   function letterParagraph(text, afterText, paragraphToHtml) {
     if(!afterText)return paragraphToHtml(text);
