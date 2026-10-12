@@ -33,13 +33,13 @@ const script=fs.readFileSync(path.join(root,"script.js"),"utf8");
 const html=fs.readFileSync(path.join(root,"index.html"),"utf8");
 const sw=fs.readFileSync(path.join(root,"sw.js"),"utf8");
 const loader=fs.readFileSync(path.join(root,"script-loader.js"),"utf8");
-assert.ok(script.includes('const BUILD_VERSION = "270"'));
+assert.ok(script.includes('const BUILD_VERSION = "271"'));
 assert.ok(script.includes('window.OcrHyphenGuard?.shouldPreserveHyphen?.(out, text) === true'));
 assert.ok(script.includes('(keepPrintedHyphen ? out : out.slice(0, -1)) + text'));
 assert.ok(html.includes('ocr-hyphen-guard.js?v=268'));
 assert.ok(sw.includes('./ocr-hyphen-guard.js?v=268'));
-assert.ok(sw.includes('book-ocr-studio-shell-v97'));
-assert.ok(loader.includes('script.js?v=270'));
-assert.ok(html.indexOf('ocr-hyphen-guard.js?v=268')<html.indexOf('script-loader.js?v=270'),
+assert.ok(sw.includes('book-ocr-studio-shell-v98'));
+assert.ok(loader.includes('script.js?v=271'));
+assert.ok(html.indexOf('ocr-hyphen-guard.js?v=268')<html.indexOf('script-loader.js?v=271'),
   "guard must load before the OCR app");
 console.log("Build 268: seven verified compound wraps protected, ambiguous joins unchanged");
