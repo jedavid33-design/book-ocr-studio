@@ -12,7 +12,7 @@ function section(a,b) {
 }
 const source={
   pages:[
-   {text:"Before... After.\n\nNot approved... keep three dots.",
+   {text:"Not approved... keep three dots.\n\nBefore... After.",
     chapterStart:false,messageBubbles:[],layoutMeta:{qaBoundaryToNext:"merge_across_pages"}},
    {text:"Then...again.\n\nAnd that is all.",
     chapterStart:false,messageBubbles:[],layoutMeta:{qaBoundaryFromPrevious:"merge_across_pages"}}
