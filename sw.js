@@ -1,11 +1,11 @@
-const CACHE_NAME = "book-ocr-studio-shell-v100";
+const CACHE_NAME = "book-ocr-studio-shell-v101";
 const APP_SHELL = [
   "./styles.css?v=71",
   "./epub-polish.js?v=58",
   "./crop-preflight.js?v=254",
   "./message-bubbles.js?v=269",
   "./scene-ornaments.js?v=257",
-  "./qa-layout-import.js?v=273",
+  "./qa-layout-import.js?v=274",
   "./epub-presentation.js?v=273",
   "./chapter-opening-audit.js?v=258",
   "./word-boundary-audit.js?v=259",
