@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD_VERSION = "270";
+  const BUILD_VERSION = "271";
   console.info(`Book OCR Studio ${BUILD_VERSION} loaded`);
 
   const $ = (id) => document.getElementById(id);
@@ -2118,6 +2118,11 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
       }
     });
 
+    // Build 271: optional, source-confirmed visual decisions (messages,
+    // letters, dividers). This checks shapes and ownership before any edits.
+    if (!window.OcrQaLayout) err("layout-helper-missing", "The QA layout importer is unavailable.");
+    else errors.push(...window.OcrQaLayout.validateShape(chapters,totalPages));
+
     // Page coverage: every page reviewed exactly once (Rule 17).
     covered.forEach((n, i) => {
       if (n === 0) err("page-not-covered", "Page " + qaPageId(i) + " is not inside any chapter reviewedPageRange (Rule 17).");
@@ -2166,6 +2171,7 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
 
       let requested = 0, applied = 0, alreadyPresent = 0;
       let structuralApplied = 0, structuralAlreadyPresent = 0, boundariesApplied = 0, povApplied = 0, qaBaselineCount = 0;
+      let layoutRequested = 0, layoutApplied = 0, layoutAlreadyPresent = 0;
       const misses = [], structuralMisses = [];
       const touchedPages = new Set();
       const reviewedPageIndexes = new Set();
@@ -2174,7 +2180,10 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
       // commit atomically. The legacy path used to mutate live state.pages
       // while accumulating misses, so a file with misses left partial
       // application — and a mid-import throw left half-applied state.
-      const workingPages = state.pages.map(page => ({ ...page, layoutMeta:{ ...(page.layoutMeta || {}) } }));
+      const workingPages = state.pages.map(page => ({ ...page,
+        layoutMeta:{ ...(page.layoutMeta || {}) },
+        messageBubbles:Array.isArray(page.messageBubbles) ? page.messageBubbles.map(mark=>({...mark})) : []
+      }));
 
       if (isCumulative) {
         for (const chapterEntry of payload.chapters) {
@@ -2403,10 +2412,22 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
           touchedPages.add(pageIndex);
         }
 
+        // Apply layout AFTER text correction and italics. Everything is
+        // staged on workingPages; any bad anchor cancels the entire import.
+        const layoutResult = window.OcrQaLayout.apply(workingPages,payload.chapters,window.OcrMessageBubbles);
+        layoutRequested = layoutResult.requested;
+        layoutApplied = layoutResult.applied;
+        layoutAlreadyPresent = layoutResult.alreadyPresent;
+        for (const entry of layoutResult.changed) {
+          touchedPages.add(entry.pageIndex);
+          workingPages[entry.pageIndex].manualEdited = true;
+        }
+        structuralMisses.push(...layoutResult.errors);
+
         if (structuralMisses.length || misses.length) {
           state.lastTypographyImportReport = {
             build:BUILD_VERSION, importedAt:new Date().toISOString(), requested, applied, alreadyPresent, misses,
-            structuralApplied, structuralAlreadyPresent, boundariesApplied, povApplied, structuralMisses, committed:false
+            structuralApplied, structuralAlreadyPresent, boundariesApplied, povApplied, structuralMisses, layoutRequested, layoutApplied, layoutAlreadyPresent, committed:false
           };
           console.warn("QA import preflight blocked; no changes applied", state.lastTypographyImportReport);
           if (structuralMisses.length) console.table(structuralMisses);
@@ -2490,12 +2511,12 @@ Start with Chapter 1 unless the user explicitly names a different chapter.
       })();
       state.lastTypographyImportReport = {
         build:BUILD_VERSION, importedAt:new Date().toISOString(), requested, applied, alreadyPresent, misses,
-        structuralApplied, structuralAlreadyPresent, boundariesApplied, povApplied, structuralMisses, committed:true,
+        structuralApplied, structuralAlreadyPresent, boundariesApplied, povApplied, structuralMisses, layoutRequested, layoutApplied, layoutAlreadyPresent, committed:true,
         qaValidationNotices: qaNotices
       };
       const issueCount = missCount + structuralMisses.length;
       setStatus(isCumulative
-        ? "QA corrections imported: " + (structuralApplied + structuralAlreadyPresent) + " structural fixes verified (" + structuralApplied + " changed, " + structuralAlreadyPresent + " already correct), " + boundariesApplied + " authoritative page-boundary decision" + (boundariesApplied===1?"":"s") + ", " + applied + " italic segment" + (applied===1?"":"s") + ", " + povApplied + " chapter POV tag" + (povApplied===1?"":"s") + ", " + state.typographyUncertain.length + " uncertain typography item" + (state.typographyUncertain.length===1?"":"s") + ". Visual-QA baseline saved (" + qaBaselineCount + " source-approved polish condition" + (qaBaselineCount===1?"":"s") + "). " + (issueCount ? issueCount + " item(s) need review; see console." : "Preflight passed; import committed with no conflicts.") + qaNoticeSummary
+        ? "QA corrections imported: " + (structuralApplied + structuralAlreadyPresent) + " structural fixes verified (" + structuralApplied + " changed, " + structuralAlreadyPresent + " already correct), " + boundariesApplied + " authoritative page-boundary decision" + (boundariesApplied===1?"":"s") + ", " + applied + " italic segment" + (applied===1?"":"s") + ", " + povApplied + " chapter POV tag" + (povApplied===1?"":"s") + ", " + layoutRequested + " source-verified layout decision" + (layoutRequested===1?"":"s") + " (" + layoutApplied + " applied, " + layoutAlreadyPresent + " already present), " + state.typographyUncertain.length + " uncertain typography item" + (state.typographyUncertain.length===1?"":"s") + ". Visual-QA baseline saved (" + qaBaselineCount + " source-approved polish condition" + (qaBaselineCount===1?"":"s") + "). " + (issueCount ? issueCount + " item(s) need review; see console." : "Preflight passed; import committed with no conflicts.") + qaNoticeSummary
         : "Typography annotations imported: " + applied + " confident italic span" + (applied===1?"":"s") + " applied, " + state.typographyUncertain.length + " uncertain left Roman for isolated-crop review, " + alreadyPresent + " already present, " + missCount + " unmatched.");
       if (misses.length) console.warn("Typography annotation import misses", misses);
       if (structuralMisses.length) console.warn("Structural QA import misses", structuralMisses);
