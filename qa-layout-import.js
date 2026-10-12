@@ -2,7 +2,7 @@
 // No inferred formatting. Failed anchors prevent the complete QA import.
 (() => {
   "use strict";
-  const TYPES = new Set(["message_bubble", "scene_break", "letter_block"]);
+  const TYPES = new Set(["message_bubble", "scene_break", "letter_block", "verified_paragraph_edit"]);
   const own = (v) => typeof v === "string" && v.length > 0;
   const compact = (v) => String(v || "").replace(/\r/g, "").split("\n")
     .map(x => x.trim()).filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
@@ -60,6 +60,15 @@
         } else if (d?.type==="letter_block") {
           if (!own(d.startText) || !own(d.endText))
             fail("layout-letter","Both source-verified start and end phrases are required.");
+        } else if (d?.type==="verified_paragraph_edit") {
+          if (!own(d.matchParagraph) || !own(d.finalParagraph) ||
+              d.matchParagraph===d.finalParagraph || compact(d.matchParagraph).length<20)
+            fail("layout-text","Verified edit needs distinct, exact full paragraphs of at least 20 characters.");
+          const a=String(d.matchParagraph||""),b=String(d.finalParagraph||"");
+          // Strictly reserve this escape hatch for tiny corrections to already
+          // QA'd text. Large changes must go through the normal OCR item rules.
+          if (Math.abs(a.length-b.length)>4 || a.length>2000 || b.length>2000)
+            fail("layout-text-scope","Verified paragraph edit is not a minimal correction.");
         }
       }
     });
@@ -79,6 +88,29 @@
     let pos=-1;
     while ((pos=source.indexOf(phrase,pos+1))>=0) positions.push(pos);
     return unique(positions,"Text");
+  }
+  function editVerifiedParagraph(page,d) {
+    const source=String(page.text||""),list=blocks(source);
+    const old=compact(d.matchParagraph),final=compact(d.finalParagraph);
+    // No semantic replacement: only a short source-verified character edit.
+    let i=0,j=0,edits=0;
+    while(i<old.length && j<final.length) {
+      if(old[i]===final[j]) {i++;j++;continue;}
+      edits++;
+      if(old[i+1]===final[j]) i++;
+      else if(old[i]===final[j+1]) j++;
+      else {i++;j++;}
+      if(edits>4) throw Error("Verified edit exceeds four character changes");
+    }
+    edits+=(old.length-i)+(final.length-j);
+    if(edits>4) throw Error("Verified paragraph edit is not minimally different");
+    const oldMatches=list.filter(x=>x.text===old),newMatches=list.filter(x=>x.text===final);
+    if(oldMatches.length===0 && newMatches.length===1) return false;
+    const item=unique(oldMatches,"Verified paragraph");
+    if(newMatches.length) throw Error("Corrected paragraph already appears elsewhere");
+    // Protect all surrounding text and paragraph breaks.
+    page.text=source.slice(0,item.start)+d.finalParagraph+source.slice(item.end);
+    return true;
   }
   function markMessage(page, d, bubble) {
     if (!bubble?.rows || !bubble?.setAnnotation) throw Error("Message bubble renderer is unavailable");
@@ -147,7 +179,8 @@
       try {
         const {page,idx}=locatePage(pages,d);
         let yes=false;
-        if (d.type==="message_bubble") yes=markMessage(page,d,bubbleApi);
+        if (d.type==="verified_paragraph_edit") yes=editVerifiedParagraph(page,d);
+        else if (d.type==="message_bubble") yes=markMessage(page,d,bubbleApi);
         else if (d.type==="scene_break") yes=markScene(page,d);
         else if (d.type==="letter_block") yes=markLetter(page,d);
         else throw Error("Unsupported visual decision");
